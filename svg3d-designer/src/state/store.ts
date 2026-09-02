@@ -75,6 +75,8 @@ interface SceneState {
   setLayerTransform: (id: string, patch: Partial<Transform2D>) => void;
   setExtrusionDepth: (id: string, depth: number) => void;
   setCornerRadius: (id: string, radius: number) => void;
+  setBevelBottom: (id: string, mm: number) => void;
+  setBevelTop: (id: string, mm: number) => void;
   setLayerZ: (id: string, z: number) => void;
   autoStackLayers: () => void;
   deleteLayer: (id: string) => void;
@@ -237,6 +239,30 @@ export const useSceneStore = create<SceneState>()(
         layers: {
           ...state.layers,
           [id]: { ...layer, cornerRadius: Math.max(0, radius) } as ShapeLayer,
+        },
+      };
+    }),
+
+  setBevelBottom: (id, mm) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape") return {};
+      return {
+        layers: {
+          ...state.layers,
+          [id]: { ...layer, bevelBottom: Math.max(0, mm) } as ShapeLayer,
+        },
+      };
+    }),
+
+  setBevelTop: (id, mm) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape") return {};
+      return {
+        layers: {
+          ...state.layers,
+          [id]: { ...layer, bevelTop: Math.max(0, mm) } as ShapeLayer,
         },
       };
     }),
@@ -541,6 +567,8 @@ export const useSceneStore = create<SceneState>()(
         regions,
         extrusionDepth: frontMost.extrusionDepth,
         cornerRadius: 0,
+        bevelBottom: 0,
+        bevelTop: 0,
       };
 
       const toRemove = new Set<string>();
@@ -661,6 +689,8 @@ export const useSceneStore = create<SceneState>()(
         regions,
         extrusionDepth: 1.2,
         cornerRadius: 0,
+        bevelBottom: 0,
+        bevelTop: 0,
       };
 
       return {

@@ -53,6 +53,10 @@ export interface ShapeLayer extends LayerCommon {
   extrusionDepth: number;
   /** Uniform corner rounding applied to every vertex, in mm. 0 = sharp. */
   cornerRadius: number;
+  /** Straight chamfer cut into the bottom rim (z=0), in mm. 0 = sharp edge. */
+  bevelBottom: number;
+  /** Straight chamfer cut into the top rim (z=extrusionDepth), in mm. 0 = sharp edge. */
+  bevelTop: number;
 }
 
 export type Layer = GroupLayer | ShapeLayer;

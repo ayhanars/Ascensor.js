@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { Canvas, useThree } from "@react-three/fiber";
+import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
 import { OrbitControls, GizmoHelper, GizmoViewport } from "@react-three/drei";
 import * as THREE from "three";
 import { useSceneStore } from "../state/store";
@@ -94,35 +94,18 @@ function PrintBed() {
   );
 }
 
-// Shared across every selected mesh — a cheap outline: a copy of the same
-// geometry, parented to the original mesh so it inherits its exact
-// transform, widened in X/Y only (same height in Z). Our print pieces are
-// flat and viewed mostly from above, so the classic "enlarge + backface-
-// cull" shell trick doesn't work here — the dominant visible surface *is*
-// the top face, so BackSide culls exactly the part that needs to show, and
-// a uniformly-enlarged FrontSide shell just covers the object instead of
-// framing it. Keeping the outline's top face at exactly the same height as
-// the original's makes them coplanar wherever they overlap — resolved with
-// polygonOffset (the standard fix for two coplanar surfaces, rather than a
-// geometric Z-nudge, which either z-fights or needs a big-enough gap to be
-// reliable) so the original always wins there and shows its own color
-// untouched; past its footprint — the rim — there's nothing else at that
-// pixel, so the widened outline's top face shows through as a clean
-// colored margin.
-const SELECTION_OUTLINE_MATERIAL = new THREE.MeshBasicMaterial({
-  color: 0x4f46e5,
-  toneMapped: false,
-  polygonOffset: true,
-  polygonOffsetFactor: 4,
-  polygonOffsetUnits: 4,
-});
-const SELECTION_OUTLINE_SCALE_XY = 1.15;
+// Figma-style selection indicator, adapted to 3D: a thin bounding-box
+// wireframe plus a small solid handle marker at each of the box's 8
+// corners (Figma's 2D corner handles, extended to a 3D box's corners).
+const SELECTION_LINE_MATERIAL = new THREE.LineBasicMaterial({ color: 0x4f46e5, toneMapped: false });
+const SELECTION_HANDLE_MATERIAL = new THREE.MeshBasicMaterial({ color: 0x4f46e5, toneMapped: false });
 
 function Assembly() {
   const layers = useSceneStore((s) => s.layers);
   const rootIds = useSceneStore((s) => s.rootIds);
   const selection = useSceneStore((s) => s.selection);
   const wireframe = useSceneStore((s) => s.wireframe);
+  const selectLayer = useSceneStore((s) => s.selectLayer);
 
   const group = useMemo(
     () => buildAssemblyGroup(layers, rootIds, { respectVisibility: true }),
@@ -140,32 +123,77 @@ function Assembly() {
 
   useEffect(() => {
     const selectedSet = new Set(selection);
-    const outlines: THREE.Mesh[] = [];
+    const extras: THREE.Object3D[] = [];
+    const disposables: { dispose: () => void }[] = [];
+
     group.traverse((obj) => {
-      if ((obj as THREE.Mesh).isMesh && selectedSet.has(obj.userData.layerId)) {
-        const mesh = obj as THREE.Mesh;
-        const outline = new THREE.Mesh(mesh.geometry, SELECTION_OUTLINE_MATERIAL);
-        // Our shape geometry is built in absolute local coordinates (an
-        // SVG's own coordinate space), so a mesh's own origin (0,0,0) is
-        // rarely anywhere near its visual center. Scaling this outline from
-        // the origin would shift it sideways instead of framing the shape —
-        // scale it around the geometry's own bounding-box center instead.
-        mesh.geometry.computeBoundingBox();
-        const center = new THREE.Vector3();
-        mesh.geometry.boundingBox?.getCenter(center);
-        const kXY = SELECTION_OUTLINE_SCALE_XY;
-        outline.position.set(center.x * (1 - kXY), center.y * (1 - kXY), 0);
-        outline.scale.set(kXY, kXY, 1);
-        mesh.add(outline);
-        outlines.push(outline);
+      if (!(obj as THREE.Mesh).isMesh || !selectedSet.has(obj.userData.layerId)) return;
+      const mesh = obj as THREE.Mesh;
+      mesh.geometry.computeBoundingBox();
+      const box = mesh.geometry.boundingBox;
+      if (!box) return;
+
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const center = new THREE.Vector3();
+      box.getCenter(center);
+
+      const boxGeom = new THREE.BoxGeometry(
+        Math.max(size.x, 0.001),
+        Math.max(size.y, 0.001),
+        Math.max(size.z, 0.001),
+      );
+      const edgesGeom = new THREE.EdgesGeometry(boxGeom);
+      boxGeom.dispose();
+      const edges = new THREE.LineSegments(edgesGeom, SELECTION_LINE_MATERIAL);
+      edges.position.copy(center);
+      mesh.add(edges);
+      extras.push(edges);
+      disposables.push(edgesGeom);
+
+      const handleSize = Math.min(3, Math.max(0.6, size.length() * 0.06));
+      const handleGeom = new THREE.BoxGeometry(handleSize, handleSize, handleSize);
+      disposables.push(handleGeom);
+      for (const x of [box.min.x, box.max.x]) {
+        for (const y of [box.min.y, box.max.y]) {
+          for (const z of [box.min.z, box.max.z]) {
+            const handle = new THREE.Mesh(handleGeom, SELECTION_HANDLE_MATERIAL);
+            handle.position.set(x, y, z);
+            mesh.add(handle);
+            extras.push(handle);
+          }
+        }
       }
     });
+
     return () => {
-      for (const outline of outlines) outline.removeFromParent();
+      for (const obj of extras) obj.removeFromParent();
+      for (const d of disposables) d.dispose();
     };
   }, [group, selection]);
 
-  return <primitive object={group} rotation={DISPLAY_ROTATION} />;
+  // Click-to-select, with a movement threshold so an orbit/pan drag that
+  // happens to end up over a mesh doesn't get mistaken for a click.
+  const pointerDownInfo = useRef<{ x: number; y: number; layerId?: string } | null>(null);
+
+  return (
+    <primitive
+      object={group}
+      rotation={DISPLAY_ROTATION}
+      onPointerDown={(e: ThreeEvent<PointerEvent>) => {
+        pointerDownInfo.current = { x: e.clientX, y: e.clientY, layerId: e.object.userData.layerId };
+      }}
+      onPointerUp={(e: ThreeEvent<PointerEvent>) => {
+        const down = pointerDownInfo.current;
+        pointerDownInfo.current = null;
+        if (!down?.layerId) return;
+        if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return;
+        e.stopPropagation();
+        const additive = e.nativeEvent.shiftKey || e.nativeEvent.metaKey || e.nativeEvent.ctrlKey;
+        selectLayer(down.layerId, additive);
+      }}
+    />
+  );
 }
 
 interface Props {
@@ -177,6 +205,7 @@ export function Viewport3D({ resetSignal, theme }: Props) {
   const layers = useSceneStore((s) => s.layers);
   const rootIds = useSceneStore((s) => s.rootIds);
   const bed = useSceneStore((s) => s.document.bed);
+  const clearSelection = useSceneStore((s) => s.clearSelection);
   const bgColor = theme === "dark" ? "#232326" : "#e8e8e8";
 
   const bounds = useMemo(() => computeVisibleBounds(layers, rootIds), [layers, rootIds]);
@@ -188,7 +217,11 @@ export function Viewport3D({ resetSignal, theme }: Props) {
 
   return (
     <div style={{ width: "100%", height: "100%", position: "relative" }}>
-      <Canvas shadows camera={{ fov: 40, near: 0.1, far: 5000 }}>
+      <Canvas
+        shadows
+        camera={{ fov: 40, near: 0.1, far: 5000 }}
+        onPointerMissed={() => clearSelection()}
+      >
         <color attach="background" args={[bgColor]} />
         <hemisphereLight args={["#ffffff", "#666666", 1.1]} />
         <directionalLight position={[80, 120, 60]} intensity={1.1} castShadow />

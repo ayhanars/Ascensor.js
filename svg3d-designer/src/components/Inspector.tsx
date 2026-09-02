@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { BED_PRESETS, beginGesture, endGesture, useSceneStore, type TrackedSceneSlice } from "../state/store";
+import { collectShapeLayers } from "../state/sceneUtils";
 
 /**
  * A controlled number input that's still editable. A plain
@@ -62,8 +63,12 @@ export function Inspector() {
   const setLayerTransform = useSceneStore((s) => s.setLayerTransform);
   const setExtrusionDepth = useSceneStore((s) => s.setExtrusionDepth);
   const setCornerRadius = useSceneStore((s) => s.setCornerRadius);
+  const setBevelBottom = useSceneStore((s) => s.setBevelBottom);
+  const setBevelTop = useSceneStore((s) => s.setBevelTop);
   const setLayerZ = useSceneStore((s) => s.setLayerZ);
   const radiusGesture = useRef<TrackedSceneSlice | null>(null);
+  const bevelBottomGesture = useRef<TrackedSceneSlice | null>(null);
+  const bevelTopGesture = useRef<TrackedSceneSlice | null>(null);
   const fitDocumentToSelection = useSceneStore((s) => s.fitDocumentToSelection);
   const matchDocumentToBed = useSceneStore((s) => s.matchDocumentToBed);
   const mergeLayers = useSceneStore((s) => s.mergeLayers);
@@ -263,68 +268,151 @@ export function Inspector() {
           </button>
         </div>
 
-        {layer.type === "shape" && (
-          <>
-            <div className="inspector-section">
-              <div className="inspector-section-title">Color</div>
-              <div className="color-field">
-                <input
-                  className="color-swatch-input"
-                  type="color"
-                  value={layer.color}
-                  onChange={(e) => setLayerColor(layer.id, e.target.value)}
-                />
-                <input
-                  className="field-input"
-                  value={layer.color}
-                  onChange={(e) => setLayerColor(layer.id, e.target.value)}
-                />
+        {(() => {
+          // A group has no shape properties of its own, but forcing the
+          // user to hunt down each nested shape individually just to set
+          // one color or depth isn't it either — editing a selected group
+          // applies to every shape inside it at once, the same "apply to
+          // all" pattern the multi-select panel already uses for color.
+          const targets = layer.type === "shape" ? [layer] : collectShapeLayers(layers, layer.id);
+          const display = targets[0];
+          if (!display) return null;
+          const isBatch = layer.type === "group";
+
+          return (
+            <>
+              <div className="inspector-section">
+                <div className="inspector-section-title">Color{isBatch ? " (all shapes in group)" : ""}</div>
+                <div className="color-field">
+                  <input
+                    className="color-swatch-input"
+                    type="color"
+                    value={display.color}
+                    onChange={(e) => targets.forEach((t) => setLayerColor(t.id, e.target.value))}
+                  />
+                  <input
+                    className="field-input"
+                    value={display.color}
+                    onChange={(e) => targets.forEach((t) => setLayerColor(t.id, e.target.value))}
+                  />
+                </div>
               </div>
-            </div>
 
-            <div className="inspector-section">
-              <div className="inspector-section-title">Extrusion</div>
-              <NumberField
-                label="Depth (mm)"
-                value={layer.extrusionDepth}
-                min={0.05}
-                onChange={(v) => setExtrusionDepth(layer.id, v)}
-              />
-            </div>
-
-            <div className="inspector-section">
-              <div className="inspector-section-title">Corners</div>
-              <div className="field-row">
-                <span className="field-label">Radius (mm)</span>
-                <input
-                  className="field-input"
-                  type="range"
-                  min={0}
-                  max={20}
-                  step={0.1}
-                  value={Math.min(20, layer.cornerRadius)}
-                  onPointerDown={() => {
-                    radiusGesture.current = beginGesture();
-                  }}
-                  onPointerUp={() => {
-                    if (radiusGesture.current) {
-                      endGesture(radiusGesture.current, true);
-                      radiusGesture.current = null;
-                    }
-                  }}
-                  onChange={(e) => setCornerRadius(layer.id, parseFloat(e.target.value))}
-                  style={{ flex: "1 1 auto" }}
-                />
+              <div className="inspector-section">
+                <div className="inspector-section-title">Extrusion{isBatch ? " (all shapes in group)" : ""}</div>
                 <NumberField
-                  value={layer.cornerRadius}
-                  min={0}
-                  style={{ flex: "0 0 60px" }}
-                  onChange={(v) => setCornerRadius(layer.id, v)}
+                  label="Depth (mm)"
+                  value={display.extrusionDepth}
+                  min={0.05}
+                  onChange={(v) => targets.forEach((t) => setExtrusionDepth(t.id, v))}
                 />
               </div>
-            </div>
-          </>
-        )}
+
+              <div className="inspector-section">
+                <div className="inspector-section-title">Corners{isBatch ? " (all shapes in group)" : ""}</div>
+                <div className="field-row">
+                  <span className="field-label">Radius (mm)</span>
+                  <input
+                    className="field-input"
+                    type="range"
+                    min={0}
+                    max={20}
+                    step={0.1}
+                    value={Math.min(20, display.cornerRadius)}
+                    onPointerDown={() => {
+                      radiusGesture.current = beginGesture();
+                    }}
+                    onPointerUp={() => {
+                      if (radiusGesture.current) {
+                        endGesture(radiusGesture.current, true);
+                        radiusGesture.current = null;
+                      }
+                    }}
+                    onChange={(e) =>
+                      targets.forEach((t) => setCornerRadius(t.id, parseFloat(e.target.value)))
+                    }
+                    style={{ flex: "1 1 auto" }}
+                  />
+                  <NumberField
+                    value={display.cornerRadius}
+                    min={0}
+                    style={{ flex: "0 0 60px" }}
+                    onChange={(v) => targets.forEach((t) => setCornerRadius(t.id, v))}
+                  />
+                </div>
+              </div>
+
+              <div className="inspector-section">
+                <div className="inspector-section-title">Edge bevel{isBatch ? " (all shapes in group)" : ""}</div>
+                {(() => {
+                  const bevelMax = Math.max(0.5, display.extrusionDepth / 2);
+                  return (
+                    <>
+                      <div className="field-row">
+                        <span className="field-label">Top (mm)</span>
+                        <input
+                          className="field-input"
+                          type="range"
+                          min={0}
+                          max={bevelMax}
+                          step={0.05}
+                          value={Math.min(bevelMax, display.bevelTop)}
+                          onPointerDown={() => {
+                            bevelTopGesture.current = beginGesture();
+                          }}
+                          onPointerUp={() => {
+                            if (bevelTopGesture.current) {
+                              endGesture(bevelTopGesture.current, true);
+                              bevelTopGesture.current = null;
+                            }
+                          }}
+                          onChange={(e) => targets.forEach((t) => setBevelTop(t.id, parseFloat(e.target.value)))}
+                          style={{ flex: "1 1 auto" }}
+                        />
+                        <NumberField
+                          value={display.bevelTop}
+                          min={0}
+                          step={0.05}
+                          style={{ flex: "0 0 60px" }}
+                          onChange={(v) => targets.forEach((t) => setBevelTop(t.id, v))}
+                        />
+                      </div>
+                      <div className="field-row">
+                        <span className="field-label">Bottom (mm)</span>
+                        <input
+                          className="field-input"
+                          type="range"
+                          min={0}
+                          max={bevelMax}
+                          step={0.05}
+                          value={Math.min(bevelMax, display.bevelBottom)}
+                          onPointerDown={() => {
+                            bevelBottomGesture.current = beginGesture();
+                          }}
+                          onPointerUp={() => {
+                            if (bevelBottomGesture.current) {
+                              endGesture(bevelBottomGesture.current, true);
+                              bevelBottomGesture.current = null;
+                            }
+                          }}
+                          onChange={(e) => targets.forEach((t) => setBevelBottom(t.id, parseFloat(e.target.value)))}
+                          style={{ flex: "1 1 auto" }}
+                        />
+                        <NumberField
+                          value={display.bevelBottom}
+                          min={0}
+                          step={0.05}
+                          style={{ flex: "0 0 60px" }}
+                          onChange={(v) => targets.forEach((t) => setBevelBottom(t.id, v))}
+                        />
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            </>
+          );
+        })()}
       </div>
     </div>
   );

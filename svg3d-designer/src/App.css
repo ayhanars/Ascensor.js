@@ -54,6 +54,8 @@
 .toolbar-btn.primary { background: var(--accent); color: var(--accent-contrast); }
 .toolbar-btn.primary:hover:not(:disabled) { background: #4338ca; }
 .toolbar-btn.primary:disabled { background: #d7d7db; color: var(--text-faint); }
+.toolbar-btn.toggle.active { background: var(--accent); color: var(--accent-contrast); }
+.toolbar-btn.toggle.active:hover { background: #4338ca; }
 
 .toolbar-toggle-group {
   display: flex;

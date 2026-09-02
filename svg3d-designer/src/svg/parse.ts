@@ -189,6 +189,8 @@ export function parseSvgToScene(svgText: string, fileName: string): ParsedScene 
         regions,
         extrusionDepth: 1.2,
         cornerRadius: 0,
+        bevelBottom: 0,
+        bevelTop: 0,
       };
       layers[id] = layer;
       return id;
@@ -273,6 +275,8 @@ export function mergeSceneIntoSingleLayer(scene: ParsedScene, name: string): {
     regions,
     extrusionDepth: 1.2,
     cornerRadius: 0,
+    bevelBottom: 0,
+    bevelTop: 0,
   };
 
   return { layers: { [id]: merged }, rootIds: [id] };
