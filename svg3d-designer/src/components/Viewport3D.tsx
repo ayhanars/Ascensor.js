@@ -3,6 +3,7 @@ import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls, GizmoHelper, GizmoViewport } from "@react-three/drei";
 import * as THREE from "three";
 import { useSceneStore } from "../state/store";
+import type { ResolvedTheme } from "../state/theme";
 import { buildAssemblyGroup, computeVisibleBounds } from "../geometry/extrude";
 
 // Display-only rotation: our data model treats Z as "up" (extrusion axis),
@@ -84,12 +85,14 @@ function Assembly() {
 
 interface Props {
   resetSignal: number;
+  theme: ResolvedTheme;
 }
 
-export function Viewport3D({ resetSignal }: Props) {
+export function Viewport3D({ resetSignal, theme }: Props) {
   const layers = useSceneStore((s) => s.layers);
   const rootIds = useSceneStore((s) => s.rootIds);
   const bed = useSceneStore((s) => s.document.bed);
+  const bgColor = theme === "dark" ? "#232326" : "#e8e8e8";
 
   const bounds = useMemo(() => computeVisibleBounds(layers, rootIds), [layers, rootIds]);
   // Our data model extrudes along Z (the print-bed "up" axis) — see
@@ -101,7 +104,7 @@ export function Viewport3D({ resetSignal }: Props) {
   return (
     <div style={{ width: "100%", height: "100%", position: "relative" }}>
       <Canvas shadows camera={{ fov: 40, near: 0.1, far: 5000 }}>
-        <color attach="background" args={["#e8e8e8"]} />
+        <color attach="background" args={[bgColor]} />
         <hemisphereLight args={["#ffffff", "#666666", 1.1]} />
         <directionalLight position={[80, 120, 60]} intensity={1.1} castShadow />
         <PrintBed />

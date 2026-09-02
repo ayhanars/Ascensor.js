@@ -1,4 +1,5 @@
-import { BED_PRESETS, useSceneStore } from "../state/store";
+import { useRef } from "react";
+import { BED_PRESETS, beginGesture, endGesture, useSceneStore, type TrackedSceneSlice } from "../state/store";
 
 function NumberField({
   label,
@@ -44,6 +45,11 @@ export function Inspector() {
   const setLayerColor = useSceneStore((s) => s.setLayerColor);
   const setLayerTransform = useSceneStore((s) => s.setLayerTransform);
   const setExtrusionDepth = useSceneStore((s) => s.setExtrusionDepth);
+  const setCornerRadius = useSceneStore((s) => s.setCornerRadius);
+  const radiusGesture = useRef<TrackedSceneSlice | null>(null);
+  const fitDocumentToSelection = useSceneStore((s) => s.fitDocumentToSelection);
+  const matchDocumentToBed = useSceneStore((s) => s.matchDocumentToBed);
+  const mergeLayers = useSceneStore((s) => s.mergeLayers);
 
   if (selection.length === 0) {
     const preset = BED_PRESETS.find(
@@ -98,7 +104,7 @@ export function Inspector() {
           </div>
 
           <div className="inspector-section">
-            <div className="inspector-section-title">Artwork bounds</div>
+            <div className="inspector-section-title">Artboard</div>
             <div className="dialog-row">
               <span className="k">Width</span>
               <span>{round(docSettings.widthMM)} mm</span>
@@ -107,6 +113,9 @@ export function Inspector() {
               <span className="k">Height</span>
               <span>{round(docSettings.heightMM)} mm</span>
             </div>
+            <button className="btn" style={{ width: "100%", marginTop: 6 }} onClick={matchDocumentToBed}>
+              Match print bed size
+            </button>
           </div>
 
           <p className="empty-inspector">Select a layer on the canvas or in the Layers panel to edit its properties.</p>
@@ -136,6 +145,17 @@ export function Inspector() {
               </div>
             </div>
           )}
+          <button
+            className="btn primary"
+            style={{ width: "100%", marginTop: 10 }}
+            onClick={() => mergeLayers(selection)}
+            title="Combine the selected layers into a single flat shape (Cmd/Ctrl+E)"
+          >
+            Merge layers
+          </button>
+          <button className="btn" style={{ width: "100%", marginTop: 6 }} onClick={fitDocumentToSelection}>
+            Fit artboard to selection
+          </button>
         </div>
       </div>
     );
@@ -160,6 +180,16 @@ export function Inspector() {
               }
             />
           </div>
+          {layer.type === "group" && (
+            <button
+              className="btn"
+              style={{ width: "100%", marginTop: 8 }}
+              onClick={() => mergeLayers([layer.id])}
+              title="Combine everything in this group into one flat shape (Cmd/Ctrl+E)"
+            >
+              Flatten group
+            </button>
+          )}
         </div>
 
         <div className="inspector-section">
@@ -203,6 +233,9 @@ export function Inspector() {
               }}
             />
           </div>
+          <button className="btn" style={{ width: "100%" }} onClick={fitDocumentToSelection}>
+            Fit artboard to selection
+          </button>
         </div>
 
         {layer.type === "shape" && (
@@ -237,6 +270,44 @@ export function Inspector() {
                   onChange={(e) => {
                     const v = parseFloat(e.target.value);
                     if (!Number.isNaN(v)) setExtrusionDepth(layer.id, v);
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="inspector-section">
+              <div className="inspector-section-title">Corners</div>
+              <div className="field-row">
+                <span className="field-label">Radius (mm)</span>
+                <input
+                  className="field-input"
+                  type="range"
+                  min={0}
+                  max={20}
+                  step={0.1}
+                  value={Math.min(20, layer.cornerRadius)}
+                  onPointerDown={() => {
+                    radiusGesture.current = beginGesture();
+                  }}
+                  onPointerUp={() => {
+                    if (radiusGesture.current) {
+                      endGesture(radiusGesture.current, true);
+                      radiusGesture.current = null;
+                    }
+                  }}
+                  onChange={(e) => setCornerRadius(layer.id, parseFloat(e.target.value))}
+                  style={{ flex: "1 1 auto" }}
+                />
+                <input
+                  className="field-input"
+                  type="number"
+                  step={0.1}
+                  min={0}
+                  value={round(layer.cornerRadius)}
+                  style={{ flex: "0 0 60px" }}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value);
+                    if (!Number.isNaN(v)) setCornerRadius(layer.id, v);
                   }}
                 />
               </div>

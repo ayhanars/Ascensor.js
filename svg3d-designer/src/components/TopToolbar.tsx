@@ -1,20 +1,34 @@
 import { useRef } from "react";
+import { useStore } from "zustand";
 import { useSceneStore } from "../state/store";
+import type { ResolvedTheme } from "../state/theme";
+import { MoonIcon, RedoIcon, SunIcon, UndoIcon } from "./icons";
 
 interface Props {
   onImportFile: (file: File) => void;
   onExportStl: () => void;
   onResetView: () => void;
   exportDisabled: boolean;
+  theme: ResolvedTheme;
+  onToggleTheme: () => void;
 }
 
-export function TopToolbar({ onImportFile, onExportStl, onResetView, exportDisabled }: Props) {
+export function TopToolbar({
+  onImportFile,
+  onExportStl,
+  onResetView,
+  exportDisabled,
+  theme,
+  onToggleTheme,
+}: Props) {
   const viewMode = useSceneStore((s) => s.viewMode);
   const setViewMode = useSceneStore((s) => s.setViewMode);
   const showGrid = useSceneStore((s) => s.showGrid);
   const toggleGrid = useSceneStore((s) => s.toggleGrid);
   const newProject = useSceneStore((s) => s.newProject);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const canUndo = useStore(useSceneStore.temporal, (s) => s.pastStates.length > 0);
+  const canRedo = useStore(useSceneStore.temporal, (s) => s.futureStates.length > 0);
 
   return (
     <div className="toolbar">
@@ -51,6 +65,25 @@ export function TopToolbar({ onImportFile, onExportStl, onResetView, exportDisab
 
       <div className="toolbar-sep" />
 
+      <button
+        className="toolbar-btn"
+        title="Undo (Cmd/Ctrl+Z)"
+        disabled={!canUndo}
+        onClick={() => useSceneStore.temporal.getState().undo()}
+      >
+        <UndoIcon />
+      </button>
+      <button
+        className="toolbar-btn"
+        title="Redo (Cmd/Ctrl+Shift+Z)"
+        disabled={!canRedo}
+        onClick={() => useSceneStore.temporal.getState().redo()}
+      >
+        <RedoIcon />
+      </button>
+
+      <div className="toolbar-sep" />
+
       <div className="toolbar-toggle-group">
         <button className={viewMode === "2d" ? "active" : ""} onClick={() => setViewMode("2d")}>
           2D
@@ -73,7 +106,14 @@ export function TopToolbar({ onImportFile, onExportStl, onResetView, exportDisab
       </button>
 
       <div className="toolbar-spacer" />
-      <div style={{ color: "var(--text-faint)", fontSize: 11 }}>Phase 1 MVP</div>
+
+      <button
+        className="toolbar-btn"
+        title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        onClick={onToggleTheme}
+      >
+        {theme === "dark" ? <SunIcon /> : <MoonIcon />}
+      </button>
     </div>
   );
 }
