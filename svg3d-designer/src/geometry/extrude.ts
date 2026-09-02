@@ -2,6 +2,7 @@ import * as THREE from "three";
 import type { Layer, ShapeLayer, ShapeRegion, Transform2D } from "../types";
 import { roundRegions } from "./roundCorners";
 import { buildBeveledExtrudeGeometry } from "./bevelExtrude";
+import { subtractHoles } from "./holeSubtraction";
 
 /**
  * The stored scene data uses the SVG document's own coordinate convention
@@ -64,6 +65,14 @@ export function buildExtrudeGeometry(layer: ShapeLayer): THREE.BufferGeometry {
 export interface AssemblyOptions {
   /** Skip layers hidden via visibility (used for both preview and export). */
   respectVisibility?: boolean;
+  /**
+   * When true (3D preview only — never for STL export), a shape marked as
+   * a hole is kept in the output as a translucent overlay after its volume
+   * has been cut from whatever it overlaps, so the negative space stays
+   * visible while editing. Defaults to false: a hole is a cutting tool,
+   * not printable material, so by default it's cut and then removed.
+   */
+  showHoleOverlays?: boolean;
 }
 
 /**
@@ -118,6 +127,7 @@ export function buildAssemblyGroup(
     if (child) root.add(child);
   }
   root.updateMatrixWorld(true);
+  subtractHoles(root, layers, { showHoleOverlays: options.showHoleOverlays ?? false });
   return root;
 }
 

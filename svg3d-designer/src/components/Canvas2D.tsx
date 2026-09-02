@@ -211,13 +211,18 @@ export function Canvas2D({ resetSignal }: Props) {
       );
     }
 
+    const pathD = regionsToPathD(roundRegions(layer.regions, layer.cornerRadius));
     return (
       <g key={id} transform={transformAttr}>
         <path
-          d={regionsToPathD(roundRegions(layer.regions, layer.cornerRadius))}
-          fill={layer.color}
+          d={pathD}
+          fill={layer.isHole ? "#ef4444" : layer.color}
+          fillOpacity={layer.isHole ? 0.35 : 1}
           fillRule="evenodd"
-          stroke="none"
+          stroke={layer.isHole ? "#ef4444" : "none"}
+          strokeWidth={layer.isHole ? 1 : 0}
+          strokeDasharray={layer.isHole ? "3 2" : undefined}
+          vectorEffect={layer.isHole ? "non-scaling-stroke" : undefined}
           style={{ cursor: layer.locked ? "default" : "move" }}
           onPointerDown={(e) => !layer.locked && handleShapeDown(e, id)}
         />

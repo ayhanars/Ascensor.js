@@ -3,6 +3,7 @@ import { useStore } from "zustand";
 import { useSceneStore } from "../state/store";
 import type { ResolvedTheme } from "../state/theme";
 import { MoonIcon, RedoIcon, SunIcon, UndoIcon } from "./icons";
+import { ToggleSwitch } from "./ToggleSwitch";
 
 interface Props {
   onImportFile: (file: File) => void;
@@ -11,35 +12,6 @@ interface Props {
   exportDisabled: boolean;
   theme: ResolvedTheme;
   onToggleTheme: () => void;
-}
-
-/** A real switch — pill track + sliding thumb — not just a button that
- * changes color when active. */
-function ToggleSwitch({
-  label,
-  checked,
-  onChange,
-  title,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: () => void;
-  title?: string;
-}) {
-  return (
-    <label className="toggle-switch" title={title}>
-      <span className="toggle-switch-label">{label}</span>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        className={"toggle-switch-track" + (checked ? " on" : "")}
-        onClick={onChange}
-      >
-        <span className="toggle-switch-thumb" />
-      </button>
-    </label>
-  );
 }
 
 export function TopToolbar({

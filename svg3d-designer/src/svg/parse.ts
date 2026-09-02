@@ -191,6 +191,7 @@ export function parseSvgToScene(svgText: string, fileName: string): ParsedScene 
         cornerRadius: 0,
         bevelBottom: 0,
         bevelTop: 0,
+        isHole: false,
       };
       layers[id] = layer;
       return id;
@@ -277,6 +278,7 @@ export function mergeSceneIntoSingleLayer(scene: ParsedScene, name: string): {
     cornerRadius: 0,
     bevelBottom: 0,
     bevelTop: 0,
+    isHole: false,
   };
 
   return { layers: { [id]: merged }, rootIds: [id] };

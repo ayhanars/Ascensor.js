@@ -195,11 +195,21 @@ export function buildBeveledExtrudeGeometry(
   // end): `z` sweeps 0..amount, `offset` (the inward inset) sweeps
   // -amount..0, tracing a circular arc of radius `amount` rather than a
   // straight diagonal — the same curve shape a CAD/DCC "round" bevel uses.
+  // Standard fillet construction: the arc's center sits inset by `amount`
+  // from the sharp corner it replaces, along *each* of the two flat faces
+  // being joined — (offset=-amount, z=+amount) for the bottom, (offset=
+  // -amount, z=0) for the top measured from its own wall-side origin —
+  // tangent to both faces, bulging outward (convex, a normal round-over).
+  // Centering the arc on an *endpoint* instead (an earlier, wrong version
+  // of this) still hits both endpoints but scoops inward along the way
+  // (concave — a cove/inner-bevel look, not a round-over). Verified
+  // numerically, not just by eye: both formulas below hold |distance to
+  // center - amount| < 1e-6 across the sweep.
   if (bottom > 0) {
     for (let i = 0; i <= BEVEL_CURVE_SEGMENTS; i++) {
       const t = i / BEVEL_CURVE_SEGMENTS;
       const angle = (t * Math.PI) / 2;
-      pushRing(bottom * Math.sin(angle), -bottom * Math.cos(angle));
+      pushRing(bottom * (1 - Math.cos(angle)), bottom * (Math.sin(angle) - 1));
     }
   } else {
     pushRing(0, 0);

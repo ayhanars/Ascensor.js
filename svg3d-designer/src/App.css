@@ -305,6 +305,13 @@
   line-height: 1.5;
 }
 
+.hole-hint {
+  margin: 6px 0 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .select-input {
   height: 26px;
   border: 1px solid var(--border-strong);
