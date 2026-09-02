@@ -77,6 +77,7 @@ interface SceneState {
   setCornerRadius: (id: string, radius: number) => void;
   setBevelBottom: (id: string, mm: number) => void;
   setBevelTop: (id: string, mm: number) => void;
+  setIsHole: (id: string, value: boolean) => void;
   setLayerZ: (id: string, z: number) => void;
   autoStackLayers: () => void;
   deleteLayer: (id: string) => void;
@@ -263,6 +264,18 @@ export const useSceneStore = create<SceneState>()(
         layers: {
           ...state.layers,
           [id]: { ...layer, bevelTop: Math.max(0, mm) } as ShapeLayer,
+        },
+      };
+    }),
+
+  setIsHole: (id, value) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape") return {};
+      return {
+        layers: {
+          ...state.layers,
+          [id]: { ...layer, isHole: value } as ShapeLayer,
         },
       };
     }),
@@ -569,6 +582,7 @@ export const useSceneStore = create<SceneState>()(
         cornerRadius: 0,
         bevelBottom: 0,
         bevelTop: 0,
+        isHole: false,
       };
 
       const toRemove = new Set<string>();
@@ -691,6 +705,7 @@ export const useSceneStore = create<SceneState>()(
         cornerRadius: 0,
         bevelBottom: 0,
         bevelTop: 0,
+        isHole: false,
       };
 
       return {

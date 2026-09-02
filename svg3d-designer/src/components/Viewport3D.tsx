@@ -122,7 +122,7 @@ function Assembly() {
   const selectLayer = useSceneStore((s) => s.selectLayer);
 
   const group = useMemo(
-    () => buildAssemblyGroup(layers, rootIds, { respectVisibility: true }),
+    () => buildAssemblyGroup(layers, rootIds, { respectVisibility: true, showHoleOverlays: true }),
     [layers, rootIds],
   );
 

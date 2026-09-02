@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { BED_PRESETS, beginGesture, endGesture, useSceneStore, type TrackedSceneSlice } from "../state/store";
 import { collectShapeLayers } from "../state/sceneUtils";
+import { ToggleSwitch } from "./ToggleSwitch";
 
 /**
  * A controlled number input that's still editable. A plain
@@ -65,6 +66,7 @@ export function Inspector() {
   const setCornerRadius = useSceneStore((s) => s.setCornerRadius);
   const setBevelBottom = useSceneStore((s) => s.setBevelBottom);
   const setBevelTop = useSceneStore((s) => s.setBevelTop);
+  const setIsHole = useSceneStore((s) => s.setIsHole);
   const setLayerZ = useSceneStore((s) => s.setLayerZ);
   const radiusGesture = useRef<TrackedSceneSlice | null>(null);
   const bevelBottomGesture = useRef<TrackedSceneSlice | null>(null);
@@ -409,6 +411,20 @@ export function Inspector() {
                     </>
                   );
                 })()}
+              </div>
+
+              <div className="inspector-section">
+                <div className="inspector-section-title">Negative space{isBatch ? " (all shapes in group)" : ""}</div>
+                <ToggleSwitch
+                  label="Use as hole"
+                  checked={display.isHole}
+                  onChange={() => targets.forEach((t) => setIsHole(t.id, !display.isHole))}
+                  title="Cuts this shape's volume out of whatever it overlaps, instead of printing it as its own solid — for magnet wells, screw holes, etc."
+                />
+                <p className="hole-hint">
+                  Cuts out of whatever it overlaps instead of adding material — for magnet wells, screw holes, etc.
+                  Shown in red while editing; never printed as its own solid.
+                </p>
               </div>
             </>
           );

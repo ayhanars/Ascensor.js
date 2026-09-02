@@ -57,6 +57,15 @@ export interface ShapeLayer extends LayerCommon {
   bevelBottom: number;
   /** Straight chamfer cut into the top rim (z=extrusionDepth), in mm. 0 = sharp edge. */
   bevelTop: number;
+  /**
+   * When true, this shape isn't printed as its own solid — its extruded
+   * volume is subtracted (a real 3D boolean difference) from every solid
+   * shape it overlaps, cutting a cavity or through-hole (e.g. a magnet
+   * well or screw hole). Shown as a distinct translucent overlay in the 3D
+   * preview so the negative space stays visible while editing, but never
+   * appears as its own geometry in the STL export.
+   */
+  isHole: boolean;
 }
 
 export type Layer = GroupLayer | ShapeLayer;
