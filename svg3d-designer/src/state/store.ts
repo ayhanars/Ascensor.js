@@ -16,6 +16,8 @@ import {
   collectAllDescendantIds,
   collectShapeLayers,
   flattenForDisplay,
+  boundsOverlap,
+  getLayerWorldBounds,
   getMultiLayerWorldBounds,
   getWorldTransform,
   IDENTITY_TRANSFORM,
@@ -251,21 +253,36 @@ export const useSceneStore = create<SceneState>()(
 
   autoStackLayers: () =>
     set((state) => {
-      // Stacks every shape layer bottom-to-top in the same order the layer
-      // panel shows them, each sitting directly on top of the one before
-      // it — the simplest fix for "my layers are stuck inside each other."
-      // Sets each layer's own (local) Z; a layer inside a group keeps
-      // stacking relative to that group's own Z offset.
+      // Each layer sits on top of whatever it actually overlaps in X/Y —
+      // not blindly on top of everything painted before it — so two
+      // unrelated shapes on the same background (e.g. separate letters,
+      // or an icon off to the side) end up resting at the same height
+      // instead of one floating on top of the other.
       const order = flattenForDisplay(state.layers, state.rootIds)
         .map((r) => r.id)
         .filter((id) => state.layers[id]?.type === "shape");
 
       const layers = { ...state.layers };
-      let cumulative = 0;
+      const placed: { bounds: ReturnType<typeof getLayerWorldBounds>; topZ: number }[] = [];
+
       for (const id of order) {
         const layer = layers[id] as ShapeLayer;
-        layers[id] = { ...layer, transform: { ...layer.transform, z: cumulative } };
-        cumulative += layer.extrusionDepth;
+        const bounds = getLayerWorldBounds(layers, id);
+
+        let baseZ = 0;
+        if (bounds) {
+          for (const p of placed) {
+            if (p.bounds && boundsOverlap(bounds, p.bounds)) baseZ = Math.max(baseZ, p.topZ);
+          }
+        }
+
+        // baseZ is a world-space height; convert it back to this layer's
+        // own local Z, relative to whatever group it's nested in.
+        const parentWorldZ = layer.parentId ? getWorldTransform(layers, layer.parentId).z : 0;
+        const localZ = Math.max(0, baseZ - parentWorldZ);
+        layers[id] = { ...layer, transform: { ...layer.transform, z: localZ } };
+
+        if (bounds) placed.push({ bounds, topZ: baseZ + layer.extrusionDepth });
       }
       return { layers };
     }),

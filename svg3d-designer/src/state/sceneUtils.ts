@@ -150,6 +150,10 @@ export interface Bounds {
   maxY: number;
 }
 
+export function boundsOverlap(a: Bounds, b: Bounds): boolean {
+  return a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY;
+}
+
 function expandBounds(b: Bounds | null, p: Point2): Bounds {
   if (!b) return { minX: p.x, minY: p.y, maxX: p.x, maxY: p.y };
   return {

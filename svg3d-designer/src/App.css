@@ -243,9 +243,13 @@
 .field-row .field-input[type="number"] { flex: 1 1 auto; min-width: 0; }
 .field-input[type="range"] { padding: 0; border: none; background: transparent; accent-color: var(--accent); }
 
-.field-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px; }
-.field-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 6px; }
-.field-grid-item { display: flex; flex-direction: column; gap: 3px; }
+.field-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 6px; }
+.field-grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 6px; }
+/* min-width: 0 is required here — a grid track's default "auto" minimum
+   is its content's min-content size, and a bare <input type="number">'s
+   browser-default intrinsic width (~170px) is wider than these columns,
+   which silently pushes later columns (e.g. Z) outside the sidebar. */
+.field-grid-item { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .field-grid-item .field-caption { font-size: 10.5px; color: var(--text-faint); }
 
 .color-field { display: flex; align-items: center; gap: 6px; }
