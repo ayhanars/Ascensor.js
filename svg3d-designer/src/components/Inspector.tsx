@@ -1,32 +1,48 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { BED_PRESETS, beginGesture, endGesture, useSceneStore, type TrackedSceneSlice } from "../state/store";
 
+/**
+ * A controlled number input that's still editable. A plain
+ * `value={someNumber}` input fights the user: clearing the field to type a
+ * new value (e.g. replacing "1" with "30") produces an empty string, which
+ * fails validation, so the onChange is skipped — and React then snaps the
+ * DOM value straight back to the old number on the next render, making it
+ * look impossible to clear. While focused, this shows the user's raw typed
+ * text instead of the committed value, and only reconciles with the real
+ * value (or reverts, if what's left isn't a valid number) on blur.
+ */
 function NumberField({
   label,
   value,
   onChange,
   step = 0.1,
   min,
+  style,
 }: {
-  label: string;
+  label?: string;
   value: number;
   onChange: (v: number) => void;
   step?: number;
   min?: number;
+  style?: React.CSSProperties;
 }) {
+  const [draft, setDraft] = useState<string | null>(null);
+
   return (
-    <div className="field-grid-item">
-      <span className="field-caption">{label}</span>
+    <div className="field-grid-item" style={style}>
+      {label && <span className="field-caption">{label}</span>}
       <input
         className="field-input"
         type="number"
         step={step}
         min={min}
-        value={Number.isFinite(value) ? round(value) : 0}
+        value={draft ?? (Number.isFinite(value) ? round(value) : 0)}
         onChange={(e) => {
+          setDraft(e.target.value);
           const v = parseFloat(e.target.value);
-          if (!Number.isNaN(v)) onChange(v);
+          if (!Number.isNaN(v)) onChange(min !== undefined ? Math.max(min, v) : v);
         }}
+        onBlur={() => setDraft(null)}
       />
     </div>
   );
@@ -235,19 +251,13 @@ export function Inspector() {
               onChange={(v) => setLayerTransform(layer.id, { scaleY: v })}
             />
           </div>
-          <div className="field-grid-item" style={{ marginBottom: 6 }}>
-            <span className="field-caption">Rotation (deg)</span>
-            <input
-              className="field-input"
-              type="number"
-              step={1}
-              value={round(layer.transform.rotation)}
-              onChange={(e) => {
-                const v = parseFloat(e.target.value);
-                if (!Number.isNaN(v)) setLayerTransform(layer.id, { rotation: v });
-              }}
-            />
-          </div>
+          <NumberField
+            label="Rotation (deg)"
+            value={layer.transform.rotation}
+            step={1}
+            style={{ marginBottom: 6 }}
+            onChange={(v) => setLayerTransform(layer.id, { rotation: v })}
+          />
           <button className="btn" style={{ width: "100%" }} onClick={fitDocumentToSelection}>
             Fit artboard to selection
           </button>
@@ -274,20 +284,12 @@ export function Inspector() {
 
             <div className="inspector-section">
               <div className="inspector-section-title">Extrusion</div>
-              <div className="field-grid-item">
-                <span className="field-caption">Depth (mm)</span>
-                <input
-                  className="field-input"
-                  type="number"
-                  step={0.1}
-                  min={0.05}
-                  value={round(layer.extrusionDepth)}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    if (!Number.isNaN(v)) setExtrusionDepth(layer.id, v);
-                  }}
-                />
-              </div>
+              <NumberField
+                label="Depth (mm)"
+                value={layer.extrusionDepth}
+                min={0.05}
+                onChange={(v) => setExtrusionDepth(layer.id, v)}
+              />
             </div>
 
             <div className="inspector-section">
@@ -313,17 +315,11 @@ export function Inspector() {
                   onChange={(e) => setCornerRadius(layer.id, parseFloat(e.target.value))}
                   style={{ flex: "1 1 auto" }}
                 />
-                <input
-                  className="field-input"
-                  type="number"
-                  step={0.1}
+                <NumberField
+                  value={layer.cornerRadius}
                   min={0}
-                  value={round(layer.cornerRadius)}
                   style={{ flex: "0 0 60px" }}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    if (!Number.isNaN(v)) setCornerRadius(layer.id, v);
-                  }}
+                  onChange={(v) => setCornerRadius(layer.id, v)}
                 />
               </div>
             </div>

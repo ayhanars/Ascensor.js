@@ -79,6 +79,18 @@ export const SunIcon = ({ size = 14 }: IconProps) => (
   </svg>
 );
 
+export const RectangleToolIcon = ({ size = 16 }: IconProps) => (
+  <svg {...base(size)}>
+    <rect x="2.5" y="4" width="11" height="8" rx="1" />
+  </svg>
+);
+
+export const CircleToolIcon = ({ size = 16 }: IconProps) => (
+  <svg {...base(size)}>
+    <circle cx="8" cy="8" r="5.5" />
+  </svg>
+);
+
 export const MoonIcon = ({ size = 14 }: IconProps) => (
   <svg {...base(size)}>
     <path d="M13.5 9.8A5.8 5.8 0 0 1 6.2 2.5a5.8 5.8 0 1 0 7.3 7.3Z" />
