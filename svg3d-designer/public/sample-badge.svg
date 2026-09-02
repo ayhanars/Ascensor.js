@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="50mm" viewBox="0 0 80 50">
+  <g id="Background">
+    <rect x="2" y="2" width="76" height="46" rx="6" fill="#1f2937" />
+  </g>
+  <g id="Logo">
+    <circle cx="20" cy="25" r="12" fill="#f97316" />
+    <path d="M14 25 L18 31 L27 17" stroke="#ffffff" stroke-width="3" fill="none" />
+  </g>
+  <g id="Text">
+    <path id="LetterO" fill-rule="evenodd" fill="#ffffff" d="
+      M45 15
+      C 38 15 34 20 34 25
+      C 34 30 38 35 45 35
+      C 52 35 56 30 56 25
+      C 56 20 52 15 45 15
+      Z
+      M45 20
+      C 49 20 51 22 51 25
+      C 51 28 49 30 45 30
+      C 41 30 39 28 39 25
+      C 39 22 41 20 45 20
+      Z
+    " />
+    <rect x="60" y="15" width="6" height="20" fill="#ffffff" />
+    <rect x="60" y="15" width="14" height="6" fill="#ffffff" />
+    <rect x="60" y="22" width="11" height="6" fill="#ffffff" />
+  </g>
+</svg>
