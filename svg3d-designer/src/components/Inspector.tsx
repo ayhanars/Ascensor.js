@@ -46,6 +46,7 @@ export function Inspector() {
   const setLayerTransform = useSceneStore((s) => s.setLayerTransform);
   const setExtrusionDepth = useSceneStore((s) => s.setExtrusionDepth);
   const setCornerRadius = useSceneStore((s) => s.setCornerRadius);
+  const setLayerZ = useSceneStore((s) => s.setLayerZ);
   const radiusGesture = useRef<TrackedSceneSlice | null>(null);
   const fitDocumentToSelection = useSceneStore((s) => s.fitDocumentToSelection);
   const matchDocumentToBed = useSceneStore((s) => s.matchDocumentToBed);
@@ -194,7 +195,7 @@ export function Inspector() {
 
         <div className="inspector-section">
           <div className="inspector-section-title">Transform</div>
-          <div className="field-grid-2">
+          <div className="field-grid-3">
             <NumberField
               label="X (mm)"
               value={layer.transform.x}
@@ -205,7 +206,21 @@ export function Inspector() {
               value={layer.transform.y}
               onChange={(v) => setLayerTransform(layer.id, { y: v })}
             />
+            <NumberField
+              label="Z (mm)"
+              value={layer.transform.z}
+              min={0}
+              onChange={(v) => setLayerZ(layer.id, v)}
+            />
           </div>
+          <button
+            className="btn"
+            style={{ width: "100%", marginBottom: 6 }}
+            onClick={() => setLayerZ(layer.id, 0)}
+            title="Set Z back to 0 — sitting directly on the print bed"
+          >
+            Drop to bed
+          </button>
           <div className="field-grid-2">
             <NumberField
               label="Scale X"

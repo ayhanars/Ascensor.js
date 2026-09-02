@@ -13,8 +13,10 @@ import { roundRegions } from "./roundCorners";
  * would flip triangle winding/normals and corrupt exported meshes.
  */
 function applyLayerTransform(object: THREE.Object3D, t: Transform2D): void {
-  object.position.set(t.x, -t.y, 0);
+  object.position.set(t.x, -t.y, t.z);
   object.rotation.z = THREE.MathUtils.degToRad(-t.rotation);
+  // Scale never touches Z: a layer's thickness is always real, absolute
+  // millimeters, unaffected by any XY scaling applied to it or a parent.
   object.scale.set(t.scaleX, t.scaleY, 1);
 }
 

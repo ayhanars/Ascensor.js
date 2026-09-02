@@ -21,6 +21,7 @@ import {
   IDENTITY_TRANSFORM,
 } from "./sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
+import { unionRegions } from "../geometry/booleanOps";
 
 export const BED_PRESETS: PrintBed[] = [
   { name: "Bambu Lab X1 Carbon", width: 256, depth: 256, height: 256 },
@@ -71,6 +72,8 @@ interface SceneState {
   setLayerTransform: (id: string, patch: Partial<Transform2D>) => void;
   setExtrusionDepth: (id: string, depth: number) => void;
   setCornerRadius: (id: string, radius: number) => void;
+  setLayerZ: (id: string, z: number) => void;
+  autoStackLayers: () => void;
   deleteLayer: (id: string) => void;
   deleteSelection: () => void;
   duplicateLayer: (id: string) => void;
@@ -230,6 +233,41 @@ export const useSceneStore = create<SceneState>()(
           [id]: { ...layer, cornerRadius: Math.max(0, radius) } as ShapeLayer,
         },
       };
+    }),
+
+  setLayerZ: (id, z) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer) return {};
+      // Never below the print bed — works for a group too, so a whole
+      // sub-assembly can be lifted together.
+      return {
+        layers: {
+          ...state.layers,
+          [id]: { ...layer, transform: { ...layer.transform, z: Math.max(0, z) } },
+        },
+      };
+    }),
+
+  autoStackLayers: () =>
+    set((state) => {
+      // Stacks every shape layer bottom-to-top in the same order the layer
+      // panel shows them, each sitting directly on top of the one before
+      // it — the simplest fix for "my layers are stuck inside each other."
+      // Sets each layer's own (local) Z; a layer inside a group keeps
+      // stacking relative to that group's own Z offset.
+      const order = flattenForDisplay(state.layers, state.rootIds)
+        .map((r) => r.id)
+        .filter((id) => state.layers[id]?.type === "shape");
+
+      const layers = { ...state.layers };
+      let cumulative = 0;
+      for (const id of order) {
+        const layer = layers[id] as ShapeLayer;
+        layers[id] = { ...layer, transform: { ...layer.transform, z: cumulative } };
+        cumulative += layer.extrusionDepth;
+      }
+      return { layers };
     }),
 
   deleteLayer: (id) =>
@@ -442,7 +480,7 @@ export const useSceneStore = create<SceneState>()(
       // Bake each source layer's full world transform into its points, so
       // the merged shape is correct in document space with an identity
       // transform of its own — exactly what "flatten" means.
-      const regions: ShapeRegion[] = [];
+      const bakedRegions: ShapeRegion[] = [];
       for (const shapeLayer of shapeLayers) {
         const world = getWorldTransform(state.layers, shapeLayer.id);
         // Bake each source's own corner rounding into its points first (in
@@ -450,15 +488,26 @@ export const useSceneStore = create<SceneState>()(
         // rounded source layer still looks rounded once flattened.
         const rounded = roundRegions(shapeLayer.regions, shapeLayer.cornerRadius);
         for (const region of rounded) {
-          regions.push({
+          bakedRegions.push({
             outer: { points: region.outer.points.map((p) => applyTransform2D(p, world)) },
             holes: region.holes.map((h) => ({ points: h.points.map((p) => applyTransform2D(p, world)) })),
           });
         }
       }
+      // A real boolean union — overlapping shapes fill solid (like Figma's
+      // Union), not naive concatenation, which behaves like Exclude
+      // wherever shapes overlap.
+      const regions = unionRegions(bakedRegions);
 
       const frontMost = shapeLayers[shapeLayers.length - 1];
       const mergedId = nanoid(8);
+      // Keep the merged shape sitting at the same physical height the
+      // front-most source was at, expressed relative to its new parent.
+      const frontMostWorldZ = getWorldTransform(state.layers, frontMost.id).z;
+      const mergedParentWorldZ = topLayer.parentId
+        ? getWorldTransform(state.layers, topLayer.parentId).z
+        : 0;
+
       const merged: ShapeLayer = {
         id: mergedId,
         type: "shape",
@@ -466,7 +515,7 @@ export const useSceneStore = create<SceneState>()(
         visible: true,
         locked: false,
         color: frontMost.color,
-        transform: { ...IDENTITY_TRANSFORM },
+        transform: { ...IDENTITY_TRANSFORM, z: Math.max(0, frontMostWorldZ - mergedParentWorldZ) },
         parentId: topLayer.parentId,
         regions,
         extrusionDepth: frontMost.extrusionDepth,
