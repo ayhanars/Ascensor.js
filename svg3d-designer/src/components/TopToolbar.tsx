@@ -109,19 +109,19 @@ export function TopToolbar({
       </button>
 
       <button
-        className="toolbar-btn"
+        className={"toolbar-btn toggle" + (showGrid ? " active" : "")}
         onClick={toggleGrid}
-        style={{ color: showGrid ? "var(--accent)" : undefined }}
+        aria-pressed={showGrid}
       >
         Grid
       </button>
 
       {viewMode === "3d" && (
         <button
-          className="toolbar-btn"
+          className={"toolbar-btn toggle" + (wireframe ? " active" : "")}
           onClick={toggleWireframe}
           title="See through solid surfaces to check nested or hidden geometry"
-          style={{ color: wireframe ? "var(--accent)" : undefined }}
+          aria-pressed={wireframe}
         >
           Wireframe
         </button>
