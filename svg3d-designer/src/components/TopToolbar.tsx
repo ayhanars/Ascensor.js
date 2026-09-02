@@ -26,6 +26,7 @@ export function TopToolbar({
   const showGrid = useSceneStore((s) => s.showGrid);
   const toggleGrid = useSceneStore((s) => s.toggleGrid);
   const newProject = useSceneStore((s) => s.newProject);
+  const autoStackLayers = useSceneStore((s) => s.autoStackLayers);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canUndo = useStore(useSceneStore.temporal, (s) => s.pastStates.length > 0);
   const canRedo = useStore(useSceneStore.temporal, (s) => s.futureStates.length > 0);
@@ -95,6 +96,14 @@ export function TopToolbar({
 
       <button className="toolbar-btn" onClick={onResetView}>
         Reset View
+      </button>
+
+      <button
+        className="toolbar-btn"
+        onClick={autoStackLayers}
+        title="Stack every layer bottom-to-top with no overlap, in layer-panel order"
+      >
+        Auto-Stack
       </button>
 
       <button

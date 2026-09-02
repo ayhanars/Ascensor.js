@@ -3,6 +3,7 @@ import type { Layer, Point2, ShapeLayer, Transform2D } from "../types";
 export const IDENTITY_TRANSFORM: Transform2D = {
   x: 0,
   y: 0,
+  z: 0,
   rotation: 0,
   scaleX: 1,
   scaleY: 1,
@@ -26,6 +27,7 @@ export function getWorldTransform(
 
   let x = 0;
   let y = 0;
+  let z = 0;
   let rotation = 0;
   let scaleX = 1;
   let scaleY = 1;
@@ -42,12 +44,15 @@ export function getWorldTransform(
     const rotatedY = localX * sin + localY * cos;
     x += rotatedX;
     y += rotatedY;
+    // Z is a simple stacking height, independent of the 2D rotation/scale
+    // that only ever happens around/within the print bed's XY plane.
+    z += t.z;
     rotation += t.rotation;
     scaleX *= t.scaleX;
     scaleY *= t.scaleY;
   }
 
-  return { x, y, rotation, scaleX, scaleY };
+  return { x, y, z, rotation, scaleX, scaleY };
 }
 
 export function isEffectivelyVisible(

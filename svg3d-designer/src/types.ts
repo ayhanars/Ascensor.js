@@ -22,6 +22,8 @@ export interface ShapeRegion {
 export interface Transform2D {
   x: number; // mm, position of the layer origin on the document
   y: number; // mm
+  /** Height above the print bed the layer's extrusion starts at, in mm. Never negative. */
+  z: number;
   rotation: number; // degrees, around Z
   scaleX: number;
   scaleY: number;
