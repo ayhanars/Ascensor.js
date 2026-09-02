@@ -1,0 +1,127 @@
+import { useCallback, useRef, useState } from "react";
+import "./App.css";
+import { TopToolbar } from "./components/TopToolbar";
+import { LayerPanel } from "./components/LayerPanel";
+import { Inspector } from "./components/Inspector";
+import { Canvas2D } from "./components/Canvas2D";
+import { Viewport3D } from "./components/Viewport3D";
+import { ImportDialog } from "./components/ImportDialog";
+import { useSceneStore } from "./state/store";
+import { isEffectivelyVisible } from "./state/sceneUtils";
+import { mergeSceneIntoSingleLayer, parseSvgToScene, type ParsedScene } from "./svg/parse";
+import { exportSceneToStl } from "./export/stl";
+
+function App() {
+  const viewMode = useSceneStore((s) => s.viewMode);
+  const layers = useSceneStore((s) => s.layers);
+  const rootIds = useSceneStore((s) => s.rootIds);
+  const documentName = useSceneStore((s) => s.document.name);
+  const importParsedScene = useSceneStore((s) => s.importParsedScene);
+
+  const [pendingImport, setPendingImport] = useState<ParsedScene | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragCounter = useRef(0);
+  const [resetSignal, setResetSignal] = useState(0);
+
+  const handleImportFile = useCallback(async (file: File) => {
+    setImportError(null);
+    try {
+      const text = await file.text();
+      const parsed = parseSvgToScene(text, file.name);
+      if (parsed.rootIds.length === 0) {
+        setImportError(
+          `Nothing printable was found in "${file.name}". It may contain only text, images, or unfilled strokes, which aren't supported yet.`,
+        );
+        return;
+      }
+      setPendingImport(parsed);
+    } catch {
+      setImportError(`"${file.name}" could not be read as a valid SVG file.`);
+    }
+  }, []);
+
+  const hasVisibleGeometry = Object.values(layers).some(
+    (l) => l.type === "shape" && isEffectivelyVisible(layers, l.id),
+  );
+
+  return (
+    <div
+      className="app"
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+      }}
+      onDragEnter={(e) => {
+        if (!e.dataTransfer.types.includes("Files")) return;
+        dragCounter.current++;
+        setIsDragOver(true);
+      }}
+      onDragLeave={() => {
+        dragCounter.current = Math.max(0, dragCounter.current - 1);
+        if (dragCounter.current === 0) setIsDragOver(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        dragCounter.current = 0;
+        setIsDragOver(false);
+        const file = Array.from(e.dataTransfer.files).find((f) => /\.svg$/i.test(f.name));
+        if (file) handleImportFile(file);
+        else setImportError("Drop a .svg file to import it.");
+      }}
+    >
+      <TopToolbar
+        onImportFile={handleImportFile}
+        onExportStl={() => exportSceneToStl(layers, rootIds, documentName)}
+        onResetView={() => setResetSignal((n) => n + 1)}
+        exportDisabled={!hasVisibleGeometry}
+      />
+
+      <div className="main-body">
+        <LayerPanel />
+
+        <div className="canvas-area">
+          {viewMode === "2d" ? <Canvas2D resetSignal={resetSignal} /> : <Viewport3D resetSignal={resetSignal} />}
+          {isDragOver && <div className="dropzone-overlay">Drop SVG to import</div>}
+        </div>
+
+        <Inspector />
+      </div>
+
+      {pendingImport && (
+        <ImportDialog
+          summary={pendingImport.summary}
+          onCancel={() => setPendingImport(null)}
+          onConfirm={(mode) => {
+            const scene =
+              mode === "layers"
+                ? { layers: pendingImport.layers, rootIds: pendingImport.rootIds }
+                : mergeSceneIntoSingleLayer(pendingImport, pendingImport.summary.fileName.replace(/\.svg$/i, ""));
+            importParsedScene({
+              layers: scene.layers,
+              rootIds: scene.rootIds,
+              widthMM: pendingImport.widthMM,
+              heightMM: pendingImport.heightMM,
+            });
+            setPendingImport(null);
+          }}
+        />
+      )}
+
+      {importError && (
+        <div className="dialog-backdrop" onMouseDown={() => setImportError(null)}>
+          <div className="dialog" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="dialog-header">Import problem</div>
+            <div className="dialog-body">{importError}</div>
+            <div className="dialog-footer">
+              <button className="btn primary" onClick={() => setImportError(null)}>
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default App;
