@@ -14,9 +14,61 @@
   --accent: #4f46e5;
   --accent-contrast: #ffffff;
   --danger: #dc2626;
+  --dialog-warning-bg: #fff7ed;
+  --dialog-warning-border: #fed7aa;
+  --dialog-warning-text: #9a3412;
+  --overlay-bg: rgba(255, 255, 255, 0.9);
   --radius-sm: 4px;
   --radius-md: 6px;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+
+/* Follow the OS preference until the user makes an explicit choice. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg-app: #1c1c1f;
+    --bg-panel: #232326;
+    --bg-canvas: #1a1a1c;
+    --bg-input: #232326;
+    --bg-hover: #32323c;
+    --bg-selected: #383a63;
+    --border: #38383e;
+    --border-strong: #4a4a52;
+    --text: #eceef0;
+    --text-muted: #a3a3ac;
+    --text-faint: #75757e;
+    --accent: #6d68f0;
+    --accent-contrast: #ffffff;
+    --danger: #f87171;
+    --dialog-warning-bg: #2c2213;
+    --dialog-warning-border: #6b4a1a;
+    --dialog-warning-text: #fdba74;
+    --overlay-bg: rgba(35, 35, 38, 0.9);
+  }
+}
+
+/* Explicit user override always wins over the OS preference. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-app: #1c1c1f;
+  --bg-panel: #232326;
+  --bg-canvas: #1a1a1c;
+  --bg-input: #232326;
+  --bg-hover: #32323c;
+  --bg-selected: #383a63;
+  --border: #38383e;
+  --border-strong: #4a4a52;
+  --text: #eceef0;
+  --text-muted: #a3a3ac;
+  --text-faint: #75757e;
+  --accent: #6d68f0;
+  --accent-contrast: #ffffff;
+  --danger: #f87171;
+  --dialog-warning-bg: #2c2213;
+  --dialog-warning-border: #6b4a1a;
+  --dialog-warning-text: #fdba74;
+  --overlay-bg: rgba(35, 35, 38, 0.9);
 }
 
 * { box-sizing: border-box; }

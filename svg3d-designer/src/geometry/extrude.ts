@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { Layer, ShapeLayer, ShapeRegion, Transform2D } from "../types";
+import { roundRegions } from "./roundCorners";
 
 /**
  * The stored scene data uses the SVG document's own coordinate convention
@@ -39,7 +40,7 @@ function regionsToThreeShapes(regions: ShapeRegion[]): THREE.Shape[] {
 }
 
 export function buildExtrudeGeometry(layer: ShapeLayer): THREE.BufferGeometry {
-  const shapes = regionsToThreeShapes(layer.regions);
+  const shapes = regionsToThreeShapes(roundRegions(layer.regions, layer.cornerRadius));
   const depth = Math.max(0.05, layer.extrusionDepth);
   const geometry = new THREE.ExtrudeGeometry(shapes, {
     depth,

@@ -172,3 +172,24 @@ export function getLayerWorldBounds(
   }
   return bounds;
 }
+
+/** Union of getLayerWorldBounds across several layers (e.g. the current selection). */
+export function getMultiLayerWorldBounds(
+  layers: Record<string, Layer>,
+  ids: string[],
+): Bounds | null {
+  let bounds: Bounds | null = null;
+  for (const id of ids) {
+    const b = getLayerWorldBounds(layers, id);
+    if (!b) continue;
+    bounds = bounds
+      ? {
+          minX: Math.min(bounds.minX, b.minX),
+          minY: Math.min(bounds.minY, b.minY),
+          maxX: Math.max(bounds.maxX, b.maxX),
+          maxY: Math.max(bounds.maxY, b.maxY),
+        }
+      : b;
+  }
+  return bounds;
+}

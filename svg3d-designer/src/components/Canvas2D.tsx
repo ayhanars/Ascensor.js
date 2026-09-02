@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { useSceneStore } from "../state/store";
+import { beginGesture, endGesture, useSceneStore, type TrackedSceneSlice } from "../state/store";
 import { getLayerWorldBounds } from "../state/sceneUtils";
+import { roundRegions } from "../geometry/roundCorners";
 import type { Layer, ShapeRegion } from "../types";
 
 interface ViewBox {
@@ -57,6 +58,7 @@ export function Canvas2D({ resetSignal }: Props) {
     startVb: ViewBox;
     moved: boolean;
     originals: Record<string, { x: number; y: number }>;
+    preGestureSnapshot: TrackedSceneSlice | null;
   } | null>(null);
 
   useEffect(() => {
@@ -99,6 +101,7 @@ export function Canvas2D({ resetSignal }: Props) {
       startVb: vb,
       moved: false,
       originals: {},
+      preGestureSnapshot: null,
     };
     setIsPanning(true);
   }
@@ -118,6 +121,9 @@ export function Canvas2D({ resetSignal }: Props) {
       startVb: vb,
       moved: false,
       originals,
+      // The whole drag — however many pointermove events it produces —
+      // should collapse into a single undo step.
+      preGestureSnapshot: beginGesture(),
     };
   }
 
@@ -146,6 +152,9 @@ export function Canvas2D({ resetSignal }: Props) {
   function onPointerUp(e: React.PointerEvent) {
     const drag = dragState.current;
     if (drag?.mode === "pan" && !drag.moved) clearSelection();
+    if (drag?.mode === "move" && drag.preGestureSnapshot) {
+      endGesture(drag.preGestureSnapshot, drag.moved);
+    }
     dragState.current = null;
     setIsPanning(false);
     (e.target as Element).releasePointerCapture?.(e.pointerId);
@@ -182,7 +191,7 @@ export function Canvas2D({ resetSignal }: Props) {
     return (
       <g key={id} transform={transformAttr}>
         <path
-          d={regionsToPathD(layer.regions)}
+          d={regionsToPathD(roundRegions(layer.regions, layer.cornerRadius))}
           fill={layer.color}
           fillRule="evenodd"
           stroke="none"

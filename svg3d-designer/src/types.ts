@@ -49,6 +49,8 @@ export interface ShapeLayer extends LayerCommon {
   regions: ShapeRegion[];
   /** How far the flat shape is pushed into 3D, in mm. */
   extrusionDepth: number;
+  /** Uniform corner rounding applied to every vertex, in mm. 0 = sharp. */
+  cornerRadius: number;
 }
 
 export type Layer = GroupLayer | ShapeLayer;

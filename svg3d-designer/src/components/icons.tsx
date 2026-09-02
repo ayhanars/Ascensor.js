@@ -71,3 +71,30 @@ export const ChevronRightIcon = ({ size = 12 }: IconProps) => (
     <path d="M5.5 3.5 10 8l-4.5 4.5" />
   </svg>
 );
+
+export const SunIcon = ({ size = 14 }: IconProps) => (
+  <svg {...base(size)}>
+    <circle cx="8" cy="8" r="3" />
+    <path d="M8 1.5v1.6M8 12.9v1.6M14.5 8h-1.6M3.1 8H1.5M12.5 3.5l-1.1 1.1M4.6 11.4l-1.1 1.1M12.5 12.5l-1.1-1.1M4.6 4.6 3.5 3.5" />
+  </svg>
+);
+
+export const MoonIcon = ({ size = 14 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M13.5 9.8A5.8 5.8 0 0 1 6.2 2.5a5.8 5.8 0 1 0 7.3 7.3Z" />
+  </svg>
+);
+
+export const UndoIcon = ({ size = 14 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M3 6.5h6.5a4 4 0 0 1 0 8H6" />
+    <path d="M5.8 3.8 3 6.5l2.8 2.7" />
+  </svg>
+);
+
+export const RedoIcon = ({ size = 14 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M13 6.5H6.5a4 4 0 0 0 0 8H10" />
+    <path d="M10.2 3.8 13 6.5l-2.8 2.7" />
+  </svg>
+);
