@@ -5,6 +5,14 @@ import * as THREE from "three";
 import { useSceneStore } from "../state/store";
 import type { ResolvedTheme } from "../state/theme";
 import { buildAssemblyGroup, computeVisibleBounds } from "../geometry/extrude";
+import { flattenForDisplay } from "../state/sceneUtils";
+
+/** Never participates in raycasting — used for the selection-decoration
+ * handles/edges so they can't silently swallow a click meant for whatever
+ * geometry they happen to be sitting in front of. */
+function disableRaycast(obj: THREE.Object3D) {
+  obj.raycast = () => {};
+}
 
 // Display-only rotation: our data model treats Z as "up" (extrusion axis),
 // matching how a print bed and slicer see the model. Three's default
@@ -100,6 +108,12 @@ function PrintBed() {
 const SELECTION_LINE_MATERIAL = new THREE.LineBasicMaterial({ color: 0x4f46e5, toneMapped: false });
 const SELECTION_HANDLE_MATERIAL = new THREE.MeshBasicMaterial({ color: 0x4f46e5, toneMapped: false });
 
+// Two mesh surfaces this close together (in mm along the ray) count as a
+// depth tie rather than "genuinely closer" — big enough to absorb float
+// error on exactly-coplanar geometry, small enough to never mask a real,
+// deliberate stack (e.g. from Auto-Stack, which always leaves a real gap).
+const DEPTH_TIE_EPSILON = 0.01;
+
 function Assembly() {
   const layers = useSceneStore((s) => s.layers);
   const rootIds = useSceneStore((s) => s.rootIds);
@@ -111,6 +125,21 @@ function Assembly() {
     () => buildAssemblyGroup(layers, rootIds, { respectVisibility: true }),
     [layers, rootIds],
   );
+
+  // Paint order — later index = added/painted later = "in front" for two
+  // otherwise-tied (coplanar, unstacked) shapes, matching how the 2D canvas
+  // already resolves overlapping clicks (later DOM siblings paint on top
+  // and receive the event first). Raw 3D-depth raycasting alone would
+  // instead deterministically favor whichever mesh the group happened to
+  // traverse first — in practice, almost always the oldest/background
+  // layer — so a small decorative shape sitting flush on a base could never
+  // be clicked at all.
+  const paintOrderIndex = useMemo(() => {
+    const order = flattenForDisplay(layers, rootIds);
+    const map = new Map<string, number>();
+    order.forEach((row, i) => map.set(row.id, i));
+    return map;
+  }, [layers, rootIds]);
 
   useEffect(() => {
     group.traverse((obj) => {
@@ -147,6 +176,7 @@ function Assembly() {
       boxGeom.dispose();
       const edges = new THREE.LineSegments(edgesGeom, SELECTION_LINE_MATERIAL);
       edges.position.copy(center);
+      disableRaycast(edges);
       mesh.add(edges);
       extras.push(edges);
       disposables.push(edgesGeom);
@@ -159,6 +189,7 @@ function Assembly() {
           for (const z of [box.min.z, box.max.z]) {
             const handle = new THREE.Mesh(handleGeom, SELECTION_HANDLE_MATERIAL);
             handle.position.set(x, y, z);
+            disableRaycast(handle);
             mesh.add(handle);
             extras.push(handle);
           }
@@ -181,7 +212,31 @@ function Assembly() {
       object={group}
       rotation={DISPLAY_ROTATION}
       onPointerDown={(e: ThreeEvent<PointerEvent>) => {
-        pointerDownInfo.current = { x: e.clientX, y: e.clientY, layerId: e.object.userData.layerId };
+        // Resolve the *intended* target ourselves rather than trusting R3F's
+        // default nearest-hit: among every mesh hit at this pointer position
+        // within DEPTH_TIE_EPSILON of the closest one, prefer the one
+        // painted latest (see paintOrderIndex above). A genuinely closer
+        // object (outside the tie band) still always wins, unaffected.
+        let layerId: string | undefined;
+        let bestDist = Infinity;
+        let bestOrder = -1;
+        for (const hit of e.intersections) {
+          const id = hit.object.userData.layerId as string | undefined;
+          if (!id) continue;
+          if (hit.distance < bestDist - DEPTH_TIE_EPSILON) {
+            bestDist = hit.distance;
+            bestOrder = paintOrderIndex.get(id) ?? -1;
+            layerId = id;
+          } else if (hit.distance < bestDist + DEPTH_TIE_EPSILON) {
+            const order = paintOrderIndex.get(id) ?? -1;
+            if (order > bestOrder) {
+              bestOrder = order;
+              layerId = id;
+            }
+            bestDist = Math.min(bestDist, hit.distance);
+          }
+        }
+        pointerDownInfo.current = { x: e.clientX, y: e.clientY, layerId };
       }}
       onPointerUp={(e: ThreeEvent<PointerEvent>) => {
         const down = pointerDownInfo.current;
