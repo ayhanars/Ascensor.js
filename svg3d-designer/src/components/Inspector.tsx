@@ -2,6 +2,40 @@ import { useRef, useState } from "react";
 import { BED_PRESETS, beginGesture, endGesture, useSceneStore, type TrackedSceneSlice } from "../state/store";
 import { collectShapeLayers } from "../state/sceneUtils";
 import { ToggleSwitch } from "./ToggleSwitch";
+import { displayToMM, formatLength, mmToDisplay, UNIT_LABELS } from "../state/units";
+import type { AlignMode, Units } from "../types";
+import {
+  AlignBottomIcon,
+  AlignCenterHIcon,
+  AlignLeftIcon,
+  AlignMiddleVIcon,
+  AlignRightIcon,
+  AlignTopIcon,
+} from "./icons";
+
+/** Left/center/right + top/middle/bottom align buttons — aligns to the
+ * artboard for a single selection, or the selection's own combined
+ * bounding box for several, matching Figma. */
+function AlignRow() {
+  const alignSelection = useSceneStore((s) => s.alignSelection);
+  const buttons: { mode: AlignMode; title: string; Icon: typeof AlignLeftIcon }[] = [
+    { mode: "left", title: "Align left", Icon: AlignLeftIcon },
+    { mode: "centerH", title: "Align center (horizontal)", Icon: AlignCenterHIcon },
+    { mode: "right", title: "Align right", Icon: AlignRightIcon },
+    { mode: "top", title: "Align top", Icon: AlignTopIcon },
+    { mode: "middleV", title: "Align middle (vertical)", Icon: AlignMiddleVIcon },
+    { mode: "bottom", title: "Align bottom", Icon: AlignBottomIcon },
+  ];
+  return (
+    <div className="align-row">
+      {buttons.map(({ mode, title, Icon }) => (
+        <button key={mode} className="icon-btn align-btn" title={title} onClick={() => alignSelection(mode)}>
+          <Icon />
+        </button>
+      ))}
+    </div>
+  );
+}
 
 /**
  * A controlled number input that's still editable. A plain
@@ -20,15 +54,23 @@ function NumberField({
   step = 0.1,
   min,
   style,
+  unit,
 }: {
   label?: string;
+  /** Always mm when `unit` is set — the field itself does the mm <-> display
+   * conversion, so every caller keeps working in the store's real unit. */
   value: number;
   onChange: (v: number) => void;
   step?: number;
   min?: number;
   style?: React.CSSProperties;
+  /** When set, `value`/`onChange` are treated as mm and shown/typed in this
+   * unit instead — for physical lengths only, never Scale or Rotation. */
+  unit?: Units;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
+  const displayValue = unit ? mmToDisplay(value, unit) : value;
+  const displayMin = unit && min !== undefined ? mmToDisplay(min, unit) : min;
 
   return (
     <div className="field-grid-item" style={style}>
@@ -37,12 +79,14 @@ function NumberField({
         className="field-input"
         type="number"
         step={step}
-        min={min}
-        value={draft ?? (Number.isFinite(value) ? round(value) : 0)}
+        min={displayMin}
+        value={draft ?? (Number.isFinite(displayValue) ? round(displayValue) : 0)}
         onChange={(e) => {
           setDraft(e.target.value);
-          const v = parseFloat(e.target.value);
-          if (!Number.isNaN(v)) onChange(min !== undefined ? Math.max(min, v) : v);
+          const typed = parseFloat(e.target.value);
+          if (Number.isNaN(typed)) return;
+          const mm = unit ? displayToMM(typed, unit) : typed;
+          onChange(min !== undefined ? Math.max(min, mm) : mm);
         }}
         onBlur={() => setDraft(null)}
       />
@@ -56,8 +100,11 @@ function round(n: number): number {
 
 export function Inspector() {
   const docSettings = useSceneStore((s) => s.document);
+  const unit = docSettings.units;
+  const unitLabel = UNIT_LABELS[unit];
   const setBed = useSceneStore((s) => s.setBed);
   const setDocumentName = useSceneStore((s) => s.setDocumentName);
+  const setUnits = useSceneStore((s) => s.setUnits);
   const layers = useSceneStore((s) => s.layers);
   const selection = useSceneStore((s) => s.selection);
   const setLayerColor = useSceneStore((s) => s.setLayerColor);
@@ -74,6 +121,8 @@ export function Inspector() {
   const fitDocumentToSelection = useSceneStore((s) => s.fitDocumentToSelection);
   const matchDocumentToBed = useSceneStore((s) => s.matchDocumentToBed);
   const mergeLayers = useSceneStore((s) => s.mergeLayers);
+  const groupSelection = useSceneStore((s) => s.groupSelection);
+  const ungroupSelection = useSceneStore((s) => s.ungroupSelection);
 
   if (selection.length === 0) {
     const preset = BED_PRESETS.find(
@@ -95,8 +144,14 @@ export function Inspector() {
             </div>
             <div className="field-row">
               <span className="field-label">Units</span>
-              <select className="select-input field-input" value={docSettings.units} disabled>
+              <select
+                className="select-input field-input"
+                value={docSettings.units}
+                onChange={(e) => setUnits(e.target.value as Units)}
+              >
                 <option value="mm">Millimeters (mm)</option>
+                <option value="cm">Centimeters (cm)</option>
+                <option value="in">Inches (in)</option>
               </select>
             </div>
           </div>
@@ -121,9 +176,9 @@ export function Inspector() {
               </select>
             </div>
             <div className="field-grid-3">
-              <NumberField label="Width" value={docSettings.bed.width} min={1} onChange={(v) => setBed({ width: v })} />
-              <NumberField label="Depth" value={docSettings.bed.depth} min={1} onChange={(v) => setBed({ depth: v })} />
-              <NumberField label="Height" value={docSettings.bed.height} min={1} onChange={(v) => setBed({ height: v })} />
+              <NumberField label="Width" value={docSettings.bed.width} min={1} unit={unit} onChange={(v) => setBed({ width: v })} />
+              <NumberField label="Depth" value={docSettings.bed.depth} min={1} unit={unit} onChange={(v) => setBed({ depth: v })} />
+              <NumberField label="Height" value={docSettings.bed.height} min={1} unit={unit} onChange={(v) => setBed({ height: v })} />
             </div>
           </div>
 
@@ -131,11 +186,11 @@ export function Inspector() {
             <div className="inspector-section-title">Artboard</div>
             <div className="dialog-row">
               <span className="k">Width</span>
-              <span>{round(docSettings.widthMM)} mm</span>
+              <span>{formatLength(docSettings.widthMM, unit)} {unitLabel}</span>
             </div>
             <div className="dialog-row">
               <span className="k">Height</span>
-              <span>{round(docSettings.heightMM)} mm</span>
+              <span>{formatLength(docSettings.heightMM, unit)} {unitLabel}</span>
             </div>
             <button className="btn" style={{ width: "100%", marginTop: 6 }} onClick={matchDocumentToBed}>
               Match print bed size
@@ -169,9 +224,23 @@ export function Inspector() {
               </div>
             </div>
           )}
+
+          <div className="inspector-section" style={{ marginTop: 10 }}>
+            <div className="inspector-section-title">Align</div>
+            <AlignRow />
+          </div>
+
+          <button
+            className="btn"
+            style={{ width: "100%", marginTop: 4 }}
+            onClick={() => groupSelection()}
+            title="Nest the selection under a new group, keeping each shape independently editable (Cmd/Ctrl+G)"
+          >
+            Group selection
+          </button>
           <button
             className="btn primary"
-            style={{ width: "100%", marginTop: 10 }}
+            style={{ width: "100%", marginTop: 6 }}
             onClick={() => mergeLayers(selection)}
             title="Combine the selected layers into a single flat shape (Cmd/Ctrl+E)"
           >
@@ -205,34 +274,52 @@ export function Inspector() {
             />
           </div>
           {layer.type === "group" && (
-            <button
-              className="btn"
-              style={{ width: "100%", marginTop: 8 }}
-              onClick={() => mergeLayers([layer.id])}
-              title="Combine everything in this group into one flat shape (Cmd/Ctrl+E)"
-            >
-              Flatten group
-            </button>
+            <>
+              <button
+                className="btn"
+                style={{ width: "100%", marginTop: 8 }}
+                onClick={() => ungroupSelection()}
+                title="Dissolve this group, keeping its contents in place (Cmd/Ctrl+Shift+G)"
+              >
+                Ungroup
+              </button>
+              <button
+                className="btn"
+                style={{ width: "100%", marginTop: 6 }}
+                onClick={() => mergeLayers([layer.id])}
+                title="Combine everything in this group into one flat shape (Cmd/Ctrl+E)"
+              >
+                Flatten group
+              </button>
+            </>
           )}
+        </div>
+
+        <div className="inspector-section">
+          <div className="inspector-section-title">Align to artboard</div>
+          <AlignRow />
         </div>
 
         <div className="inspector-section">
           <div className="inspector-section-title">Transform</div>
           <div className="field-grid-3">
             <NumberField
-              label="X (mm)"
+              label={`X (${unitLabel})`}
               value={layer.transform.x}
+              unit={unit}
               onChange={(v) => setLayerTransform(layer.id, { x: v })}
             />
             <NumberField
-              label="Y (mm)"
+              label={`Y (${unitLabel})`}
               value={layer.transform.y}
+              unit={unit}
               onChange={(v) => setLayerTransform(layer.id, { y: v })}
             />
             <NumberField
-              label="Z (mm)"
+              label={`Z (${unitLabel})`}
               value={layer.transform.z}
               min={0}
+              unit={unit}
               onChange={(v) => setLayerZ(layer.id, v)}
             />
           </div>
@@ -303,9 +390,10 @@ export function Inspector() {
               <div className="inspector-section">
                 <div className="inspector-section-title">Extrusion{isBatch ? " (all shapes in group)" : ""}</div>
                 <NumberField
-                  label="Depth (mm)"
+                  label={`Depth (${unitLabel})`}
                   value={display.extrusionDepth}
                   min={0.05}
+                  unit={unit}
                   onChange={(v) => targets.forEach((t) => setExtrusionDepth(t.id, v))}
                 />
               </div>
@@ -313,7 +401,7 @@ export function Inspector() {
               <div className="inspector-section">
                 <div className="inspector-section-title">Corners{isBatch ? " (all shapes in group)" : ""}</div>
                 <div className="field-row">
-                  <span className="field-label">Radius (mm)</span>
+                  <span className="field-label">Radius ({unitLabel})</span>
                   <input
                     className="field-input"
                     type="range"
@@ -338,6 +426,7 @@ export function Inspector() {
                   <NumberField
                     value={display.cornerRadius}
                     min={0}
+                    unit={unit}
                     style={{ flex: "0 0 60px" }}
                     onChange={(v) => targets.forEach((t) => setCornerRadius(t.id, v))}
                   />
@@ -351,7 +440,7 @@ export function Inspector() {
                   return (
                     <>
                       <div className="field-row">
-                        <span className="field-label">Top (mm)</span>
+                        <span className="field-label">Top ({unitLabel})</span>
                         <input
                           className="field-input"
                           type="range"
@@ -375,12 +464,13 @@ export function Inspector() {
                           value={display.bevelTop}
                           min={0}
                           step={0.05}
+                          unit={unit}
                           style={{ flex: "0 0 60px" }}
                           onChange={(v) => targets.forEach((t) => setBevelTop(t.id, v))}
                         />
                       </div>
                       <div className="field-row">
-                        <span className="field-label">Bottom (mm)</span>
+                        <span className="field-label">Bottom ({unitLabel})</span>
                         <input
                           className="field-input"
                           type="range"
@@ -404,6 +494,7 @@ export function Inspector() {
                           value={display.bevelBottom}
                           min={0}
                           step={0.05}
+                          unit={unit}
                           style={{ flex: "0 0 60px" }}
                           onChange={(v) => targets.forEach((t) => setBevelBottom(t.id, v))}
                         />

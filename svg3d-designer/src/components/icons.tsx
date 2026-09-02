@@ -110,3 +110,51 @@ export const RedoIcon = ({ size = 14 }: IconProps) => (
     <path d="M10.2 3.8 13 6.5l-2.8 2.7" />
   </svg>
 );
+
+export const AlignLeftIcon = ({ size = 14 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M2.5 1.5v13" />
+    <rect x="2.5" y="3" width="9" height="3.5" rx="0.6" />
+    <rect x="2.5" y="9.5" width="5.5" height="3.5" rx="0.6" />
+  </svg>
+);
+
+export const AlignCenterHIcon = ({ size = 14 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M8 1.5v13" />
+    <rect x="3.5" y="3" width="9" height="3.5" rx="0.6" />
+    <rect x="5.25" y="9.5" width="5.5" height="3.5" rx="0.6" />
+  </svg>
+);
+
+export const AlignRightIcon = ({ size = 14 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M13.5 1.5v13" />
+    <rect x="4.5" y="3" width="9" height="3.5" rx="0.6" />
+    <rect x="8" y="9.5" width="5.5" height="3.5" rx="0.6" />
+  </svg>
+);
+
+export const AlignTopIcon = ({ size = 14 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M1.5 2.5h13" />
+    <rect x="3" y="2.5" width="3.5" height="9" rx="0.6" />
+    <rect x="9.5" y="2.5" width="3.5" height="5.5" rx="0.6" />
+  </svg>
+);
+
+export const AlignMiddleVIcon = ({ size = 14 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M1.5 8h13" />
+    <rect x="3" y="3.5" width="3.5" height="9" rx="0.6" />
+    <rect x="9.5" y="5.25" width="3.5" height="5.5" rx="0.6" />
+  </svg>
+);
+
+export const AlignBottomIcon = ({ size = 14 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M1.5 13.5h13" />
+    <rect x="3" y="4.5" width="3.5" height="9" rx="0.6" />
+    <rect x="9.5" y="8" width="3.5" height="5.5" rx="0.6" />
+  </svg>
+);

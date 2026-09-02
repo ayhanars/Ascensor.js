@@ -85,7 +85,12 @@ function roundContour(points: Point2[], radius: number, segments: number): Point
   return out;
 }
 
-const ARC_SEGMENTS_PER_HALF_TURN = 8;
+// STL is a real polygon mesh, not a shading trick — an under-tessellated
+// fillet doesn't just look faceted on screen, it prints faceted too. 32
+// gives a 90° corner ~16 straight segments (~5.6° each), plenty smooth at
+// typical print scale without ballooning triangle counts on complex
+// imported SVGs with many corners.
+const ARC_SEGMENTS_PER_HALF_TURN = 32;
 
 export function roundRegions(regions: ShapeRegion[], radius: number): ShapeRegion[] {
   if (radius <= 0) return regions;
