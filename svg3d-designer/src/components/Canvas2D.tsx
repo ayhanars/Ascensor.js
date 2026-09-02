@@ -78,18 +78,41 @@ export function Canvas2D({ resetSignal }: Props) {
     return { x: transformed.x, y: transformed.y };
   }
 
-  function onWheel(e: React.WheelEvent) {
-    e.preventDefault();
-    const factor = Math.exp(e.deltaY * 0.001);
-    const cursor = clientToSvg(e.clientX, e.clientY);
-    setVb((old) => {
-      const w = old.w * factor;
-      const h = old.h * factor;
-      const x = cursor.x - (cursor.x - old.x) * factor;
-      const y = cursor.y - (cursor.y - old.y) * factor;
-      return { x, y, w, h };
-    });
-  }
+  // A native (non-passive) listener is required here: React attaches wheel
+  // handlers as passive by default, so e.preventDefault() inside a React
+  // onWheel prop is silently ignored — the browser's own pinch-zoom keeps
+  // firing on top of ours, which is exactly what zooms the whole page
+  // instead of just the canvas, and makes both fight for smoothness.
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+
+    function handleWheel(e: WheelEvent) {
+      e.preventDefault();
+      if (e.ctrlKey) {
+        // Trackpad pinch (Mac reports it as wheel+ctrlKey) or Ctrl/Cmd+scroll: zoom.
+        const factor = Math.exp(e.deltaY * 0.001);
+        const cursor = clientToSvg(e.clientX, e.clientY);
+        setVb((old) => {
+          const w = old.w * factor;
+          const h = old.h * factor;
+          const x = cursor.x - (cursor.x - old.x) * factor;
+          const y = cursor.y - (cursor.y - old.y) * factor;
+          return { x, y, w, h };
+        });
+      } else {
+        // Plain scroll / two-finger trackpad swipe: pan, same as Figma.
+        setVb((old) => {
+          const scale = old.w / (svg!.clientWidth || 1);
+          return { ...old, x: old.x + e.deltaX * scale, y: old.y + e.deltaY * scale };
+        });
+      }
+    }
+
+    svg.addEventListener("wheel", handleWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", handleWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function beginPan(e: React.PointerEvent) {
     (e.target as Element).setPointerCapture(e.pointerId);
@@ -211,7 +234,6 @@ export function Canvas2D({ resetSignal }: Props) {
         ref={svgRef}
         className={"canvas2d" + (isPanning ? " panning" : "")}
         viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
-        onWheel={onWheel}
         onPointerDown={(e) => {
           if (e.target === svgRef.current || (e.target as Element).tagName === "rect") beginPan(e);
         }}
@@ -262,7 +284,9 @@ export function Canvas2D({ resetSignal }: Props) {
           );
         })}
       </svg>
-      <div className="canvas-hint">Scroll to zoom · Drag empty space to pan · Click a shape to select, drag to move</div>
+      <div className="canvas-hint">
+        Scroll or drag empty space to pan · Cmd/Ctrl+scroll or pinch to zoom · Click a shape to select, drag to move
+      </div>
       <div className="zoom-indicator">{zoomPct}%</div>
     </>
   );

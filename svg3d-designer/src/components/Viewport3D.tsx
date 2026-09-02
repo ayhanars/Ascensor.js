@@ -14,11 +14,18 @@ import { buildAssemblyGroup, computeVisibleBounds } from "../geometry/extrude";
 // matches the real (Z-up) geometry.
 const DISPLAY_ROTATION: [number, number, number] = [-Math.PI / 2, 0, 0];
 
+function isEditableTarget(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.isContentEditable) return true;
+  return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT";
+}
+
 function CameraRig({ resetSignal }: { resetSignal: number }) {
-  const { camera } = useThree();
+  const { camera, gl } = useThree();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- drei's
   // OrbitControls ref type doesn't resolve cleanly against three's here;
-  // all we use is `.target` and `.update()`, both stable across versions.
+  // all we use is `.target`, `.update()` and `.mouseButtons`, all stable
+  // across versions.
   const controlsRef = useRef<any>(null);
   const bed = useSceneStore((s) => s.document.bed);
 
@@ -35,6 +42,36 @@ function CameraRig({ resetSignal }: { resetSignal: number }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetSignal]);
+
+  // Space+drag pans, matching the 2D canvas and Figma's own convention —
+  // left-drag alone still orbits, since that's OrbitControls' own default.
+  useEffect(() => {
+    const canvas = gl.domElement;
+
+    function setPanMode(on: boolean) {
+      const controls = controlsRef.current;
+      if (!controls) return;
+      controls.mouseButtons.LEFT = on ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+      canvas.style.cursor = on ? "grab" : "";
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.code !== "Space" || e.repeat || isEditableTarget(e.target)) return;
+      e.preventDefault();
+      setPanMode(true);
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.code !== "Space") return;
+      setPanMode(false);
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [gl]);
 
   return <OrbitControls ref={controlsRef} makeDefault />;
 }
@@ -57,10 +94,35 @@ function PrintBed() {
   );
 }
 
+// Shared across every selected mesh — a cheap outline: a copy of the same
+// geometry, parented to the original mesh so it inherits its exact
+// transform, widened in X/Y only (same height in Z). Our print pieces are
+// flat and viewed mostly from above, so the classic "enlarge + backface-
+// cull" shell trick doesn't work here — the dominant visible surface *is*
+// the top face, so BackSide culls exactly the part that needs to show, and
+// a uniformly-enlarged FrontSide shell just covers the object instead of
+// framing it. Keeping the outline's top face at exactly the same height as
+// the original's makes them coplanar wherever they overlap — resolved with
+// polygonOffset (the standard fix for two coplanar surfaces, rather than a
+// geometric Z-nudge, which either z-fights or needs a big-enough gap to be
+// reliable) so the original always wins there and shows its own color
+// untouched; past its footprint — the rim — there's nothing else at that
+// pixel, so the widened outline's top face shows through as a clean
+// colored margin.
+const SELECTION_OUTLINE_MATERIAL = new THREE.MeshBasicMaterial({
+  color: 0x4f46e5,
+  toneMapped: false,
+  polygonOffset: true,
+  polygonOffsetFactor: 4,
+  polygonOffsetUnits: 4,
+});
+const SELECTION_OUTLINE_SCALE_XY = 1.15;
+
 function Assembly() {
   const layers = useSceneStore((s) => s.layers);
   const rootIds = useSceneStore((s) => s.rootIds);
   const selection = useSceneStore((s) => s.selection);
+  const wireframe = useSceneStore((s) => s.wireframe);
 
   const group = useMemo(
     () => buildAssemblyGroup(layers, rootIds, { respectVisibility: true }),
@@ -68,16 +130,39 @@ function Assembly() {
   );
 
   useEffect(() => {
-    const selectedSet = new Set(selection);
     group.traverse((obj) => {
       if ((obj as THREE.Mesh).isMesh) {
-        const mesh = obj as THREE.Mesh;
-        const mat = mesh.material as THREE.MeshStandardMaterial;
-        const selected = selectedSet.has(mesh.userData.layerId);
-        mat.emissive = new THREE.Color(selected ? 0x4f46e5 : 0x000000);
-        mat.emissiveIntensity = selected ? 0.35 : 0;
+        const mat = (obj as THREE.Mesh).material as THREE.MeshStandardMaterial;
+        mat.wireframe = wireframe;
       }
     });
+  }, [group, wireframe]);
+
+  useEffect(() => {
+    const selectedSet = new Set(selection);
+    const outlines: THREE.Mesh[] = [];
+    group.traverse((obj) => {
+      if ((obj as THREE.Mesh).isMesh && selectedSet.has(obj.userData.layerId)) {
+        const mesh = obj as THREE.Mesh;
+        const outline = new THREE.Mesh(mesh.geometry, SELECTION_OUTLINE_MATERIAL);
+        // Our shape geometry is built in absolute local coordinates (an
+        // SVG's own coordinate space), so a mesh's own origin (0,0,0) is
+        // rarely anywhere near its visual center. Scaling this outline from
+        // the origin would shift it sideways instead of framing the shape —
+        // scale it around the geometry's own bounding-box center instead.
+        mesh.geometry.computeBoundingBox();
+        const center = new THREE.Vector3();
+        mesh.geometry.boundingBox?.getCenter(center);
+        const kXY = SELECTION_OUTLINE_SCALE_XY;
+        outline.position.set(center.x * (1 - kXY), center.y * (1 - kXY), 0);
+        outline.scale.set(kXY, kXY, 1);
+        mesh.add(outline);
+        outlines.push(outline);
+      }
+    });
+    return () => {
+      for (const outline of outlines) outline.removeFromParent();
+    };
   }, [group, selection]);
 
   return <primitive object={group} rotation={DISPLAY_ROTATION} />;

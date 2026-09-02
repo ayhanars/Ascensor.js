@@ -25,6 +25,8 @@ export function TopToolbar({
   const setViewMode = useSceneStore((s) => s.setViewMode);
   const showGrid = useSceneStore((s) => s.showGrid);
   const toggleGrid = useSceneStore((s) => s.toggleGrid);
+  const wireframe = useSceneStore((s) => s.wireframe);
+  const toggleWireframe = useSceneStore((s) => s.toggleWireframe);
   const newProject = useSceneStore((s) => s.newProject);
   const autoStackLayers = useSceneStore((s) => s.autoStackLayers);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -113,6 +115,17 @@ export function TopToolbar({
       >
         Grid
       </button>
+
+      {viewMode === "3d" && (
+        <button
+          className="toolbar-btn"
+          onClick={toggleWireframe}
+          title="See through solid surfaces to check nested or hidden geometry"
+          style={{ color: wireframe ? "var(--accent)" : undefined }}
+        >
+          Wireframe
+        </button>
+      )}
 
       <div className="toolbar-spacer" />
 

@@ -54,6 +54,7 @@ interface SceneState {
   selection: string[];
   viewMode: ViewMode2D3D;
   showGrid: boolean;
+  wireframe: boolean;
 
   newProject: () => void;
   importParsedScene: (input: {
@@ -86,10 +87,12 @@ interface SceneState {
 
   setViewMode: (mode: ViewMode2D3D) => void;
   toggleGrid: () => void;
+  toggleWireframe: () => void;
   setBed: (bed: Partial<PrintBed>) => void;
   setDocumentName: (name: string) => void;
   fitDocumentToSelection: () => void;
   matchDocumentToBed: () => void;
+  createShapeLayer: (kind: "rect" | "circle") => void;
 }
 
 /**
@@ -122,6 +125,7 @@ export const useSceneStore = create<SceneState>()(
   selection: [],
   viewMode: "2d",
   showGrid: true,
+  wireframe: false,
 
   newProject: () =>
     set({
@@ -582,6 +586,7 @@ export const useSceneStore = create<SceneState>()(
 
   setViewMode: (mode) => set({ viewMode: mode }),
   toggleGrid: () => set((state) => ({ showGrid: !state.showGrid })),
+  toggleWireframe: () => set((state) => ({ wireframe: !state.wireframe })),
   setBed: (bed) =>
     set((state) => ({ document: { ...state.document, bed: { ...state.document.bed, ...bed } } })),
   setDocumentName: (name) =>
@@ -604,6 +609,66 @@ export const useSceneStore = create<SceneState>()(
         heightMM: state.document.bed.depth,
       },
     })),
+
+  createShapeLayer: (kind) =>
+    set((state) => {
+      const id = nanoid(8);
+      let w: number;
+      let h: number;
+      let regions: ShapeRegion[];
+
+      if (kind === "rect") {
+        w = 30;
+        h = 20;
+        regions = [
+          {
+            outer: {
+              points: [
+                { x: 0, y: 0 },
+                { x: w, y: 0 },
+                { x: w, y: h },
+                { x: 0, y: h },
+              ],
+            },
+            holes: [],
+          },
+        ];
+      } else {
+        const r = 10;
+        w = r * 2;
+        h = r * 2;
+        const segments = 48;
+        const points = Array.from({ length: segments }, (_, i) => {
+          const a = (i / segments) * Math.PI * 2;
+          return { x: r + Math.cos(a) * r, y: r + Math.sin(a) * r };
+        });
+        regions = [{ outer: { points }, holes: [] }];
+      }
+
+      const layer: ShapeLayer = {
+        id,
+        type: "shape",
+        name: kind === "rect" ? "Rectangle" : "Circle",
+        visible: true,
+        locked: false,
+        color: "#4f46e5",
+        transform: {
+          ...IDENTITY_TRANSFORM,
+          x: (state.document.widthMM - w) / 2,
+          y: (state.document.heightMM - h) / 2,
+        },
+        parentId: null,
+        regions,
+        extrusionDepth: 1.2,
+        cornerRadius: 0,
+      };
+
+      return {
+        layers: { ...state.layers, [id]: layer },
+        rootIds: [...state.rootIds, id],
+        selection: [id],
+      };
+    }),
     }),
     {
       partialize: partializeScene,

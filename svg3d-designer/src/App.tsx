@@ -5,6 +5,7 @@ import { LayerPanel } from "./components/LayerPanel";
 import { Inspector } from "./components/Inspector";
 import { Canvas2D } from "./components/Canvas2D";
 import { Viewport3D } from "./components/Viewport3D";
+import { ShapeToolbar } from "./components/ShapeToolbar";
 import { ImportDialog } from "./components/ImportDialog";
 import { useSceneStore } from "./state/store";
 import { useTheme } from "./state/theme";
@@ -164,6 +165,7 @@ function App() {
           ) : (
             <Viewport3D resetSignal={resetSignal} theme={theme} />
           )}
+          {viewMode === "2d" && <ShapeToolbar />}
           {isDragOver && <div className="dropzone-overlay">Drop SVG to import</div>}
         </div>
 
