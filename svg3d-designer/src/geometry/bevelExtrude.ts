@@ -1,12 +1,12 @@
 import * as THREE from "three";
 
 /**
- * Independent top/bottom edge chamfers for an extruded shape — distinct from
+ * Independent top/bottom edge bevels for an extruded shape — distinct from
  * `roundCorners.ts`'s corner-radius fillet, which softens the 2D outline's
- * *corners*. A bevel instead cuts a flat 45°-ish taper into the *top or
- * bottom rim* of every edge, all the way around — the classic print-quality
- * trick for reducing overhangs/elephant's foot or just softening a hard
- * edge, and it can be set independently per side.
+ * *corners*. A bevel instead rounds over the *top or bottom rim* of every
+ * edge, all the way around — the classic print-quality trick for reducing
+ * overhangs/elephant's foot or just softening a hard edge, and it can be
+ * set independently per side.
  *
  * This intentionally does not reuse `THREE.ExtrudeGeometry`'s own
  * `bevelEnabled` option: that bevel is always symmetric (identical on both
@@ -14,11 +14,23 @@ import * as THREE from "three";
  * face rather than chamfering it inward, which is the opposite of what a
  * print-oriented "smooth this edge" control should do. This is a
  * purpose-built, much simpler version of the same technique (ear-clip
- * triangulated caps + ruled side walls between stacked contour rings),
- * using a single straight chamfer segment per active side instead of a
- * curved multi-segment fillet, with the movement-vector math for offsetting
- * a contour ported from `ExtrudeGeometry`'s internal `getBevelVec`.
+ * triangulated caps + ruled side walls between stacked contour rings), with
+ * the movement-vector math for offsetting a contour ported from
+ * `ExtrudeGeometry`'s internal `getBevelVec`.
+ *
+ * Each active side is a quarter-round curve (the same shape as Blender's
+ * Bevel modifier at a high segment count) subdivided into
+ * `BEVEL_CURVE_SEGMENTS` straight facets — not one straight 45°-style cut.
+ * A single flat facet per side reads as an obviously faceted "cut corner";
+ * enough small facets approximating a curve reads as a smooth, rounded
+ * edge instead, the same "Segments" lever a 3D modeler would reach for.
  */
+
+/** How many straight facets approximate each active bevel's quarter-round
+ * curve. Low enough to stay cheap on complex imported SVGs, high enough
+ * that the facets blend into a visibly smooth curve rather than reading as
+ * a chamfer. */
+const BEVEL_CURVE_SEGMENTS = 10;
 
 function getBevelVec(inPt: THREE.Vector2, inPrev: THREE.Vector2, inNext: THREE.Vector2): THREE.Vector2 {
   let v_trans_x: number, v_trans_y: number, shrink_by: number;
@@ -134,8 +146,8 @@ interface Ring {
 }
 
 /**
- * Builds an extruded, capped solid from `shapes`, with an optional straight
- * chamfer at the bottom (`z=0`) and/or top (`z=depth`) rim. A 0 amount on
+ * Builds an extruded, capped solid from `shapes`, with an optional rounded
+ * bevel at the bottom (`z=0`) and/or top (`z=depth`) rim. A 0 amount on
  * either side degenerates to a plain (unbeveled) extrusion.
  */
 export function buildBeveledExtrudeGeometry(
@@ -178,10 +190,30 @@ export function buildBeveledExtrudeGeometry(
     }
     rings.push({ z, offset });
   }
-  pushRing(0, bottom > 0 ? -bottom : 0);
-  if (bottom > 0) pushRing(bottom, 0);
-  if (top > 0) pushRing(depth - top, 0);
-  pushRing(depth, top > 0 ? -top : 0);
+
+  // Quarter-round curve, parameterized 0 (cap-side end) to 1 (wall-side
+  // end): `z` sweeps 0..amount, `offset` (the inward inset) sweeps
+  // -amount..0, tracing a circular arc of radius `amount` rather than a
+  // straight diagonal — the same curve shape a CAD/DCC "round" bevel uses.
+  if (bottom > 0) {
+    for (let i = 0; i <= BEVEL_CURVE_SEGMENTS; i++) {
+      const t = i / BEVEL_CURVE_SEGMENTS;
+      const angle = (t * Math.PI) / 2;
+      pushRing(bottom * Math.sin(angle), -bottom * Math.cos(angle));
+    }
+  } else {
+    pushRing(0, 0);
+  }
+
+  if (top > 0) {
+    for (let i = 0; i <= BEVEL_CURVE_SEGMENTS; i++) {
+      const t = i / BEVEL_CURVE_SEGMENTS;
+      const angle = (t * Math.PI) / 2;
+      pushRing(depth - top + top * Math.sin(angle), -top * (1 - Math.cos(angle)));
+    }
+  } else {
+    pushRing(depth, 0);
+  }
 
   for (const shape of shapes) {
     const extracted = shape.extractPoints(1);

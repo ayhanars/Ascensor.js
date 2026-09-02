@@ -54,8 +54,43 @@
 .toolbar-btn.primary { background: var(--accent); color: var(--accent-contrast); }
 .toolbar-btn.primary:hover:not(:disabled) { background: #4338ca; }
 .toolbar-btn.primary:disabled { background: #d7d7db; color: var(--text-faint); }
-.toolbar-btn.toggle.active { background: var(--accent); color: var(--accent-contrast); }
-.toolbar-btn.toggle.active:hover { background: #4338ca; }
+.toggle-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.toggle-switch-label {
+  font-size: 12.5px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.toggle-switch-track {
+  position: relative;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 9px;
+  background: var(--border-strong);
+}
+.toggle-switch-track.on { background: var(--accent); }
+.toggle-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: left 0.12s ease;
+}
+.toggle-switch-track.on .toggle-switch-thumb { left: 16px; }
 
 .toolbar-toggle-group {
   display: flex;
