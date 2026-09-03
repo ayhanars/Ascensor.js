@@ -98,6 +98,23 @@ function round(n: number): number {
   return Math.round(n * 1000) / 1000;
 }
 
+/**
+ * Applies `fn` to every id in `ids` as ONE undo step. Without this, an
+ * "apply to all" edit — a multi-selection, or every shape inside a selected
+ * group — calls the underlying store action once per shape, and since each
+ * call is its own tracked `set()`, that pushes one history entry per shape
+ * instead of one for the whole edit. A single Ctrl+Z then only reverts the
+ * last shape touched — and because the field shown in the Inspector mirrors
+ * the *first* target, not the last, that one undo often looks like it did
+ * nothing at all. Reuses the same pause-mutate-resume gesture the range
+ * sliders below already use for a drag.
+ */
+function applyToAll<T>(items: T[], fn: (item: T) => void) {
+  const snapshot = beginGesture();
+  for (const item of items) fn(item);
+  endGesture(snapshot, items.length > 0);
+}
+
 /** Common magnet disc diameters, for the hole "diameter preset" picker. */
 const MAGNET_DIAMETER_PRESETS_MM = [3, 4, 5, 6, 8, 10, 12];
 /** Common magnet disc thicknesses, for the hole "thickness preset" picker. */
@@ -239,7 +256,7 @@ export function Inspector() {
                 <input
                   className="color-swatch-input"
                   type="color"
-                  onChange={(e) => selection.forEach((id) => setLayerColor(id, e.target.value))}
+                  onChange={(e) => applyToAll(selection, (id) => setLayerColor(id, e.target.value))}
                 />
                 <span style={{ color: "var(--text-faint)" }}>Apply to all</span>
               </div>
@@ -411,12 +428,18 @@ export function Inspector() {
                     className="color-swatch-input"
                     type="color"
                     value={display.color}
-                    onChange={(e) => targets.forEach((t) => setLayerColor(t.id, e.target.value))}
+                    onChange={(e) => {
+                      const color = e.target.value;
+                      applyToAll(targets.map((t) => t.id), (id) => setLayerColor(id, color));
+                    }}
                   />
                   <input
                     className="field-input"
                     value={display.color}
-                    onChange={(e) => targets.forEach((t) => setLayerColor(t.id, e.target.value))}
+                    onChange={(e) => {
+                      const color = e.target.value;
+                      applyToAll(targets.map((t) => t.id), (id) => setLayerColor(id, color));
+                    }}
                   />
                 </div>
               </div>
@@ -428,7 +451,7 @@ export function Inspector() {
                   value={display.extrusionDepth}
                   min={0.05}
                   unit={unit}
-                  onChange={(v) => targets.forEach((t) => setExtrusionDepth(t.id, v))}
+                  onChange={(v) => applyToAll(targets.map((t) => t.id), (id) => setExtrusionDepth(id, v))}
                 />
               </div>
 
@@ -462,7 +485,7 @@ export function Inspector() {
                     min={0}
                     unit={unit}
                     style={{ flex: "0 0 60px" }}
-                    onChange={(v) => targets.forEach((t) => setCornerRadius(t.id, v))}
+                    onChange={(v) => applyToAll(targets.map((t) => t.id), (id) => setCornerRadius(id, v))}
                   />
                 </div>
               </div>
@@ -500,7 +523,7 @@ export function Inspector() {
                           step={0.05}
                           unit={unit}
                           style={{ flex: "0 0 60px" }}
-                          onChange={(v) => targets.forEach((t) => setBevelTop(t.id, v))}
+                          onChange={(v) => applyToAll(targets.map((t) => t.id), (id) => setBevelTop(id, v))}
                         />
                       </div>
                       <div className="field-row">
@@ -530,7 +553,7 @@ export function Inspector() {
                           step={0.05}
                           unit={unit}
                           style={{ flex: "0 0 60px" }}
-                          onChange={(v) => targets.forEach((t) => setBevelBottom(t.id, v))}
+                          onChange={(v) => applyToAll(targets.map((t) => t.id), (id) => setBevelBottom(id, v))}
                         />
                       </div>
                     </>
@@ -543,7 +566,10 @@ export function Inspector() {
                 <ToggleSwitch
                   label="Use as hole"
                   checked={display.isHole}
-                  onChange={() => targets.forEach((t) => setIsHole(t.id, !display.isHole))}
+                  onChange={() => {
+                    const next = !display.isHole;
+                    applyToAll(targets.map((t) => t.id), (id) => setIsHole(id, next));
+                  }}
                   title="Cuts this shape's volume out of whatever it overlaps, instead of printing it as its own solid — for magnet wells, screw holes, etc."
                 />
                 <p className="hole-hint">
@@ -561,7 +587,7 @@ export function Inspector() {
                         onChange={(e) => {
                           const mm = parseFloat(e.target.value);
                           if (!Number.isFinite(mm)) return;
-                          targets.forEach((t) => applyDiameterPreset(t, mm));
+                          applyToAll(targets, (t) => applyDiameterPreset(t, mm));
                         }}
                       >
                         <option value="" disabled>
@@ -591,7 +617,7 @@ export function Inspector() {
                         onChange={(e) => {
                           const mm = parseFloat(e.target.value);
                           if (!Number.isFinite(mm)) return;
-                          targets.forEach((t) => setExtrusionDepth(t.id, mm));
+                          applyToAll(targets, (t) => setExtrusionDepth(t.id, mm));
                         }}
                       >
                         <option value="" disabled>
@@ -618,7 +644,7 @@ export function Inspector() {
                     <button
                       className="btn"
                       style={{ width: "100%" }}
-                      onClick={() => targets.forEach((t) => snapHoleToRecessedPocket(t.id, floorThickness))}
+                      onClick={() => applyToAll(targets, (t) => snapHoleToRecessedPocket(t.id, floorThickness))}
                       title="Sinks this hole so it stops just short of the bottom of whatever it overlaps, leaving the floor thickness above as solid material — the usual way to embed a magnet flush and invisible instead of punching all the way through."
                     >
                       Snap to recessed pocket
