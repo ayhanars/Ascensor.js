@@ -14,6 +14,29 @@ interface WorldMesh {
   colorHex: string;
 }
 
+// Below this triangle area (mm²), a triangle is treated as degenerate —
+// vertices that are coincident or collinear after being baked to world
+// space (can happen at seams in the bevel/corner-rounding/CSG-subtraction
+// geometry) rather than real, printable surface. A slicer's own 3MF
+// validator is free to reject a file over exactly this, so it's worth
+// filtering here rather than assuming "STL-tolerant" geometry is also
+// "3MF-tolerant."
+const MIN_TRIANGLE_AREA_MM2 = 1e-6;
+
+function isFinitePoint(x: number, y: number, z: number): boolean {
+  return Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z);
+}
+
+function triangleArea(ax: number, ay: number, az: number, bx: number, by: number, bz: number, cx: number, cy: number, cz: number): number {
+  // 0.5 * |AB x AC|
+  const abx = bx - ax, aby = by - ay, abz = bz - az;
+  const acx = cx - ax, acy = cy - ay, acz = cz - az;
+  const cxr = aby * acz - abz * acy;
+  const cyr = abz * acx - abx * acz;
+  const czr = abx * acy - aby * acx;
+  return 0.5 * Math.sqrt(cxr * cxr + cyr * cyr + czr * czr);
+}
+
 function collectWorldMeshes(root: THREE.Object3D): WorldMesh[] {
   const meshes: WorldMesh[] = [];
   const v = new THREE.Vector3();
@@ -25,18 +48,37 @@ function collectWorldMeshes(root: THREE.Object3D): WorldMesh[] {
     const posAttr = geometry.getAttribute("position");
     const index = geometry.getIndex();
     const material = mesh.material as THREE.MeshStandardMaterial;
-    const triCount = index ? index.count : posAttr.count;
-    const positions = new Float32Array(triCount * 3);
+    const vertCount = index ? index.count : posAttr.count;
 
-    for (let i = 0; i < triCount; i++) {
+    const raw = new Float32Array(vertCount * 3);
+    for (let i = 0; i < vertCount; i++) {
       const vi = index ? index.getX(i) : i;
       v.fromBufferAttribute(posAttr, vi).applyMatrix4(mesh.matrixWorld);
-      positions[i * 3] = v.x;
-      positions[i * 3 + 1] = v.y;
-      positions[i * 3 + 2] = v.z;
+      raw[i * 3] = v.x;
+      raw[i * 3 + 1] = v.y;
+      raw[i * 3 + 2] = v.z;
     }
 
-    meshes.push({ positions, name: mesh.name || "Shape", colorHex: `#${material.color.getHexString()}` });
+    // Drop degenerate/non-finite triangles rather than exporting them —
+    // an object made entirely of them is skipped instead of emitting an
+    // empty (and per-spec invalid) <object>.
+    const kept: number[] = [];
+    for (let t = 0; t < vertCount / 3; t++) {
+      const o = t * 9;
+      const ax = raw[o], ay = raw[o + 1], az = raw[o + 2];
+      const bx = raw[o + 3], by = raw[o + 4], bz = raw[o + 5];
+      const cx = raw[o + 6], cy = raw[o + 7], cz = raw[o + 8];
+      if (!isFinitePoint(ax, ay, az) || !isFinitePoint(bx, by, bz) || !isFinitePoint(cx, cy, cz)) continue;
+      if (triangleArea(ax, ay, az, bx, by, bz, cx, cy, cz) < MIN_TRIANGLE_AREA_MM2) continue;
+      kept.push(ax, ay, az, bx, by, bz, cx, cy, cz);
+    }
+    if (kept.length === 0) return;
+
+    meshes.push({
+      positions: new Float32Array(kept),
+      name: mesh.name || "Shape",
+      colorHex: `#${material.color.getHexString()}`,
+    });
   });
 
   return meshes;

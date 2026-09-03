@@ -1,5 +1,13 @@
-import { useRef, useState } from "react";
-import { BED_PRESETS, beginGesture, endGesture, useSceneStore, type TrackedSceneSlice } from "../state/store";
+import { useEffect, useRef, useState } from "react";
+import {
+  BED_PRESETS,
+  beginGesture,
+  endGesture,
+  getPinnedBedPresetName,
+  setPinnedBedPresetName,
+  useSceneStore,
+  type TrackedSceneSlice,
+} from "../state/store";
 import { collectShapeLayers, getLocalShapeBounds } from "../state/sceneUtils";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { ColorPickerButton, normalizeHexColor } from "./ColorPicker";
@@ -12,7 +20,70 @@ import {
   AlignMiddleVIcon,
   AlignRightIcon,
   AlignTopIcon,
+  BoolExcludeIcon,
+  BoolIntersectIcon,
+  BoolSubtractIcon,
+  BoolUnionIcon,
+  BookmarkIcon,
 } from "./icons";
+
+/** Figma-style boolean-operations dropdown: Union (an alias for the
+ * existing Merge/Flatten action, which already does a real polygon union),
+ * Subtract, Intersect, and Exclude — presented as one menu the way Figma's
+ * own boolean-ops button groups them, rather than four separate buttons. */
+function BooleanOpsMenu({ selection }: { selection: string[] }) {
+  const mergeLayers = useSceneStore((s) => s.mergeLayers);
+  const booleanOp = useSceneStore((s) => s.booleanOp);
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocDown(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDocDown);
+    return () => document.removeEventListener("mousedown", onDocDown);
+  }, [open]);
+
+  const items: { label: string; Icon: typeof BoolUnionIcon; onClick: () => void; shortcut?: string }[] = [
+    { label: "Union", Icon: BoolUnionIcon, onClick: () => mergeLayers(selection), shortcut: "⌘E" },
+    { label: "Subtract", Icon: BoolSubtractIcon, onClick: () => booleanOp(selection, "subtract") },
+    { label: "Intersect", Icon: BoolIntersectIcon, onClick: () => booleanOp(selection, "intersect") },
+    { label: "Exclude", Icon: BoolExcludeIcon, onClick: () => booleanOp(selection, "exclude") },
+  ];
+
+  return (
+    <div className="export-menu-wrap" ref={wrapRef}>
+      <button
+        className="btn primary"
+        style={{ width: "100%" }}
+        onClick={() => setOpen((v) => !v)}
+        title="Combine the selected shapes with a boolean operation"
+      >
+        Boolean ▾
+      </button>
+      {open && (
+        <div className="export-menu boolean-ops-menu">
+          {items.map(({ label, Icon, onClick, shortcut }) => (
+            <button
+              key={label}
+              className="export-menu-item boolean-ops-item"
+              onClick={() => {
+                onClick();
+                setOpen(false);
+              }}
+            >
+              <Icon size={15} />
+              <span style={{ flex: "1 1 auto" }}>{label}</span>
+              {shortcut && <span className="export-menu-item-hint">{shortcut}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * A section whose control(s) take real vertical space but are frequently
@@ -226,6 +297,7 @@ export function Inspector() {
   const setIsHole = useSceneStore((s) => s.setIsHole);
   const setLayerZ = useSceneStore((s) => s.setLayerZ);
   const snapHoleToRecessedPocket = useSceneStore((s) => s.snapHoleToRecessedPocket);
+  const [pinnedBedName, setPinnedBedName] = useState<string | null>(() => getPinnedBedPresetName());
   const [floorThickness, setFloorThickness] = useState(RECOMMENDED_FLOOR_MM);
   const [selectedDiameterPreset, setSelectedDiameterPreset] = useState("");
   const [selectedThicknessPreset, setSelectedThicknessPreset] = useState("");
@@ -288,7 +360,30 @@ export function Inspector() {
                   </option>
                 ))}
               </select>
+              <button
+                type="button"
+                className={"icon-btn bookmark-btn" + (preset && preset.name === pinnedBedName ? " active" : "")}
+                disabled={!preset}
+                title={
+                  preset && preset.name === pinnedBedName
+                    ? "Stop opening new projects with this bed size"
+                    : "Always open new projects with this bed size"
+                }
+                onClick={() => {
+                  if (!preset) return;
+                  const next = preset.name === pinnedBedName ? null : preset.name;
+                  setPinnedBedPresetName(next);
+                  setPinnedBedName(next);
+                }}
+              >
+                <BookmarkIcon size={13} filled={!!preset && preset.name === pinnedBedName} />
+              </button>
             </div>
+            {pinnedBedName && (
+              <p className="hole-hint" style={{ marginTop: -4 }}>
+                New projects open with {pinnedBedName}.
+              </p>
+            )}
             <div className="field-grid-3">
               <NumberField label="Width" value={docSettings.bed.width} min={1} unit={unit} onChange={(v) => setBed({ width: v })} />
               <NumberField label="Depth" value={docSettings.bed.depth} min={1} unit={unit} onChange={(v) => setBed({ depth: v })} />
@@ -353,14 +448,9 @@ export function Inspector() {
           >
             Group selection
           </button>
-          <button
-            className="btn primary"
-            style={{ width: "100%", marginTop: 6 }}
-            onClick={() => mergeLayers(selection)}
-            title="Combine the selected layers into a single flat shape (Cmd/Ctrl+E)"
-          >
-            Merge layers
-          </button>
+          <div style={{ marginTop: 6 }}>
+            <BooleanOpsMenu selection={selection} />
+          </div>
           <button className="btn" style={{ width: "100%", marginTop: 6 }} onClick={fitDocumentToSelection}>
             Fit artboard to selection
           </button>

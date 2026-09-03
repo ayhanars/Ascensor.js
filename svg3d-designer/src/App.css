@@ -86,6 +86,14 @@
 }
 .export-menu-item:hover { background: var(--bg-hover); }
 .export-menu-item-hint { font-size: 10.5px; font-weight: 400; color: var(--text-muted); }
+.boolean-ops-menu { min-width: 160px; }
+.boolean-ops-item {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+.boolean-ops-item .export-menu-item-hint { margin-left: auto; }
 .toggle-switch {
   display: flex;
   align-items: center;
@@ -197,6 +205,7 @@
 }
 
 .layer-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 5px;
@@ -208,7 +217,26 @@
 }
 .layer-row:hover { background: var(--bg-hover); }
 .layer-row.selected { background: var(--bg-selected); border-color: #c7d2fe; }
-.layer-row.drop-target { border-color: var(--accent); }
+/* Dropping "inside" a folder highlights the whole row (you're entering it);
+   "above"/"below" instead draw a thin insertion line at that edge — the
+   same distinction Figma/VS Code make, so it's actually clear whether a
+   layer will land as a sibling or get filed into a group. A uniform
+   highlighted-border regardless of position (the old behavior) meant you
+   could never tell which of the three you were about to get. */
+.layer-row.drop-inside { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.layer-row.drop-above::before,
+.layer-row.drop-below::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  pointer-events: none;
+}
+.layer-row.drop-above::before { top: -1px; }
+.layer-row.drop-below::after { bottom: -1px; }
 .layer-row.dim { opacity: 0.45; }
 /* Matches the canvas's own red hole/negative-space styling, so a hole
    layer reads as "this cuts a hole" at a glance in the panel too, not
@@ -497,6 +525,23 @@
 }
 .align-btn:hover { background: var(--bg-hover); color: var(--text); }
 
+.bookmark-btn {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-muted);
+  padding: 0;
+}
+.bookmark-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+.bookmark-btn:disabled { opacity: 0.4; cursor: default; }
+.bookmark-btn.active { color: var(--accent); border-color: var(--accent); }
+
 .select-input {
   height: 26px;
   border: 1px solid var(--border-strong);
@@ -621,15 +666,34 @@
 }
 
 .toast {
+  pointer-events: auto;
   background: var(--text);
   color: var(--bg-panel);
+  border: none;
   border-radius: var(--radius-sm);
   padding: 7px 14px;
   font-size: 12px;
   font-weight: 500;
+  font-family: inherit;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
   animation: toast-in 0.15s ease-out;
   white-space: nowrap;
+  cursor: pointer;
+  text-align: left;
+}
+.toast-warning {
+  background: #b45309;
+  color: #fff;
+  white-space: normal;
+  max-width: 360px;
+}
+.toast-sticky {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.25) inset;
+}
+.toast-sticky::after {
+  content: " (click to dismiss)";
+  opacity: 0.75;
+  font-weight: 400;
 }
 
 @keyframes toast-in {

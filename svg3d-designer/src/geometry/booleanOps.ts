@@ -62,6 +62,35 @@ function multiPolygonToRegions(mp: PCMultiPolygon): ShapeRegion[] {
 }
 
 /**
+ * Boolean-combines several already-separate operands (each operand is its
+ * own region set — unlike unionRegions, which flattens everything into one
+ * combined shape, these three keep the operands distinct because subtract/
+ * intersect/exclude are NOT symmetric across an arbitrary flat list the way
+ * union is: subtract needs to know which operand is the subject and which
+ * are being cut away, matching Figma's own boolean-operation semantics.
+ */
+export function differenceRegions(operands: ShapeRegion[][]): ShapeRegion[] {
+  if (operands.length === 0) return [];
+  if (operands.length === 1) return operands[0];
+  const [subject, ...clips] = operands.map(regionsToMultiPolygon);
+  return multiPolygonToRegions(polygonClipping.difference(subject, ...clips));
+}
+
+export function intersectionRegions(operands: ShapeRegion[][]): ShapeRegion[] {
+  if (operands.length === 0) return [];
+  if (operands.length === 1) return operands[0];
+  const [first, ...rest] = operands.map(regionsToMultiPolygon);
+  return multiPolygonToRegions(polygonClipping.intersection(first, ...rest));
+}
+
+export function xorRegions(operands: ShapeRegion[][]): ShapeRegion[] {
+  if (operands.length === 0) return [];
+  if (operands.length === 1) return operands[0];
+  const [first, ...rest] = operands.map(regionsToMultiPolygon);
+  return multiPolygonToRegions(polygonClipping.xor(first, ...rest));
+}
+
+/**
  * Combines regions with a real boolean union (like Figma's Union, not
  * Exclude): overlapping shapes fill solid instead of canceling out. Used
  * by "merge layers" so two overlapping circles become one solid blob, not

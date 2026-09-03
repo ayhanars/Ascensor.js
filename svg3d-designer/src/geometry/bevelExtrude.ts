@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { roundContour } from "./roundCorners";
 
 /**
  * Independent top/bottom edge bevels for an extruded shape — distinct from
@@ -31,6 +32,27 @@ import * as THREE from "three";
  * that the facets blend into a visibly smooth curve rather than reading as
  * a chamfer. */
 const BEVEL_CURVE_SEGMENTS = 10;
+
+/**
+ * `getBevelVec` gives every polygon vertex exactly ONE offset direction —
+ * correct for a flat edge (a straight wall's whole length shares that one
+ * perpendicular), but at a sharp corner it collapses the round bevel curve
+ * down to a single mitered point: the corner vertex still sweeps through
+ * the same z/inset values as every other ring, just along one straight
+ * diagonal instead of an actual arc, so the smoothly-rounded edges meet at
+ * a hard, faceted corner instead of blending into it (three.js's own
+ * `ExtrudeGeometry` bevel has this exact same limitation, for the same
+ * reason). Rounding each corner into a short arc of extra points BEFORE
+ * computing movement vectors gives the corner several slightly-different
+ * offset directions instead of one, so it sweeps out a real curve — the
+ * same fix a "round join" polygon-offset algorithm (e.g. Clipper's
+ * jtRound) uses. Sized off the bevel amount itself so a barely-there bevel
+ * doesn't over-round the shape and a big one gets a corner that actually
+ * matches its wall curve; segment count is low since this is a subtle
+ * assist, not the shape's own visible corner-radius feature.
+ */
+const BEVEL_CORNER_ROUNDING_FRACTION = 0.5;
+const BEVEL_CORNER_SEGMENTS = 6;
 
 function getBevelVec(inPt: THREE.Vector2, inPrev: THREE.Vector2, inNext: THREE.Vector2): THREE.Vector2 {
   let v_trans_x: number, v_trans_y: number, shrink_by: number;
@@ -227,12 +249,22 @@ export function buildBeveledExtrudeGeometry(
 
   for (const shape of shapes) {
     const extracted = shape.extractPoints(1);
-    const contour = forceWinding(extracted.shape, true);
-    const holes = extracted.holes.map((h) => forceWinding(h, false));
+    let contour = forceWinding(extracted.shape, true);
+    let holes = extracted.holes.map((h) => forceWinding(h, false));
 
     mergeOverlappingPoints(contour);
     holes.forEach(mergeOverlappingPoints);
     if (contour.length < 3) continue;
+
+    // See BEVEL_CORNER_ROUNDING_FRACTION above — gives sharp corners a real
+    // curve to sweep through instead of one mitered point.
+    const cornerAssistRadius = Math.max(bottom, top) * BEVEL_CORNER_ROUNDING_FRACTION;
+    if (cornerAssistRadius > 0) {
+      const toVec2 = (pts: THREE.Vector2[]) =>
+        roundContour(pts, cornerAssistRadius, BEVEL_CORNER_SEGMENTS).map((p) => new THREE.Vector2(p.x, p.y));
+      contour = toVec2(contour);
+      holes = holes.map(toVec2);
+    }
 
     const contourMovements = computeMovements(contour);
     const holesMovements = holes.map((h) => computeMovements(h));
