@@ -9,8 +9,10 @@ interface Props {
   onImportFile: (file: File) => void;
   onExportStl: () => void;
   onExport3mf: () => void;
+  onExportAllPlates: (format: "stl" | "3mf") => void;
   onResetView: () => void;
   exportDisabled: boolean;
+  multiPlateExportDisabled: boolean;
   theme: ResolvedTheme;
   onToggleTheme: () => void;
 }
@@ -19,8 +21,10 @@ export function TopToolbar({
   onImportFile,
   onExportStl,
   onExport3mf,
+  onExportAllPlates,
   onResetView,
   exportDisabled,
+  multiPlateExportDisabled,
   theme,
   onToggleTheme,
 }: Props) {
@@ -94,7 +98,7 @@ export function TopToolbar({
                 setExportMenuOpen(false);
               }}
             >
-              <span>STL</span>
+              <span>STL (this plate)</span>
               <span className="export-menu-item-hint">Geometry only — no colors</span>
             </button>
             <button
@@ -104,9 +108,34 @@ export function TopToolbar({
                 setExportMenuOpen(false);
               }}
             >
-              <span>3MF</span>
+              <span>3MF (this plate)</span>
               <span className="export-menu-item-hint">Keeps each shape's color and position</span>
             </button>
+            {!multiPlateExportDisabled && (
+              <>
+                <div className="export-menu-sep" />
+                <button
+                  className="export-menu-item"
+                  onClick={() => {
+                    onExportAllPlates("stl");
+                    setExportMenuOpen(false);
+                  }}
+                >
+                  <span>All Plates (STL)</span>
+                  <span className="export-menu-item-hint">One .stl per plate, zipped together</span>
+                </button>
+                <button
+                  className="export-menu-item"
+                  onClick={() => {
+                    onExportAllPlates("3mf");
+                    setExportMenuOpen(false);
+                  }}
+                >
+                  <span>All Plates (3MF)</span>
+                  <span className="export-menu-item-hint">One .3mf per plate, zipped together</span>
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>

@@ -9,18 +9,21 @@ import { ShapeToolbar } from "./components/ShapeToolbar";
 import { ImportDialog } from "./components/ImportDialog";
 import { ToastStack } from "./components/ToastStack";
 import { FloatingWarningBanner } from "./components/FloatingWarningBanner";
-import { useSceneStore } from "./state/store";
+import { PlateTabs } from "./components/PlateTabs";
+import { getRootIdsForPlate, useActivePlateRootIds, useSceneStore } from "./state/store";
 import { useTheme } from "./state/theme";
-import { isEffectivelyVisible } from "./state/sceneUtils";
+import { collectShapeLayers, isEffectivelyVisible } from "./state/sceneUtils";
 import { showToast } from "./state/toastStore";
 import { mergeSceneIntoSingleLayer, parseSvgToScene, type ParsedScene } from "./svg/parse";
 import { exportSceneToStl } from "./export/stl";
 import { exportSceneToThreeMf } from "./export/threemf";
+import { exportAllPlatesToZip } from "./export/multiPlate";
 
 function App() {
   const viewMode = useSceneStore((s) => s.viewMode);
   const layers = useSceneStore((s) => s.layers);
-  const rootIds = useSceneStore((s) => s.rootIds);
+  const rootIds = useActivePlateRootIds();
+  const plates = useSceneStore((s) => s.plates);
   const documentName = useSceneStore((s) => s.document.name);
   const importParsedScene = useSceneStore((s) => s.importParsedScene);
 
@@ -48,8 +51,11 @@ function App() {
     }
   }, []);
 
-  const hasVisibleGeometry = Object.values(layers).some(
-    (l) => l.type === "shape" && isEffectivelyVisible(layers, l.id),
+  // Scoped to the active plate — Export only ever acts on what's currently
+  // shown, so the button shouldn't stay enabled off geometry that's
+  // actually sitting on a different plate.
+  const hasVisibleGeometry = rootIds.some((id) =>
+    collectShapeLayers(layers, id).some((l) => isEffectivelyVisible(layers, l.id)),
   );
 
   // Global shortcuts, kept at Figma's level for the actions this app has:
@@ -179,8 +185,16 @@ function App() {
           exportSceneToThreeMf(layers, rootIds, documentName);
           showToast(`Exported ${documentName}.3mf`);
         }}
+        onExportAllPlates={async (format) => {
+          const state = useSceneStore.getState();
+          const rootIdsByPlate = new Map(state.plates.map((p) => [p.id, getRootIdsForPlate(state, p.id)]));
+          const count = await exportAllPlatesToZip(layers, state.plates, rootIdsByPlate, documentName, format);
+          if (count > 0) showToast(`Exported ${count} plate${count === 1 ? "" : "s"} as ${format.toUpperCase()}`);
+          else showToast("No objects on any plate to export", { tone: "warning" });
+        }}
         onResetView={() => setResetSignal((n) => n + 1)}
         exportDisabled={!hasVisibleGeometry}
+        multiPlateExportDisabled={plates.length < 2}
         theme={theme}
         onToggleTheme={toggleTheme}
       />
@@ -194,6 +208,7 @@ function App() {
           ) : (
             <Viewport3D resetSignal={resetSignal} theme={theme} />
           )}
+          <PlateTabs />
           {viewMode === "2d" && <ShapeToolbar />}
           {isDragOver && <div className="dropzone-overlay">Drop SVG to import</div>}
           <FloatingWarningBanner />

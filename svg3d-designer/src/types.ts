@@ -87,6 +87,16 @@ export interface DocumentSettings {
 
 export type ViewMode2D3D = "2d" | "3d";
 
+/** One print-bed "plate," Bambu-Studio style — several can coexist in the
+ * same project so objects that don't fit on one plate (or that print as
+ * separate jobs) can live in their own space instead of a whole new file.
+ * All plates share the project's single bed/printer; only which objects
+ * are on which plate differs. */
+export interface Plate {
+  id: string;
+  name: string;
+}
+
 /** Horizontal (left/centerH/right) and vertical (top/middleV/bottom) align
  * targets — a single selection aligns to the artboard, several align to
  * each other's combined bounding box. */

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { beginGesture, endGesture, useSceneStore, type TrackedSceneSlice } from "../state/store";
+import { beginGesture, endGesture, useActivePlateRootIds, useSceneStore, type TrackedSceneSlice } from "../state/store";
 import { boundsOverlap, getLayerWorldBounds, getMultiLayerWorldBounds, getTopLevelId, isAncestorOrSelf, stepIntoOnClick } from "../state/sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
 import type { Layer, ShapeRegion } from "../types";
@@ -58,7 +58,7 @@ interface Props {
 export function Canvas2D({ resetSignal }: Props) {
   const document_ = useSceneStore((s) => s.document);
   const layers = useSceneStore((s) => s.layers);
-  const rootIds = useSceneStore((s) => s.rootIds);
+  const rootIds = useActivePlateRootIds();
   const selection = useSceneStore((s) => s.selection);
   const selectLayer = useSceneStore((s) => s.selectLayer);
   const setSelection = useSceneStore((s) => s.setSelection);

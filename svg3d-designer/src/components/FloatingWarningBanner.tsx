@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { computeFloatingLayerIds } from "../state/sceneUtils";
-import { useSceneStore } from "../state/store";
+import { useActivePlateRootIds, useSceneStore } from "../state/store";
 
 // Debounced rather than a synchronous useMemo: while a raised shape is
 // being dragged across the canvas, its Z-alignment-based support check
@@ -12,7 +12,7 @@ const CHECK_DEBOUNCE_MS = 450;
 
 export function FloatingWarningBanner() {
   const layers = useSceneStore((s) => s.layers);
-  const rootIds = useSceneStore((s) => s.rootIds);
+  const rootIds = useActivePlateRootIds();
   const fixFloatingLayers = useSceneStore((s) => s.fixFloatingLayers);
   const setSelection = useSceneStore((s) => s.setSelection);
   const [floatingIds, setFloatingIds] = useState<string[]>([]);

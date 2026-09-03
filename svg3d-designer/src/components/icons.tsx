@@ -59,6 +59,12 @@ export const TrashIcon = ({ size = 14 }: IconProps) => (
   </svg>
 );
 
+export const PlusIcon = ({ size = 14 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M8 2.5v11M2.5 8h11" />
+  </svg>
+);
+
 export const DuplicateIcon = ({ size = 14 }: IconProps) => (
   <svg {...base(size)}>
     <rect x="5.5" y="5.5" width="8" height="8" rx="1.2" />
