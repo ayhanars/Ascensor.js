@@ -87,6 +87,11 @@ export interface DocumentSettings {
 
 export type ViewMode2D3D = "2d" | "3d";
 
+/** Horizontal (left/centerH/right) and vertical (top/middleV/bottom) align
+ * targets — a single selection aligns to the artboard, several align to
+ * each other's combined bounding box. */
+export type AlignMode = "left" | "centerH" | "right" | "top" | "middleV" | "bottom";
+
 export interface ImportSummary {
   fileName: string;
   detectedWidth: number;

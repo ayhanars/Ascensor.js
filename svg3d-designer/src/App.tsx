@@ -107,6 +107,12 @@ function App() {
         }
         return;
       }
+      if (mod && e.key.toLowerCase() === "g") {
+        e.preventDefault();
+        if (e.shiftKey) store.ungroupSelection();
+        else if (store.selection.length >= 2) store.groupSelection();
+        return;
+      }
       if (e.key === "Escape") {
         store.clearSelection();
         return;

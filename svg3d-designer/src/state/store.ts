@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { temporal } from "zundo";
 import { nanoid } from "nanoid";
 import type {
+  AlignMode,
   DocumentSettings,
   GroupLayer,
   Layer,
@@ -9,6 +10,7 @@ import type {
   ShapeLayer,
   ShapeRegion,
   Transform2D,
+  Units,
   ViewMode2D3D,
 } from "../types";
 import {
@@ -17,6 +19,7 @@ import {
   collectShapeLayers,
   flattenForDisplay,
   boundsOverlap,
+  type Bounds,
   getLayerWorldBounds,
   getMultiLayerWorldBounds,
   getWorldTransform,
@@ -24,6 +27,29 @@ import {
 } from "./sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
 import { unionRegions } from "../geometry/booleanOps";
+
+/**
+ * Solves for the local transform that, composed under `newParentWorld`
+ * (using the same per-level rule `getWorldTransform` composes with), lands
+ * exactly on `world` — i.e. "how do I express this same absolute position
+ * relative to a different parent." Used any time a layer is reparented
+ * (grouping, ungrouping) so the move never visibly shifts anything.
+ */
+function rebaseWorldToParent(world: Transform2D, newParentWorld: Transform2D): Transform2D {
+  const rad = (newParentWorld.rotation * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const dx = world.x - newParentWorld.x;
+  const dy = world.y - newParentWorld.y;
+  return {
+    x: (dx * cos + dy * sin) / newParentWorld.scaleX,
+    y: (-dx * sin + dy * cos) / newParentWorld.scaleY,
+    z: world.z - newParentWorld.z,
+    rotation: world.rotation - newParentWorld.rotation,
+    scaleX: world.scaleX / newParentWorld.scaleX,
+    scaleY: world.scaleY / newParentWorld.scaleY,
+  };
+}
 
 export const BED_PRESETS: PrintBed[] = [
   { name: "Bambu Lab X1 Carbon", width: 256, depth: 256, height: 256 },
@@ -86,6 +112,9 @@ interface SceneState {
   duplicateSelection: () => void;
   moveLayer: (id: string, targetParentId: string | null, index: number) => void;
   mergeLayers: (ids: string[]) => void;
+  groupSelection: () => void;
+  ungroupSelection: () => void;
+  alignSelection: (mode: AlignMode) => void;
   selectAll: () => void;
 
   setViewMode: (mode: ViewMode2D3D) => void;
@@ -93,6 +122,7 @@ interface SceneState {
   toggleWireframe: () => void;
   setBed: (bed: Partial<PrintBed>) => void;
   setDocumentName: (name: string) => void;
+  setUnits: (units: Units) => void;
   fitDocumentToSelection: () => void;
   matchDocumentToBed: () => void;
   createShapeLayer: (kind: "rect" | "circle") => void;
@@ -456,6 +486,80 @@ export const useSceneStore = create<SceneState>()(
       return { layers, rootIds, selection: newIds };
     }),
 
+  alignSelection: (mode) =>
+    set((state) => {
+      // Only align top-of-selection items — an already-selected descendant
+      // of a selected group would otherwise get moved twice.
+      const selectedSet = new Set(state.selection);
+      const topLevel = state.selection.filter((id) => {
+        let cur = state.layers[id];
+        while (cur?.parentId) {
+          if (selectedSet.has(cur.parentId)) return false;
+          cur = state.layers[cur.parentId];
+        }
+        return true;
+      });
+      if (topLevel.length === 0) return {};
+
+      // A single object aligns to the artboard (Figma's own behavior);
+      // several align to each other's combined bounding box instead.
+      const ref: Bounds | null =
+        topLevel.length === 1
+          ? { minX: 0, minY: 0, maxX: state.document.widthMM, maxY: state.document.heightMM }
+          : getMultiLayerWorldBounds(state.layers, topLevel);
+      if (!ref) return {};
+
+      const layers = { ...state.layers };
+      for (const id of topLevel) {
+        const layer = layers[id];
+        if (!layer) continue;
+        const bounds = getLayerWorldBounds(layers, id);
+        if (!bounds) continue;
+        const parentWorld = layer.parentId ? getWorldTransform(layers, layer.parentId) : IDENTITY_TRANSFORM;
+
+        let dxWorld = 0;
+        let dyWorld = 0;
+        switch (mode) {
+          case "left":
+            dxWorld = ref.minX - bounds.minX;
+            break;
+          case "centerH":
+            dxWorld = (ref.minX + ref.maxX) / 2 - (bounds.minX + bounds.maxX) / 2;
+            break;
+          case "right":
+            dxWorld = ref.maxX - bounds.maxX;
+            break;
+          case "top":
+            dyWorld = ref.minY - bounds.minY;
+            break;
+          case "middleV":
+            dyWorld = (ref.minY + ref.maxY) / 2 - (bounds.minY + bounds.maxY) / 2;
+            break;
+          case "bottom":
+            dyWorld = ref.maxY - bounds.maxY;
+            break;
+        }
+
+        // transform.x/y is always parent-local, not world — un-rotate and
+        // un-scale the desired world-space nudge into the parent's local
+        // basis before applying it (inverse of getWorldTransform's own
+        // per-level composition: rotate by -parentRotation, then divide by
+        // parentScale).
+        const rad = (parentWorld.rotation * Math.PI) / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        const localDx = (dxWorld * cos + dyWorld * sin) / parentWorld.scaleX;
+        const localDy = (-dxWorld * sin + dyWorld * cos) / parentWorld.scaleY;
+
+        layers[id] = {
+          ...layer,
+          transform: { ...layer.transform, x: layer.transform.x + localDx, y: layer.transform.y + localDy },
+        };
+      }
+
+      return { layers };
+    }),
+
   moveLayer: (id, targetParentId, index) =>
     set((state) => {
       const layer = state.layers[id];
@@ -626,6 +730,140 @@ export const useSceneStore = create<SceneState>()(
       return { layers, rootIds, selection: [mergedId] };
     }),
 
+  groupSelection: () =>
+    set((state) => {
+      // Keep only top-of-selection ids, same as mergeLayers/duplicateSelection.
+      const selectedSet = new Set(state.selection);
+      const selected = state.selection.filter((id) => {
+        let cur = state.layers[id];
+        while (cur?.parentId) {
+          if (selectedSet.has(cur.parentId)) return false;
+          cur = state.layers[cur.parentId];
+        }
+        return true;
+      });
+      // Grouping a single item (or nothing) is a no-op — there's nothing to
+      // collect together that isn't already its own unit.
+      if (selected.length < 2) return {};
+
+      // Paint order (front-most last) — same walk mergeLayers uses to pick
+      // where the new layer lands and what it inherits.
+      const order = flattenForDisplay(state.layers, state.rootIds).map((r) => r.id);
+      const rankOf = (id: string) => order.indexOf(id);
+      const orderedSelected = [...selected].sort((a, b) => rankOf(a) - rankOf(b));
+      const topId = orderedSelected[orderedSelected.length - 1];
+      const topLayer = state.layers[topId];
+      if (!topLayer) return {};
+
+      const groupId = nanoid(8);
+      const groupParentId = topLayer.parentId;
+      const groupParentWorld = groupParentId
+        ? getWorldTransform(state.layers, groupParentId)
+        : IDENTITY_TRANSFORM;
+
+      const layers = { ...state.layers };
+      for (const id of orderedSelected) {
+        const layer = layers[id];
+        const world = getWorldTransform(state.layers, id);
+        layers[id] = {
+          ...layer,
+          parentId: groupId,
+          transform: rebaseWorldToParent(world, groupParentWorld),
+        };
+      }
+
+      const group: GroupLayer = {
+        id: groupId,
+        type: "group",
+        name: "Group",
+        visible: true,
+        locked: false,
+        color: topLayer.color,
+        transform: { ...IDENTITY_TRANSFORM },
+        parentId: groupParentId,
+        children: orderedSelected,
+      };
+      layers[groupId] = group;
+
+      // Every parent that held one of the grouped items needs its children
+      // list fixed up — not just the top-most one's, mirroring mergeLayers.
+      const touchedParentIds = new Set<string>();
+      for (const id of selected) {
+        const l = state.layers[id];
+        if (l.parentId) touchedParentIds.add(l.parentId);
+      }
+      for (const pid of touchedParentIds) {
+        const original = state.layers[pid];
+        if (!original || original.type !== "group") continue;
+        const children =
+          pid === groupParentId
+            ? original.children
+                .map((c) => (c === topId ? groupId : c))
+                .filter((c) => c === groupId || !selectedSet.has(c))
+            : original.children.filter((c) => !selectedSet.has(c));
+        layers[pid] = { ...layers[pid], children } as GroupLayer;
+      }
+
+      const rootIds = groupParentId
+        ? state.rootIds.filter((r) => !selectedSet.has(r))
+        : state.rootIds
+            .map((r) => (r === topId ? groupId : r))
+            .filter((r) => r === groupId || !selectedSet.has(r));
+
+      return { layers, rootIds, selection: [groupId] };
+    }),
+
+  ungroupSelection: () =>
+    set((state) => {
+      const groups = state.selection
+        .map((id) => state.layers[id])
+        .filter((l): l is GroupLayer => !!l && l.type === "group");
+      if (groups.length === 0) return {};
+
+      const layers = { ...state.layers };
+      let rootIds = [...state.rootIds];
+      const newSelection: string[] = [];
+
+      for (const group of groups) {
+        const current = layers[group.id];
+        if (!current || current.type !== "group") continue;
+        const groupParentId = current.parentId;
+        const groupParentWorld = groupParentId
+          ? getWorldTransform(layers, groupParentId)
+          : IDENTITY_TRANSFORM;
+
+        for (const childId of current.children) {
+          const child = layers[childId];
+          if (!child) continue;
+          const world = getWorldTransform(layers, childId);
+          layers[childId] = {
+            ...child,
+            parentId: groupParentId,
+            transform: rebaseWorldToParent(world, groupParentWorld),
+          };
+          newSelection.push(childId);
+        }
+
+        if (groupParentId) {
+          const parent = layers[groupParentId];
+          if (parent && parent.type === "group") {
+            const idx = parent.children.indexOf(group.id);
+            const children = [...parent.children];
+            children.splice(idx, 1, ...current.children);
+            layers[groupParentId] = { ...parent, children };
+          }
+        } else {
+          const idx = rootIds.indexOf(group.id);
+          rootIds = [...rootIds.slice(0, idx), ...current.children, ...rootIds.slice(idx + 1)];
+        }
+
+        delete layers[group.id];
+      }
+
+      if (newSelection.length === 0) return {};
+      return { layers, rootIds, selection: newSelection };
+    }),
+
   setViewMode: (mode) => set({ viewMode: mode }),
   toggleGrid: () => set((state) => ({ showGrid: !state.showGrid })),
   toggleWireframe: () => set((state) => ({ wireframe: !state.wireframe })),
@@ -633,6 +871,8 @@ export const useSceneStore = create<SceneState>()(
     set((state) => ({ document: { ...state.document, bed: { ...state.document.bed, ...bed } } })),
   setDocumentName: (name) =>
     set((state) => ({ document: { ...state.document, name } })),
+  setUnits: (units) =>
+    set((state) => ({ document: { ...state.document, units } })),
 
   fitDocumentToSelection: () =>
     set((state) => {
@@ -679,7 +919,7 @@ export const useSceneStore = create<SceneState>()(
         const r = 10;
         w = r * 2;
         h = r * 2;
-        const segments = 48;
+        const segments = 64;
         const points = Array.from({ length: segments }, (_, i) => {
           const a = (i / segments) * Math.PI * 2;
           return { x: r + Math.cos(a) * r, y: r + Math.sin(a) * r };

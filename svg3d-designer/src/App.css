@@ -312,6 +312,24 @@
   line-height: 1.45;
 }
 
+.align-row {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+}
+.align-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-muted);
+  padding: 0;
+}
+.align-btn:hover { background: var(--bg-hover); color: var(--text); }
+
 .select-input {
   height: 26px;
   border: 1px solid var(--border-strong);
