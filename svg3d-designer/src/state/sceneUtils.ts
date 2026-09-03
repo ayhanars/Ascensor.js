@@ -202,3 +202,17 @@ export function getMultiLayerWorldBounds(
   }
   return bounds;
 }
+
+/** A shape's own untransformed bounding box (its raw `regions` points, no
+ * scale/rotation/translation applied) — the basis for "set this shape to a
+ * specific real-world size" actions, since the actual on-screen/printed
+ * size is this local box scaled by the layer's own transform. */
+export function getLocalShapeBounds(shape: ShapeLayer): Bounds | null {
+  let bounds: Bounds | null = null;
+  for (const region of shape.regions) {
+    for (const pt of region.outer.points) {
+      bounds = expandBounds(bounds, pt);
+    }
+  }
+  return bounds;
+}
