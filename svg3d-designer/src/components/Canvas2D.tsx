@@ -1,12 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { beginGesture, endGesture, useSceneStore, type TrackedSceneSlice } from "../state/store";
-import {
-  boundsOverlap,
-  getLayerWorldBounds,
-  getTopLevelId,
-  isAncestorOrSelf,
-  stepIntoOnClick,
-} from "../state/sceneUtils";
+import { boundsOverlap, getLayerWorldBounds, getTopLevelId, isAncestorOrSelf, stepIntoOnClick } from "../state/sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
 import type { Layer, ShapeRegion } from "../types";
 
@@ -407,9 +401,27 @@ export function Canvas2D({ resetSignal }: Props) {
     const additive = e.shiftKey || e.metaKey || e.ctrlKey;
 
     if (additive) {
-      const id = getTopLevelId(layers, rawId);
-      const nextSelection = selection.includes(id) ? selection.filter((s) => s !== id) : [...selection, id];
-      selectLayer(id, true);
+      // Shift-click always toggles the exact shape under the cursor — no
+      // top-level resolution here, unlike a plain click. rawId is always
+      // an individual leaf shape's own id already (only shapes have a
+      // pointer handler; a group renders as a plain unclickable <g>
+      // wrapper around its children), so this is precisely "add/remove
+      // this one shape," letting you build a multi-selection out of
+      // individual children inside a group without needing to drill in
+      // first. Climbing to the group here (as a plain click does) was the
+      // bug: shift-clicking two children of the same group ended up
+      // selecting the parent group twice instead of the two children.
+      const id = rawId;
+      const nextSelection = selection.includes(id)
+        ? selection.filter((s) => s !== id)
+        : // Drop any ancestor of the newly clicked shape that's already
+          // selected — having both a group and one of its own children
+          // selected at once would double-apply a drag (the child moves
+          // via its own transform AND via its parent's), the exact
+          // "top-of-selection only" invariant mergeLayers/groupSelection/
+          // duplicateSelection already enforce elsewhere.
+          [...selection.filter((s) => !isAncestorOrSelf(layers, s, id)), id];
+      setSelection(nextSelection);
       beginMove(e, nextSelection);
       return;
     }

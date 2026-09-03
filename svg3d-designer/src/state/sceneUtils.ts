@@ -198,6 +198,25 @@ export function applyTransform2D(p: Point2, t: Transform2D): Point2 {
   };
 }
 
+/** Inverse of applyTransform2D: given a point already in `t`'s target
+ * space, returns the point in `t`'s source space that produced it —
+ * un-translate, un-rotate, un-scale, in that order. Used to take a shape's
+ * points baked to world space (e.g. for a boolean union across differently
+ * -transformed sources) and re-express them relative to a specific parent,
+ * so the result doesn't get that parent's transform applied a second time
+ * when it renders as one of that parent's children. */
+export function invertTransform2D(p: Point2, t: Transform2D): Point2 {
+  const dx = p.x - t.x;
+  const dy = p.y - t.y;
+  const rad = (t.rotation * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return {
+    x: (dx * cos + dy * sin) / t.scaleX,
+    y: (-dx * sin + dy * cos) / t.scaleY,
+  };
+}
+
 export interface Bounds {
   minX: number;
   minY: number;
