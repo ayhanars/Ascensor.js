@@ -110,8 +110,12 @@ function defaultDocument(): DocumentSettings {
   const pinned = pinnedName ? BED_PRESETS.find((p) => p.name === pinnedName) : undefined;
   return {
     name: "Untitled",
-    widthMM: 100,
-    heightMM: 100,
+    // A pinned bed should open pre-matched to it, not just carried in
+    // `bed` while the artboard silently stays at the plain 100x100
+    // default — otherwise "always open with this bed size" only half
+    // worked (right printer, wrong-size artboard).
+    widthMM: pinned ? pinned.width : 100,
+    heightMM: pinned ? pinned.depth : 100,
     units: "mm",
     bed: { ...(pinned ?? BED_PRESETS[0]) },
   };
