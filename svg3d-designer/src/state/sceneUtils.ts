@@ -13,6 +13,16 @@ export function isShapeLayer(layer: Layer | undefined): layer is ShapeLayer {
   return !!layer && layer.type === "shape";
 }
 
+/** True if `ancestorId` is `id` itself, or is somewhere up its parent chain. */
+export function isAncestorOrSelf(layers: Record<string, Layer>, ancestorId: string, id: string): boolean {
+  let cur: Layer | undefined = layers[id];
+  while (cur) {
+    if (cur.id === ancestorId) return true;
+    cur = cur.parentId ? layers[cur.parentId] : undefined;
+  }
+  return false;
+}
+
 /** Walks up to the outermost ancestor (a rootIds member) — clicking any
  * shape inside a group should select/move the whole group as one unit,
  * the same way Figma treats a click on a group's member as a click on the
@@ -25,6 +35,37 @@ export function getTopLevelId(layers: Record<string, Layer>, id: string): string
     cur = layers[cur.parentId];
   }
   return result;
+}
+
+/**
+ * Resolves what a click on `rawId` should actually select, given what's
+ * currently selected — Figma's "click to select the group, click again to
+ * step inside it" behavior, generalized to any nesting depth: a fresh
+ * click always lands on the outermost group, and each subsequent click on
+ * the same target descends exactly one level further into it (through as
+ * many nested sub-groups as there are), until you reach the leaf shape.
+ * Clicking somewhere unrelated to the current drill path resets to the
+ * top level for that new target, same as a fresh click.
+ */
+export function stepIntoOnClick(
+  layers: Record<string, Layer>,
+  currentSelectionId: string | undefined,
+  rawId: string,
+): string {
+  if (!currentSelectionId) return getTopLevelId(layers, rawId);
+  if (currentSelectionId === rawId) return rawId; // already drilled to the leaf
+  // Walk up from rawId; the node one step below wherever we hit
+  // currentSelectionId is exactly one level deeper — descend there.
+  let child = rawId;
+  let cur = layers[rawId];
+  while (cur) {
+    if (cur.parentId === currentSelectionId) return child;
+    if (!cur.parentId) break;
+    child = cur.parentId;
+    cur = layers[cur.parentId];
+  }
+  // currentSelectionId isn't an ancestor of rawId at all — unrelated click.
+  return getTopLevelId(layers, rawId);
 }
 
 /** Composes a layer's local transform with all of its ancestors'. */

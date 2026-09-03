@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { beginGesture, endGesture, useSceneStore, type TrackedSceneSlice } from "../state/store";
-import { boundsOverlap, getLayerWorldBounds, getTopLevelId } from "../state/sceneUtils";
+import {
+  boundsOverlap,
+  getLayerWorldBounds,
+  getTopLevelId,
+  isAncestorOrSelf,
+  stepIntoOnClick,
+} from "../state/sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
 import type { Layer, ShapeRegion } from "../types";
 
@@ -86,6 +92,14 @@ export function Canvas2D({ resetSignal }: Props) {
      * existing selection instead of replacing it, matching how a single
      * shift-click already behaves. */
     additive: boolean;
+    /** move only: set when the click landed within the already-selected
+     * group/shape — the gesture keeps the current selection (so if it
+     * turns into a drag, the whole thing moves together, unchanged) and
+     * only resolves as a "step one level deeper" click if pointerup finds
+     * the pointer never actually moved. Without this, a click that landed
+     * on a group's member would drill in immediately even when it was
+     * really the start of a drag. */
+    pendingDrillRawId: string | null;
   } | null>(null);
 
   // Space+drag pans, matching the 3D viewport's own convention — plain
@@ -268,6 +282,7 @@ export function Canvas2D({ resetSignal }: Props) {
       originals: {},
       preGestureSnapshot: null,
       additive: false,
+      pendingDrillRawId: null,
     };
     setIsPanning(true);
   }
@@ -285,11 +300,12 @@ export function Canvas2D({ resetSignal }: Props) {
       originals: {},
       preGestureSnapshot: null,
       additive: e.shiftKey || e.metaKey || e.ctrlKey,
+      pendingDrillRawId: null,
     };
     setMarqueeRect({ x: start.x, y: start.y, w: 0, h: 0 });
   }
 
-  function beginMove(e: React.PointerEvent, ids: string[]) {
+  function beginMove(e: React.PointerEvent, ids: string[], pendingDrillRawId: string | null = null) {
     (e.target as Element).setPointerCapture(e.pointerId);
     const originals: Record<string, { x: number; y: number }> = {};
     for (const id of ids) {
@@ -308,6 +324,7 @@ export function Canvas2D({ resetSignal }: Props) {
       // should collapse into a single undo step.
       preGestureSnapshot: beginGesture(),
       additive: false,
+      pendingDrillRawId,
     };
   }
 
@@ -346,6 +363,14 @@ export function Canvas2D({ resetSignal }: Props) {
     if (drag?.mode === "pan" && !drag.moved) clearSelection();
     if (drag?.mode === "move" && drag.preGestureSnapshot) {
       endGesture(drag.preGestureSnapshot, drag.moved);
+      // The pointer never actually moved — this was a plain click on an
+      // already-selected group/shape, not the start of a drag, so now
+      // (and only now) resolve it as "step one level deeper" instead of
+      // moving the current selection as-is.
+      if (!drag.moved && drag.pendingDrillRawId) {
+        const singleSelected = selection.length === 1 ? selection[0] : undefined;
+        selectLayer(stepIntoOnClick(layers, singleSelected, drag.pendingDrillRawId), false);
+      }
     }
     if (drag?.mode === "marquee") {
       if (drag.moved && marqueeRect) {
@@ -379,21 +404,38 @@ export function Canvas2D({ resetSignal }: Props) {
   function handleShapeDown(e: React.PointerEvent, rawId: string) {
     e.stopPropagation();
     if (tryZoomToolClick(e)) return;
-    // Clicking any member of a group selects/moves the whole group, not
-    // just the one shape under the cursor — otherwise dragging a grouped
-    // shape on the canvas silently broke the group selection down to that
-    // single child instead of moving everything together.
-    const id = getTopLevelId(layers, rawId);
     const additive = e.shiftKey || e.metaKey || e.ctrlKey;
-    let nextSelection = selection;
+
     if (additive) {
-      nextSelection = selection.includes(id) ? selection.filter((s) => s !== id) : [...selection, id];
+      const id = getTopLevelId(layers, rawId);
+      const nextSelection = selection.includes(id) ? selection.filter((s) => s !== id) : [...selection, id];
       selectLayer(id, true);
-    } else if (!selection.includes(id)) {
-      nextSelection = [id];
-      selectLayer(id, false);
+      beginMove(e, nextSelection);
+      return;
     }
-    beginMove(e, nextSelection);
+
+    // A plain click on a group's member should select/move the whole
+    // group as one unit — but ONLY once resolved as a genuine click
+    // (see below); if this same mousedown turns into a drag, it should
+    // move whatever's currently selected exactly as-is, unchanged,
+    // otherwise dragging a grouped shape on the canvas silently broke the
+    // group selection down to that single child instead of moving
+    // everything together.
+    const singleSelected = selection.length === 1 ? selection[0] : undefined;
+    if (singleSelected !== undefined && isAncestorOrSelf(layers, singleSelected, rawId)) {
+      // Clicking within the already-selected group/shape: keep the
+      // current selection for the drag, and only resolve this as a "step
+      // one level deeper" click in onPointerUp, if the pointer turns out
+      // not to have moved at all — Figma's own "click to select the
+      // group, click again (without dragging) to work on what's inside
+      // it," generalized to any nesting depth.
+      beginMove(e, selection, rawId);
+      return;
+    }
+
+    const id = getTopLevelId(layers, rawId);
+    selectLayer(id, false);
+    beginMove(e, [id]);
   }
 
   function renderLayer(id: string): React.ReactNode {

@@ -377,7 +377,29 @@
   background: transparent;
 }
 .color-picker-hex-row { display: flex; align-items: center; gap: 6px; }
-.color-picker-hex-label { color: var(--text-faint); font-size: 11px; flex: 0 0 auto; }
+.color-picker-format-select {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 11px;
+}
+.color-picker-mini-row { display: flex; flex: 1 1 auto; gap: 4px; min-width: 0; }
+.color-picker-mini-input {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 26px;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 11px;
+  text-align: center;
+}
 
 .empty-inspector {
   color: var(--text-faint);

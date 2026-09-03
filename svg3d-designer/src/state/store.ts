@@ -55,11 +55,15 @@ export const BED_PRESETS: PrintBed[] = [
   { name: "Bambu Lab X1 Carbon", width: 256, depth: 256, height: 256 },
   { name: "Bambu Lab X1", width: 256, depth: 256, height: 256 },
   { name: "Bambu Lab X1E", width: 256, depth: 256, height: 256 },
+  { name: "Bambu Lab X2D", width: 256, depth: 256, height: 260 },
   { name: "Bambu Lab P1S", width: 256, depth: 256, height: 256 },
   { name: "Bambu Lab P1P", width: 256, depth: 256, height: 256 },
+  { name: "Bambu Lab P2S", width: 256, depth: 256, height: 256 },
   { name: "Bambu Lab A1", width: 256, depth: 256, height: 256 },
   { name: "Bambu Lab A1 mini", width: 180, depth: 180, height: 180 },
+  { name: "Bambu Lab A2L", width: 330, depth: 320, height: 325 },
   { name: "Bambu Lab H2D", width: 350, depth: 320, height: 325 },
+  { name: "Bambu Lab H2C", width: 330, depth: 320, height: 325 },
   { name: "Custom", width: 200, depth: 200, height: 200 },
 ];
 
