@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { BED_PRESETS, beginGesture, endGesture, useSceneStore, type TrackedSceneSlice } from "../state/store";
 import { collectShapeLayers, getLocalShapeBounds } from "../state/sceneUtils";
 import { ToggleSwitch } from "./ToggleSwitch";
+import { ColorPickerButton, normalizeHexColor } from "./ColorPicker";
 import { displayToMM, formatLength, mmToDisplay, UNIT_LABELS } from "../state/units";
 import type { AlignMode, ShapeLayer, Units } from "../types";
 import {
@@ -35,81 +36,6 @@ function AlignRow() {
       ))}
     </div>
   );
-}
-
-/**
- * A native color-swatch input, wired so the WHOLE picker interaction —
- * however many `input` events dragging inside the OS color wheel fires —
- * collapses into ONE undo step, the same way the range sliders below do
- * for a drag. Without this, each tiny drag tick inside the native picker
- * pushed its own history entry, so a single Ctrl+Z only undid the very
- * last (usually imperceptible) color increment — indistinguishable from
- * undo "not working" once you'd dragged across the picker at all.
- */
-function ColorSwatchInput({
-  value,
-  onChange,
-  className,
-}: {
-  /** Omit for an uncontrolled swatch (e.g. the multi-select "apply to
-   * all" picker, which has no single current color to reflect). */
-  value?: string;
-  onChange: (color: string) => void;
-  className?: string;
-}) {
-  const gesture = useRef<TrackedSceneSlice | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    // The native `change` event (distinct from the `input` event React's
-    // onChange is actually bound to for this input type) fires exactly
-    // once, when the picker is closed/committed — the real end of the
-    // gesture.
-    function onNativeChange() {
-      if (gesture.current) {
-        endGesture(gesture.current, true);
-        gesture.current = null;
-      }
-    }
-    el.addEventListener("change", onNativeChange);
-    return () => el.removeEventListener("change", onNativeChange);
-  }, []);
-
-  return (
-    <input
-      ref={inputRef}
-      className={className}
-      type="color"
-      {...(value !== undefined ? { value } : {})}
-      onPointerDown={() => {
-        if (!gesture.current) gesture.current = beginGesture();
-      }}
-      onChange={(e) => onChange(e.target.value)}
-      onBlur={() => {
-        // Safety net in case a browser never fires a distinct native
-        // `change` here — don't leave undo tracking paused forever.
-        if (gesture.current) {
-          endGesture(gesture.current, true);
-          gesture.current = null;
-        }
-      }}
-    />
-  );
-}
-
-const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/;
-
-/** "#f00" / "f00" -> "#ff0000"; already-6-digit input is just lowercased.
- * Returns null for anything that isn't a complete, valid hex color. */
-function normalizeHexColor(raw: string): string | null {
-  const s = raw.trim().startsWith("#") ? raw.trim() : `#${raw.trim()}`;
-  if (!HEX_COLOR_RE.test(s)) return null;
-  if (s.length === 4) {
-    return `#${s[1]}${s[1]}${s[2]}${s[2]}${s[3]}${s[3]}`.toLowerCase();
-  }
-  return s.toLowerCase();
 }
 
 /** A hex-code text field for color, editable the same way NumberField is:
@@ -259,6 +185,8 @@ export function Inspector() {
   const setLayerZ = useSceneStore((s) => s.setLayerZ);
   const snapHoleToRecessedPocket = useSceneStore((s) => s.snapHoleToRecessedPocket);
   const [floorThickness, setFloorThickness] = useState(RECOMMENDED_FLOOR_MM);
+  const [selectedDiameterPreset, setSelectedDiameterPreset] = useState("");
+  const [selectedThicknessPreset, setSelectedThicknessPreset] = useState("");
   const radiusGesture = useRef<TrackedSceneSlice | null>(null);
   const bevelBottomGesture = useRef<TrackedSceneSlice | null>(null);
   const bevelTopGesture = useRef<TrackedSceneSlice | null>(null);
@@ -350,6 +278,7 @@ export function Inspector() {
   if (selection.length > 1) {
     const selLayers = selection.map((id) => layers[id]).filter(Boolean);
     const allShapes = selLayers.every((l) => l!.type === "shape");
+    const firstShape = selLayers.find((l): l is ShapeLayer => l!.type === "shape");
     return (
       <div className="sidebar sidebar-right">
         <div className="sidebar-header">Properties</div>
@@ -359,8 +288,9 @@ export function Inspector() {
             <div className="field-row" style={{ marginTop: 8 }}>
               <span className="field-label">Color</span>
               <div className="color-field field-input" style={{ height: 26 }}>
-                <ColorSwatchInput
+                <ColorPickerButton
                   className="color-swatch-input"
+                  value={firstShape?.color ?? "#000000"}
                   onChange={(color) => selection.forEach((id) => setLayerColor(id, color))}
                 />
                 <span style={{ color: "var(--text-faint)" }}>Apply to all</span>
@@ -529,7 +459,7 @@ export function Inspector() {
               <div className="inspector-section">
                 <div className="inspector-section-title">Color{isBatch ? " (all shapes in group)" : ""}</div>
                 <div className="color-field">
-                  <ColorSwatchInput
+                  <ColorPickerButton
                     className="color-swatch-input"
                     value={display.color}
                     onChange={(color) => targets.forEach((t) => setLayerColor(t.id, color))}
@@ -681,10 +611,11 @@ export function Inspector() {
                       <span className="field-label">Diameter</span>
                       <select
                         className="field-input"
-                        value=""
+                        value={selectedDiameterPreset}
                         onChange={(e) => {
                           const mm = parseFloat(e.target.value);
                           if (!Number.isFinite(mm)) return;
+                          setSelectedDiameterPreset(e.target.value);
                           applyToAll(targets, (t) => applyDiameterPreset(t, mm));
                         }}
                       >
@@ -711,10 +642,11 @@ export function Inspector() {
                       <span className="field-label">Thickness</span>
                       <select
                         className="field-input"
-                        value=""
+                        value={selectedThicknessPreset}
                         onChange={(e) => {
                           const mm = parseFloat(e.target.value);
                           if (!Number.isFinite(mm)) return;
+                          setSelectedThicknessPreset(e.target.value);
                           applyToAll(targets, (t) => setExtrusionDepth(t.id, mm));
                         }}
                       >

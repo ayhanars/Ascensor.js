@@ -13,6 +13,20 @@ export function isShapeLayer(layer: Layer | undefined): layer is ShapeLayer {
   return !!layer && layer.type === "shape";
 }
 
+/** Walks up to the outermost ancestor (a rootIds member) — clicking any
+ * shape inside a group should select/move the whole group as one unit,
+ * the same way Figma treats a click on a group's member as a click on the
+ * group itself unless you've double-clicked in to edit it individually. */
+export function getTopLevelId(layers: Record<string, Layer>, id: string): string {
+  let result = id;
+  let cur = layers[id];
+  while (cur?.parentId) {
+    result = cur.parentId;
+    cur = layers[cur.parentId];
+  }
+  return result;
+}
+
 /** Composes a layer's local transform with all of its ancestors'. */
 export function getWorldTransform(
   layers: Record<string, Layer>,
