@@ -24,6 +24,7 @@ import {
   getMultiLayerWorldBounds,
   getWorldTransform,
   IDENTITY_TRANSFORM,
+  invertTransform2D,
 } from "./sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
 import { unionRegions } from "../geometry/booleanOps";
@@ -715,7 +716,23 @@ export const useSceneStore = create<SceneState>()(
       // A real boolean union — overlapping shapes fill solid (like Figma's
       // Union), not naive concatenation, which behaves like Exclude
       // wherever shapes overlap.
-      const regions = unionRegions(bakedRegions);
+      let regions = unionRegions(bakedRegions);
+
+      // The merged shape's own transform is identity, so the points above
+      // (baked to absolute world space, needed for the union math to line
+      // sources up correctly regardless of their individual transforms)
+      // are exactly its final position ONLY when it has no parent. Inside
+      // a group, that same parent's transform is applied again at render
+      // time on top of already-world-baked points — re-express the points
+      // relative to the parent instead, so they land in the right place
+      // once, not twice.
+      if (topLayer.parentId) {
+        const parentWorld = getWorldTransform(state.layers, topLayer.parentId);
+        regions = regions.map((region) => ({
+          outer: { points: region.outer.points.map((p) => invertTransform2D(p, parentWorld)) },
+          holes: region.holes.map((h) => ({ points: h.points.map((p) => invertTransform2D(p, parentWorld)) })),
+        }));
+      }
 
       const frontMost = shapeLayers[shapeLayers.length - 1];
       const mergedId = nanoid(8);
