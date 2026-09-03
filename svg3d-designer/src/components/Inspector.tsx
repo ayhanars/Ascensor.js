@@ -1,9 +1,9 @@
 import { useRef, useState } from "react";
 import { BED_PRESETS, beginGesture, endGesture, useSceneStore, type TrackedSceneSlice } from "../state/store";
-import { collectShapeLayers } from "../state/sceneUtils";
+import { collectShapeLayers, getLocalShapeBounds } from "../state/sceneUtils";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { displayToMM, formatLength, mmToDisplay, UNIT_LABELS } from "../state/units";
-import type { AlignMode, Units } from "../types";
+import type { AlignMode, ShapeLayer, Units } from "../types";
 import {
   AlignBottomIcon,
   AlignCenterHIcon,
@@ -98,6 +98,25 @@ function round(n: number): number {
   return Math.round(n * 1000) / 1000;
 }
 
+/** Common magnet disc diameters, for the hole "diameter preset" picker. */
+const MAGNET_DIAMETER_PRESETS_MM = [3, 4, 5, 6, 8, 10, 12];
+/** Common magnet disc thicknesses, for the hole "thickness preset" picker. */
+const MAGNET_THICKNESS_PRESETS_MM = [1, 1.5, 2, 3];
+/** ISO 273 medium-series clearance hole diameters for metric screws. */
+const SCREW_CLEARANCE_PRESETS_MM: { label: string; mm: number }[] = [
+  { label: "M2", mm: 2.4 },
+  { label: "M2.5", mm: 2.9 },
+  { label: "M3", mm: 3.4 },
+  { label: "M4", mm: 4.5 },
+  { label: "M5", mm: 5.5 },
+  { label: "M6", mm: 6.6 },
+  { label: "M8", mm: 9 },
+];
+/** A thin-but-printable floor under a recessed pocket (~3 layers at a
+ * typical 0.2mm layer height) — enough to hide a magnet without it showing
+ * through, without needing so many layers the magnet's pull is blocked. */
+const RECOMMENDED_FLOOR_MM = 0.6;
+
 export function Inspector() {
   const docSettings = useSceneStore((s) => s.document);
   const unit = docSettings.units;
@@ -115,6 +134,8 @@ export function Inspector() {
   const setBevelTop = useSceneStore((s) => s.setBevelTop);
   const setIsHole = useSceneStore((s) => s.setIsHole);
   const setLayerZ = useSceneStore((s) => s.setLayerZ);
+  const snapHoleToRecessedPocket = useSceneStore((s) => s.snapHoleToRecessedPocket);
+  const [floorThickness, setFloorThickness] = useState(RECOMMENDED_FLOOR_MM);
   const radiusGesture = useRef<TrackedSceneSlice | null>(null);
   const bevelBottomGesture = useRef<TrackedSceneSlice | null>(null);
   const bevelTopGesture = useRef<TrackedSceneSlice | null>(null);
@@ -368,6 +389,19 @@ export function Inspector() {
           if (!display) return null;
           const isBatch = layer.type === "group";
 
+          // Scales a shape (about its own local origin) so its raw bounding
+          // box matches a real-world diameter — the same direct
+          // scaleX/scaleY the Scale fields above already use, just solved
+          // for a target size instead of read from a slider.
+          const applyDiameterPreset = (target: ShapeLayer, diameterMM: number) => {
+            const bounds = getLocalShapeBounds(target);
+            if (!bounds) return;
+            const w = bounds.maxX - bounds.minX;
+            const h = bounds.maxY - bounds.minY;
+            if (w <= 0 || h <= 0) return;
+            setLayerTransform(target.id, { scaleX: diameterMM / w, scaleY: diameterMM / h });
+          };
+
           return (
             <>
               <div className="inspector-section">
@@ -516,6 +550,85 @@ export function Inspector() {
                   Cuts out of whatever it overlaps instead of adding material — for magnet wells, screw holes, etc.
                   Shown in red while editing; never printed as its own solid.
                 </p>
+
+                {display.isHole && (
+                  <>
+                    <div className="field-row">
+                      <span className="field-label">Diameter</span>
+                      <select
+                        className="field-input"
+                        value=""
+                        onChange={(e) => {
+                          const mm = parseFloat(e.target.value);
+                          if (!Number.isFinite(mm)) return;
+                          targets.forEach((t) => applyDiameterPreset(t, mm));
+                        }}
+                      >
+                        <option value="" disabled>
+                          Common sizes…
+                        </option>
+                        <optgroup label="Magnets">
+                          {MAGNET_DIAMETER_PRESETS_MM.map((d) => (
+                            <option key={`mag-${d}`} value={d}>
+                              {d} mm
+                            </option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="Screw clearance">
+                          {SCREW_CLEARANCE_PRESETS_MM.map(({ label, mm }) => (
+                            <option key={label} value={mm}>
+                              {label} ({mm} mm)
+                            </option>
+                          ))}
+                        </optgroup>
+                      </select>
+                    </div>
+                    <div className="field-row">
+                      <span className="field-label">Thickness</span>
+                      <select
+                        className="field-input"
+                        value=""
+                        onChange={(e) => {
+                          const mm = parseFloat(e.target.value);
+                          if (!Number.isFinite(mm)) return;
+                          targets.forEach((t) => setExtrusionDepth(t.id, mm));
+                        }}
+                      >
+                        <option value="" disabled>
+                          Common sizes…
+                        </option>
+                        {MAGNET_THICKNESS_PRESETS_MM.map((t) => (
+                          <option key={t} value={t}>
+                            {t} mm
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="field-row">
+                      <NumberField
+                        label={`Floor left under it (${unitLabel})`}
+                        value={floorThickness}
+                        min={0}
+                        step={0.05}
+                        unit={unit}
+                        onChange={setFloorThickness}
+                      />
+                    </div>
+                    <button
+                      className="btn"
+                      style={{ width: "100%" }}
+                      onClick={() => targets.forEach((t) => snapHoleToRecessedPocket(t.id, floorThickness))}
+                      title="Sinks this hole so it stops just short of the bottom of whatever it overlaps, leaving the floor thickness above as solid material — the usual way to embed a magnet flush and invisible instead of punching all the way through."
+                    >
+                      Snap to recessed pocket
+                    </button>
+                    <p className="hole-hint">
+                      Recommended floor: {formatLength(RECOMMENDED_FLOOR_MM, unit)} (~3 layers at a typical 0.2mm
+                      layer height) — thin enough to hide the magnet, thick enough to print cleanly.
+                    </p>
+                  </>
+                )}
               </div>
             </>
           );

@@ -104,6 +104,14 @@ interface SceneState {
   setBevelBottom: (id: string, mm: number) => void;
   setBevelTop: (id: string, mm: number) => void;
   setIsHole: (id: string, value: boolean) => void;
+  /**
+   * Repositions a hole shape into a recessed pocket instead of a full
+   * through-hole: sinks it `floorThicknessMM` above the bottom of whatever
+   * solid(s) it overlaps, leaving that much material as a floor (e.g. to
+   * embed a magnet without it showing through), while still fully
+   * punching through the top. No-op if the hole doesn't overlap a solid.
+   */
+  snapHoleToRecessedPocket: (id: string, floorThicknessMM: number) => void;
   setLayerZ: (id: string, z: number) => void;
   autoStackLayers: () => void;
   deleteLayer: (id: string) => void;
@@ -306,6 +314,48 @@ export const useSceneStore = create<SceneState>()(
         layers: {
           ...state.layers,
           [id]: { ...layer, isHole: value } as ShapeLayer,
+        },
+      };
+    }),
+
+  snapHoleToRecessedPocket: (id, floorThicknessMM) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape") return {};
+      const holeBounds = getLayerWorldBounds(state.layers, id);
+      if (!holeBounds) return {};
+
+      // Same overlap test the actual cut (holeSubtraction.ts) uses — every
+      // non-hole shape whose XY footprint this hole crosses.
+      let bottomZ = Infinity;
+      let topZ = -Infinity;
+      for (const other of Object.values(state.layers)) {
+        if (other.type !== "shape" || other.isHole || other.id === id) continue;
+        const bounds = getLayerWorldBounds(state.layers, other.id);
+        if (!bounds || !boundsOverlap(bounds, holeBounds)) continue;
+        const world = getWorldTransform(state.layers, other.id);
+        bottomZ = Math.min(bottomZ, world.z);
+        topZ = Math.max(topZ, world.z + other.extrusionDepth);
+      }
+      if (!Number.isFinite(bottomZ)) return {}; // doesn't overlap anything (yet)
+
+      // A small overshoot past the solid's own top guarantees a fully open
+      // pocket mouth even at exact floating-point boundaries — the same
+      // "cutter should protrude past what it clears" convention any CAD
+      // tool uses for a through-cut.
+      const TOP_OVERSHOOT_MM = 1;
+      const parentWorldZ = layer.parentId ? getWorldTransform(state.layers, layer.parentId).z : 0;
+      const newWorldZ = Math.max(0, bottomZ + Math.max(0, floorThicknessMM));
+      const newDepth = Math.max(0.05, topZ + TOP_OVERSHOOT_MM - newWorldZ);
+
+      return {
+        layers: {
+          ...state.layers,
+          [id]: {
+            ...layer,
+            transform: { ...layer.transform, z: Math.max(0, newWorldZ - parentWorldZ) },
+            extrusionDepth: newDepth,
+          } as ShapeLayer,
         },
       };
     }),
