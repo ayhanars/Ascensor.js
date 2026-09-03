@@ -14,6 +14,7 @@ import { isEffectivelyVisible } from "./state/sceneUtils";
 import { showToast } from "./state/toastStore";
 import { mergeSceneIntoSingleLayer, parseSvgToScene, type ParsedScene } from "./svg/parse";
 import { exportSceneToStl } from "./export/stl";
+import { exportSceneToThreeMf } from "./export/threemf";
 
 function App() {
   const viewMode = useSceneStore((s) => s.viewMode);
@@ -172,6 +173,10 @@ function App() {
         onExportStl={() => {
           exportSceneToStl(layers, rootIds, documentName);
           showToast(`Exported ${documentName}.stl`);
+        }}
+        onExport3mf={() => {
+          exportSceneToThreeMf(layers, rootIds, documentName);
+          showToast(`Exported ${documentName}.3mf`);
         }}
         onResetView={() => setResetSignal((n) => n + 1)}
         exportDisabled={!hasVisibleGeometry}

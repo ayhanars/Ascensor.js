@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { useSceneStore } from "../state/store";
 import type { ResolvedTheme } from "../state/theme";
@@ -8,6 +8,7 @@ import { ToggleSwitch } from "./ToggleSwitch";
 interface Props {
   onImportFile: (file: File) => void;
   onExportStl: () => void;
+  onExport3mf: () => void;
   onResetView: () => void;
   exportDisabled: boolean;
   theme: ResolvedTheme;
@@ -17,6 +18,7 @@ interface Props {
 export function TopToolbar({
   onImportFile,
   onExportStl,
+  onExport3mf,
   onResetView,
   exportDisabled,
   theme,
@@ -33,6 +35,18 @@ export function TopToolbar({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canUndo = useStore(useSceneStore.temporal, (s) => s.pastStates.length > 0);
   const canRedo = useStore(useSceneStore.temporal, (s) => s.futureStates.length > 0);
+
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+    function onDocDown(e: MouseEvent) {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) setExportMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDocDown);
+    return () => document.removeEventListener("mousedown", onDocDown);
+  }, [exportMenuOpen]);
 
   return (
     <div className="toolbar">
@@ -63,9 +77,39 @@ export function TopToolbar({
         }}
       />
 
-      <button className="toolbar-btn primary" onClick={onExportStl} disabled={exportDisabled}>
-        Export STL
-      </button>
+      <div className="export-menu-wrap" ref={exportMenuRef}>
+        <button
+          className="toolbar-btn primary"
+          onClick={() => setExportMenuOpen((v) => !v)}
+          disabled={exportDisabled}
+        >
+          Export ▾
+        </button>
+        {exportMenuOpen && (
+          <div className="export-menu">
+            <button
+              className="export-menu-item"
+              onClick={() => {
+                onExportStl();
+                setExportMenuOpen(false);
+              }}
+            >
+              <span>STL</span>
+              <span className="export-menu-item-hint">Geometry only — no colors</span>
+            </button>
+            <button
+              className="export-menu-item"
+              onClick={() => {
+                onExport3mf();
+                setExportMenuOpen(false);
+              }}
+            >
+              <span>3MF</span>
+              <span className="export-menu-item-hint">Keeps each shape's color and position</span>
+            </button>
+          </div>
+        )}
+      </div>
 
       <div className="toolbar-sep" />
 

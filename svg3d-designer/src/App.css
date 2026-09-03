@@ -54,6 +54,38 @@
 .toolbar-btn.primary { background: var(--accent); color: var(--accent-contrast); }
 .toolbar-btn.primary:hover:not(:disabled) { background: #4338ca; }
 .toolbar-btn.primary:disabled { background: #d7d7db; color: var(--text-faint); }
+
+.export-menu-wrap { position: relative; }
+.export-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 220px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.export-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+}
+.export-menu-item:hover { background: var(--bg-hover); }
+.export-menu-item-hint { font-size: 10.5px; font-weight: 400; color: var(--text-muted); }
 .toggle-switch {
   display: flex;
   align-items: center;
