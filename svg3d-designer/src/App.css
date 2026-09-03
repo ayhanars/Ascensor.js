@@ -349,18 +349,23 @@
 .canvas2d.panning { cursor: grabbing; }
 .canvas2d.space-pan { cursor: grab; }
 .canvas2d.space-pan.panning { cursor: grabbing; }
+.canvas2d.zoom-in-tool { cursor: zoom-in; }
+.canvas2d.zoom-out-tool { cursor: zoom-out; }
 
 .selection-box {
   fill: none;
   stroke: var(--accent);
-  stroke-width: 1;
+  /* 1px non-scaling-stroke anti-aliases down to essentially nothing —
+     2px is the difference between an outline you can actually see and
+     one that's only visible if you already know to look for it. */
+  stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
 .marquee-box {
   fill: color-mix(in srgb, var(--accent) 15%, transparent);
   stroke: var(--accent);
-  stroke-width: 1;
-  stroke-dasharray: 3 2;
+  stroke-width: 2;
+  stroke-dasharray: 4 3;
   vector-effect: non-scaling-stroke;
 }
 .selection-handle {

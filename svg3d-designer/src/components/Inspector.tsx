@@ -99,6 +99,50 @@ function ColorSwatchInput({
   );
 }
 
+const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/;
+
+/** "#f00" / "f00" -> "#ff0000"; already-6-digit input is just lowercased.
+ * Returns null for anything that isn't a complete, valid hex color. */
+function normalizeHexColor(raw: string): string | null {
+  const s = raw.trim().startsWith("#") ? raw.trim() : `#${raw.trim()}`;
+  if (!HEX_COLOR_RE.test(s)) return null;
+  if (s.length === 4) {
+    return `#${s[1]}${s[1]}${s[2]}${s[2]}${s[3]}${s[3]}`.toLowerCase();
+  }
+  return s.toLowerCase();
+}
+
+/** A hex-code text field for color, editable the same way NumberField is:
+ * shows the user's raw typed text while focused (so a partial "#f0" isn't
+ * fought or rejected mid-type), commits to the store only once that text
+ * is a complete valid hex color, and reconciles back to the real value on
+ * blur — so an invalid or half-typed hex left in the field doesn't stick
+ * around as a phantom color. */
+function HexColorInput({
+  value,
+  onChange,
+  className,
+}: {
+  value: string;
+  onChange: (color: string) => void;
+  className?: string;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <input
+      className={className}
+      value={draft ?? value}
+      onChange={(e) => {
+        const raw = e.target.value;
+        setDraft(raw);
+        const normalized = normalizeHexColor(raw);
+        if (normalized) onChange(normalized);
+      }}
+      onBlur={() => setDraft(null)}
+    />
+  );
+}
+
 /**
  * A controlled number input that's still editable. A plain
  * `value={someNumber}` input fights the user: clearing the field to type a
@@ -490,13 +534,10 @@ export function Inspector() {
                     value={display.color}
                     onChange={(color) => targets.forEach((t) => setLayerColor(t.id, color))}
                   />
-                  <input
+                  <HexColorInput
                     className="field-input"
                     value={display.color}
-                    onChange={(e) => {
-                      const color = e.target.value;
-                      applyToAll(targets.map((t) => t.id), (id) => setLayerColor(id, color));
-                    }}
+                    onChange={(color) => applyToAll(targets.map((t) => t.id), (id) => setLayerColor(id, color))}
                   />
                 </div>
               </div>

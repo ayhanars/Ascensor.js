@@ -46,6 +46,9 @@ const ZOOM_SENSITIVITY = 0.003;
 // Discrete zoom step for keyboard shortcuts (Z / Option+Z, +/-) — a single
 // keypress should read as one clear zoom level change, like a zoom button.
 const ZOOM_KEY_FACTOR = 1.4;
+// How far the selection outline sits outside a shape's own edge — see the
+// comment where it's used for why this can't just be 0.
+const SELECTION_OUTLINE_MARGIN_MM = 0.6;
 
 interface Props {
   resetSignal: number;
@@ -131,16 +134,25 @@ export function Canvas2D({ resetSignal }: Props) {
     }));
   }
 
-  // Figma-style keyboard zoom: Z zooms in, Option/Alt+Z zooms out, both
-  // centered on the viewport's current center; +/- mirror the universal
-  // browser-zoom convention. Skipped while typing in a form field.
+  // +/- mirror the universal browser-zoom convention (viewport-centered,
+  // repeat allowed — holding the key zooms continuously, same as a
+  // browser's own Cmd/Ctrl +/-). Cmd/Ctrl+0 resets to a true 100%.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (isEditableTarget(e.target) || e.metaKey || e.ctrlKey) return;
+      if (isEditableTarget(e.target)) return;
+      if ((e.metaKey || e.ctrlKey) && e.key === "0") {
+        e.preventDefault();
+        const v = vbRef.current;
+        zoomAround(
+          { x: document_.widthMM / 2, y: document_.heightMM / 2 },
+          document_.widthMM / v.w,
+        );
+        return;
+      }
+      if (e.metaKey || e.ctrlKey) return;
       // A factor < 1 shrinks the viewBox, i.e. zooms IN (higher zoom%).
       let factor = 0;
-      if (e.key === "z" || e.key === "Z") factor = e.altKey ? ZOOM_KEY_FACTOR : 1 / ZOOM_KEY_FACTOR;
-      else if (e.key === "+" || e.key === "=") factor = 1 / ZOOM_KEY_FACTOR;
+      if (e.key === "+" || e.key === "=") factor = 1 / ZOOM_KEY_FACTOR;
       else if (e.key === "-" || e.key === "_") factor = ZOOM_KEY_FACTOR;
       if (!factor) return;
       e.preventDefault();
@@ -150,7 +162,59 @@ export function Canvas2D({ resetSignal }: Props) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [document_.widthMM, document_.heightMM]);
+
+  // Figma's zoom tool: holding Z (Option/Alt+Z for zoom-out) swaps the
+  // cursor to a magnifying glass and does nothing by itself — a *click* on
+  // the artboard while it's held zooms one step centered on exactly where
+  // you clicked. This used to be an instant zoom fired straight off the Z
+  // keydown, with no e.repeat guard: holding the key let the OS's own key
+  // -repeat fire dozens of keydowns a second, each compounding the zoom
+  // factor multiplicatively into an unusable runaway zoom in under a
+  // second — which is what "zooms enormously" was.
+  const [zoomToolArmed, setZoomToolArmed] = useState(false);
+  const [zoomToolOut, setZoomToolOut] = useState(false);
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (isEditableTarget(e.target)) return;
+      if ((e.key === "z" || e.key === "Z") && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        setZoomToolArmed(true);
+      }
+      if (e.key === "Alt") setZoomToolOut(true);
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.key === "z" || e.key === "Z") setZoomToolArmed(false);
+      if (e.key === "Alt") setZoomToolOut(false);
+    }
+    // Losing focus mid-hold (e.g. Alt-tabbing away) would otherwise leave
+    // the tool stuck armed with no keyup ever coming.
+    function onBlur() {
+      setZoomToolArmed(false);
+      setZoomToolOut(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
   }, []);
+
+  /** Handles a click while the zoom tool is armed; returns whether it did
+   * (callers should skip their normal select/pan/move handling if so). */
+  function tryZoomToolClick(e: React.PointerEvent): boolean {
+    if (!zoomToolArmed) return false;
+    // Without this, a click that lands on a shape (rather than empty
+    // background) bubbles from the shape's own onPointerDown up to the
+    // svg's, and both handlers call this — applying the zoom TWICE for
+    // one click.
+    e.stopPropagation();
+    zoomAround(clientToSvg(e.clientX, e.clientY), zoomToolOut ? ZOOM_KEY_FACTOR : 1 / ZOOM_KEY_FACTOR);
+    return true;
+  }
 
   // A native (non-passive) listener is required here: React attaches wheel
   // handlers as passive by default, so e.preventDefault() inside a React
@@ -307,6 +371,7 @@ export function Canvas2D({ resetSignal }: Props) {
 
   function handleShapeDown(e: React.PointerEvent, id: string) {
     e.stopPropagation();
+    if (tryZoomToolClick(e)) return;
     const additive = e.shiftKey || e.metaKey || e.ctrlKey;
     let nextSelection = selection;
     if (additive) {
@@ -345,8 +410,15 @@ export function Canvas2D({ resetSignal }: Props) {
           strokeWidth={layer.isHole ? 1 : 0}
           strokeDasharray={layer.isHole ? "3 2" : undefined}
           vectorEffect={layer.isHole ? "non-scaling-stroke" : undefined}
-          style={{ cursor: layer.locked ? "default" : "move" }}
-          onPointerDown={(e) => !layer.locked && handleShapeDown(e, id)}
+          style={{
+            cursor: zoomToolArmed ? (zoomToolOut ? "zoom-out" : "zoom-in") : layer.locked ? "default" : "move",
+          }}
+          onPointerDown={(e) => {
+            // The zoom tool zooms on anything you click, lock included —
+            // it's not a selection action.
+            if (tryZoomToolClick(e)) return;
+            if (!layer.locked) handleShapeDown(e, id);
+          }}
         />
       </g>
     );
@@ -359,9 +431,15 @@ export function Canvas2D({ resetSignal }: Props) {
     <>
       <svg
         ref={svgRef}
-        className={"canvas2d" + (isPanning ? " panning" : "") + (spaceHeld ? " space-pan" : "")}
+        className={
+          "canvas2d" +
+          (isPanning ? " panning" : "") +
+          (spaceHeld ? " space-pan" : "") +
+          (zoomToolArmed ? (zoomToolOut ? " zoom-out-tool" : " zoom-in-tool") : "")
+        }
         viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
         onPointerDown={(e) => {
+          if (tryZoomToolClick(e)) return;
           if (e.target === svgRef.current || (e.target as Element).tagName === "rect") {
             if (spaceHeld) beginPan(e);
             else beginMarquee(e);
@@ -401,14 +479,22 @@ export function Canvas2D({ resetSignal }: Props) {
         {selection.map((id) => {
           const b = getLayerWorldBounds(layers, id);
           if (!b) return null;
+          // Outset a hair past the shape's own edge. Drawn exactly on top of
+          // it, the outline's inner half anti-aliases straight into the
+          // fill (a near-identical accent-blue against an indigo shape,
+          // there's nothing to see) and only shows where a corner happens
+          // to land on bare background — which is why a plain rectangle
+          // showed no visible outline at all while a circle's square
+          // bounding box (corners poking past the round fill) did.
+          const m = SELECTION_OUTLINE_MARGIN_MM;
           return (
             <rect
               key={id}
               className="selection-box"
-              x={b.minX}
-              y={b.minY}
-              width={Math.max(0.01, b.maxX - b.minX)}
-              height={Math.max(0.01, b.maxY - b.minY)}
+              x={b.minX - m}
+              y={b.minY - m}
+              width={Math.max(0.01, b.maxX - b.minX + m * 2)}
+              height={Math.max(0.01, b.maxY - b.minY + m * 2)}
               pointerEvents="none"
             />
           );
@@ -426,8 +512,8 @@ export function Canvas2D({ resetSignal }: Props) {
         )}
       </svg>
       <div className="canvas-hint">
-        Drag empty space to select · Space+drag or scroll to pan · Cmd/Ctrl+scroll or pinch to zoom · Click a shape
-        to select, drag to move
+        Drag empty space to select · Space+drag or scroll to pan · Cmd/Ctrl+scroll, pinch, or hold Z (Option+Z to
+        zoom out) and click to zoom · Cmd/Ctrl+0 for 100% · Click a shape to select, drag to move
       </div>
       <div className="zoom-indicator">{zoomPct}%</div>
     </>
