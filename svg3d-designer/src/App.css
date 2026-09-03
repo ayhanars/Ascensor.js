@@ -54,6 +54,38 @@
 .toolbar-btn.primary { background: var(--accent); color: var(--accent-contrast); }
 .toolbar-btn.primary:hover:not(:disabled) { background: #4338ca; }
 .toolbar-btn.primary:disabled { background: #d7d7db; color: var(--text-faint); }
+
+.export-menu-wrap { position: relative; }
+.export-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 220px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.export-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+}
+.export-menu-item:hover { background: var(--bg-hover); }
+.export-menu-item-hint { font-size: 10.5px; font-weight: 400; color: var(--text-muted); }
 .toggle-switch {
   display: flex;
   align-items: center;
@@ -178,6 +210,11 @@
 .layer-row.selected { background: var(--bg-selected); border-color: #c7d2fe; }
 .layer-row.drop-target { border-color: var(--accent); }
 .layer-row.dim { opacity: 0.45; }
+/* Matches the canvas's own red hole/negative-space styling, so a hole
+   layer reads as "this cuts a hole" at a glance in the panel too, not
+   just once you've clicked into it. */
+.layer-row.hole { background: color-mix(in srgb, #ef4444 8%, transparent); }
+.layer-row.hole.selected { background: color-mix(in srgb, #ef4444 16%, var(--bg-selected)); }
 
 .layer-row .icon-btn {
   flex: 0 0 auto;
@@ -202,6 +239,7 @@
   border-radius: 3px;
   border: 1px solid rgba(0,0,0,0.15);
 }
+.layer-swatch.hole { border-color: #ef4444; border-width: 1.5px; }
 
 .layer-name {
   flex: 1 1 auto;
@@ -211,6 +249,7 @@
   white-space: nowrap;
   font-size: 12px;
 }
+.layer-name.hole { color: #ef4444; }
 .layer-name-input {
   flex: 1 1 auto;
   min-width: 0;
@@ -477,31 +516,105 @@
   vector-effect: non-scaling-stroke;
 }
 
-.canvas-hint {
-  position: absolute;
-  left: 12px;
-  bottom: 12px;
-  background: var(--overlay-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 6px 10px;
-  color: var(--text-muted);
-  font-size: 11px;
-  max-width: 360px;
-  line-height: 1.4;
+/* Deliberately NOT the selection outline's accent-blue — while dragging,
+   a guide sitting right next to a blue selection box was easy to miss.
+   Figma-style hot pink/red reads as a distinct "this is a live alignment
+   signal," not just more selection chrome. */
+.align-guide {
+  stroke: #ff2d78;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  vector-effect: non-scaling-stroke;
   pointer-events: none;
 }
 
-.zoom-indicator {
+.canvas-status-bar {
   position: absolute;
   right: 12px;
   bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.canvas-info-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: var(--overlay-bg);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.canvas-info-btn:hover,
+.canvas-info-btn.active {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.canvas-hint {
+  position: absolute;
+  right: 0;
+  bottom: 30px;
+  background: var(--overlay-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+  width: 280px;
+  line-height: 1.5;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+}
+
+.zoom-indicator {
   background: var(--overlay-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 4px 8px;
   color: var(--text-muted);
   font-size: 11px;
+}
+
+.toast-stack {
+  position: absolute;
+  left: 50%;
+  bottom: 74px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.toast {
+  background: var(--text);
+  color: var(--bg-panel);
+  border-radius: var(--radius-sm);
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  animation: toast-in 0.15s ease-out;
+  white-space: nowrap;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .shape-toolbar {
@@ -532,6 +645,7 @@
 .shape-tool-btn.active { background: var(--accent); color: var(--accent-contrast); }
 .shape-tool-btn.active:hover { background: var(--accent); color: var(--accent-contrast); }
 .shape-toolbar-divider { width: 1px; margin: 4px 2px; background: var(--border); }
+.hole-tool-btn:hover { background: color-mix(in srgb, #ef4444 15%, transparent); color: #ef4444; }
 
 /* ---------- Dialog ---------- */
 

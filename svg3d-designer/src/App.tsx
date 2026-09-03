@@ -7,11 +7,14 @@ import { Canvas2D } from "./components/Canvas2D";
 import { Viewport3D } from "./components/Viewport3D";
 import { ShapeToolbar } from "./components/ShapeToolbar";
 import { ImportDialog } from "./components/ImportDialog";
+import { ToastStack } from "./components/ToastStack";
 import { useSceneStore } from "./state/store";
 import { useTheme } from "./state/theme";
 import { isEffectivelyVisible } from "./state/sceneUtils";
+import { showToast } from "./state/toastStore";
 import { mergeSceneIntoSingleLayer, parseSvgToScene, type ParsedScene } from "./svg/parse";
 import { exportSceneToStl } from "./export/stl";
+import { exportSceneToThreeMf } from "./export/threemf";
 
 function App() {
   const viewMode = useSceneStore((s) => s.viewMode);
@@ -95,6 +98,18 @@ function App() {
         if (store.selection.length > 0) store.duplicateSelection();
         return;
       }
+      if (mod && e.key.toLowerCase() === "c") {
+        if (store.selection.length > 0) {
+          e.preventDefault();
+          store.copySelection();
+        }
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "v") {
+        e.preventDefault();
+        store.pasteClipboard();
+        return;
+      }
       if (mod && e.key.toLowerCase() === "a") {
         e.preventDefault();
         store.selectAll();
@@ -155,7 +170,14 @@ function App() {
     >
       <TopToolbar
         onImportFile={handleImportFile}
-        onExportStl={() => exportSceneToStl(layers, rootIds, documentName)}
+        onExportStl={() => {
+          exportSceneToStl(layers, rootIds, documentName);
+          showToast(`Exported ${documentName}.stl`);
+        }}
+        onExport3mf={() => {
+          exportSceneToThreeMf(layers, rootIds, documentName);
+          showToast(`Exported ${documentName}.3mf`);
+        }}
         onResetView={() => setResetSignal((n) => n + 1)}
         exportDisabled={!hasVisibleGeometry}
         theme={theme}
@@ -173,6 +195,7 @@ function App() {
           )}
           {viewMode === "2d" && <ShapeToolbar />}
           {isDragOver && <div className="dropzone-overlay">Drop SVG to import</div>}
+          <ToastStack />
         </div>
 
         <Inspector />
@@ -193,6 +216,7 @@ function App() {
               widthMM: pendingImport.widthMM,
               heightMM: pendingImport.heightMM,
             });
+            showToast(`Imported ${pendingImport.summary.fileName}`);
             setPendingImport(null);
           }}
         />

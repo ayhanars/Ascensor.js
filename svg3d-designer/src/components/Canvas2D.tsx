@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { beginGesture, endGesture, useSceneStore, type TrackedSceneSlice } from "../state/store";
-import { boundsOverlap, getLayerWorldBounds, getTopLevelId, isAncestorOrSelf, stepIntoOnClick } from "../state/sceneUtils";
+import { boundsOverlap, getLayerWorldBounds, getMultiLayerWorldBounds, getTopLevelId, isAncestorOrSelf, stepIntoOnClick } from "../state/sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
 import type { Layer, ShapeRegion } from "../types";
+import { InfoIcon } from "./icons";
 
 function isEditableTarget(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false;
@@ -72,6 +73,29 @@ export function Canvas2D({ resetSignal }: Props) {
   const [isPanning, setIsPanning] = useState(false);
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [marqueeRect, setMarqueeRect] = useState<ViewBox | null>(null);
+  const [showHint, setShowHint] = useState(false);
+  // Smart alignment guides: while dragging shapes, a dashed line highlights
+  // any edge/center that lines up with another shape's, so you can actually
+  // see the alignment happen instead of eyeballing it against the (visually
+  // very similar) selection outline.
+  const [alignGuides, setAlignGuides] = useState<{ v: number[]; h: number[] }>({ v: [], h: [] });
+  const hintRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showHint) return;
+    function onDocDown(e: MouseEvent) {
+      if (hintRef.current && !hintRef.current.contains(e.target as Node)) setShowHint(false);
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setShowHint(false);
+    }
+    document.addEventListener("mousedown", onDocDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [showHint]);
 
   const dragState = useRef<{
     mode: "pan" | "move" | "marquee" | null;
@@ -322,6 +346,41 @@ export function Canvas2D({ resetSignal }: Props) {
     };
   }
 
+  // How close two edges/centers need to be (in document mm) to count as
+  // "aligned" — scaled by the current zoom so it reads as a consistent
+  // few screen pixels whether zoomed in or out.
+  const ALIGN_TOLERANCE_FRACTION = 0.004;
+
+  function computeAlignGuides(draggedIds: string[], liveLayers: Record<string, Layer>): { v: number[]; h: number[] } {
+    const draggedBounds = getMultiLayerWorldBounds(liveLayers, draggedIds);
+    if (!draggedBounds) return { v: [], h: [] };
+    const tolerance = Math.max(0.3, vbRef.current.w * ALIGN_TOLERANCE_FRACTION);
+    const draggedSet = new Set(draggedIds);
+
+    const dCenterX = (draggedBounds.minX + draggedBounds.maxX) / 2;
+    const dCenterY = (draggedBounds.minY + draggedBounds.maxY) / 2;
+
+    const v = new Set<number>();
+    const h = new Set<number>();
+
+    for (const id of rootIds) {
+      if (draggedSet.has(id)) continue;
+      const b = getLayerWorldBounds(liveLayers, id);
+      if (!b) continue;
+      const centerX = (b.minX + b.maxX) / 2;
+      const centerY = (b.minY + b.maxY) / 2;
+
+      if (Math.abs(draggedBounds.minX - b.minX) < tolerance) v.add(b.minX);
+      if (Math.abs(draggedBounds.maxX - b.maxX) < tolerance) v.add(b.maxX);
+      if (Math.abs(dCenterX - centerX) < tolerance) v.add(centerX);
+      if (Math.abs(draggedBounds.minY - b.minY) < tolerance) h.add(b.minY);
+      if (Math.abs(draggedBounds.maxY - b.maxY) < tolerance) h.add(b.maxY);
+      if (Math.abs(dCenterY - centerY) < tolerance) h.add(centerY);
+    }
+
+    return { v: Array.from(v), h: Array.from(h) };
+  }
+
   function onPointerMove(e: React.PointerEvent) {
     const drag = dragState.current;
     if (!drag) return;
@@ -341,6 +400,8 @@ export function Canvas2D({ resetSignal }: Props) {
       for (const [id, orig] of Object.entries(drag.originals)) {
         setLayerTransform(id, { x: orig.x + dx, y: orig.y + dy });
       }
+      const liveLayers = useSceneStore.getState().layers;
+      setAlignGuides(computeAlignGuides(Object.keys(drag.originals), liveLayers));
     } else if (drag.mode === "marquee") {
       const cur = clientToSvg(e.clientX, e.clientY);
       setMarqueeRect({
@@ -355,6 +416,7 @@ export function Canvas2D({ resetSignal }: Props) {
   function onPointerUp(e: React.PointerEvent) {
     const drag = dragState.current;
     if (drag?.mode === "pan" && !drag.moved) clearSelection();
+    if (drag?.mode === "move") setAlignGuides({ v: [], h: [] });
     if (drag?.mode === "move" && drag.preGestureSnapshot) {
       endGesture(drag.preGestureSnapshot, drag.moved);
       // The pointer never actually moved — this was a plain click on an
@@ -576,12 +638,47 @@ export function Canvas2D({ resetSignal }: Props) {
             pointerEvents="none"
           />
         )}
+
+        {alignGuides.v.map((x) => (
+          <line
+            key={`v${x}`}
+            className="align-guide"
+            x1={x}
+            y1={vb.y}
+            x2={x}
+            y2={vb.y + vb.h}
+            pointerEvents="none"
+          />
+        ))}
+        {alignGuides.h.map((y) => (
+          <line
+            key={`h${y}`}
+            className="align-guide"
+            x1={vb.x}
+            y1={y}
+            x2={vb.x + vb.w}
+            y2={y}
+            pointerEvents="none"
+          />
+        ))}
       </svg>
-      <div className="canvas-hint">
-        Drag empty space to select · Space+drag or scroll to pan · Cmd/Ctrl+scroll, pinch, or hold Z (Option+Z to
-        zoom out) and click to zoom · Cmd/Ctrl+0 for 100% · Click a shape to select, drag to move
+      <div className="canvas-status-bar" ref={hintRef}>
+        <button
+          type="button"
+          className={"canvas-info-btn" + (showHint ? " active" : "")}
+          aria-label="Canvas controls help"
+          onClick={() => setShowHint((v) => !v)}
+        >
+          <InfoIcon size={13} />
+        </button>
+        {showHint && (
+          <div className="canvas-hint">
+            Drag empty space to select · Space+drag or scroll to pan · Cmd/Ctrl+scroll, pinch, or hold Z (Option+Z to
+            zoom out) and click to zoom · Cmd/Ctrl+0 for 100% · Click a shape to select, drag to move
+          </div>
+        )}
+        <div className="zoom-indicator">{zoomPct}%</div>
       </div>
-      <div className="zoom-indicator">{zoomPct}%</div>
     </>
   );
 }
