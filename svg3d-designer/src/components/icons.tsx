@@ -79,6 +79,18 @@ export const SunIcon = ({ size = 14 }: IconProps) => (
   </svg>
 );
 
+export const CursorToolIcon = ({ size = 16 }: IconProps) => (
+  <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
+    <path
+      d="M3 2.2 12.5 8l-4 1-1.5 4.2-4-11Z"
+      fill="currentColor"
+      stroke="currentColor"
+      strokeWidth={1}
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 export const RectangleToolIcon = ({ size = 16 }: IconProps) => (
   <svg {...base(size)}>
     <rect x="2.5" y="4" width="11" height="8" rx="1" />
