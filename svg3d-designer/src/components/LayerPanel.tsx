@@ -92,6 +92,7 @@ export function LayerPanel() {
           const locked = isEffectivelyLocked(layers, id);
           const isEditing = editingId === id;
           const isDropTarget = dropTarget?.id === id;
+          const isHole = layer.type === "shape" && layer.isHole;
 
           return (
             <div
@@ -101,6 +102,7 @@ export function LayerPanel() {
                 selected ? "selected" : "",
                 !layer.visible ? "dim" : "",
                 isDropTarget ? "drop-target" : "",
+                isHole ? "hole" : "",
               ].join(" ").trim()}
               style={{ paddingLeft: 8 + depth * 14 }}
               draggable={!isEditing}
@@ -135,8 +137,11 @@ export function LayerPanel() {
               </span>
 
               <span
-                className="layer-swatch"
-                style={{ background: layer.type === "shape" ? layer.color : "transparent", borderStyle: layer.type === "group" ? "dashed" : "solid" }}
+                className={"layer-swatch" + (isHole ? " hole" : "")}
+                style={{
+                  background: isHole ? "transparent" : layer.type === "shape" ? layer.color : "transparent",
+                  borderStyle: layer.type === "group" ? "dashed" : isHole ? "dashed" : "solid",
+                }}
               />
 
               {isEditing ? (
@@ -154,13 +159,13 @@ export function LayerPanel() {
                 />
               ) : (
                 <span
-                  className="layer-name"
+                  className={"layer-name" + (isHole ? " hole" : "")}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
                     setEditingId(id);
                     setDraftName(layer.name);
                   }}
-                  title={layer.name}
+                  title={isHole ? `${layer.name} (negative space)` : layer.name}
                 >
                   {layer.name}
                 </span>

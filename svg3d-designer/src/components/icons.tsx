@@ -170,3 +170,18 @@ export const AlignBottomIcon = ({ size = 14 }: IconProps) => (
     <rect x="9.5" y="8" width="3.5" height="5.5" rx="0.6" />
   </svg>
 );
+
+export const InfoIcon = ({ size = 14 }: IconProps) => (
+  <svg {...base(size)}>
+    <circle cx="8" cy="8" r="6" />
+    <path d="M8 7.2v4" />
+    <circle cx="8" cy="4.9" r="0.7" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+export const HoleToolIcon = ({ size = 16 }: IconProps) => (
+  <svg {...base(size)}>
+    <circle cx="8" cy="8" r="5.5" />
+    <circle cx="8" cy="8" r="2.2" fill="currentColor" stroke="none" />
+  </svg>
+);

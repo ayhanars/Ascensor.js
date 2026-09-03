@@ -28,6 +28,7 @@ import {
 } from "./sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
 import { unionRegions } from "../geometry/booleanOps";
+import { showToast } from "./toastStore";
 
 /**
  * Solves for the local transform that, composed under `newParentWorld`
@@ -51,6 +52,11 @@ function rebaseWorldToParent(world: Transform2D, newParentWorld: Transform2D): T
     scaleY: world.scaleY / newParentWorld.scaleY,
   };
 }
+
+/** Cmd+C/Cmd+V clipboard — deliberately a plain module variable, not part
+ * of the store: it must survive selection changes and isn't itself
+ * document content, so it shouldn't be undo-tracked or persisted. */
+let clipboard: { layers: Record<string, Layer>; rootIds: string[] } | null = null;
 
 export const BED_PRESETS: PrintBed[] = [
   { name: "Bambu Lab X1 Carbon", width: 256, depth: 256, height: 256 },
@@ -123,6 +129,8 @@ interface SceneState {
   deleteSelection: () => void;
   duplicateLayer: (id: string) => void;
   duplicateSelection: () => void;
+  copySelection: () => void;
+  pasteClipboard: () => void;
   moveLayer: (id: string, targetParentId: string | null, index: number) => void;
   mergeLayers: (ids: string[]) => void;
   groupSelection: () => void;
@@ -138,7 +146,7 @@ interface SceneState {
   setUnits: (units: Units) => void;
   fitDocumentToSelection: () => void;
   matchDocumentToBed: () => void;
-  createShapeLayer: (kind: "rect" | "circle") => void;
+  createShapeLayer: (kind: "rect" | "circle" | "hole") => void;
 }
 
 /**
@@ -445,7 +453,10 @@ export const useSceneStore = create<SceneState>()(
 
   deleteSelection: () => {
     const { selection, deleteLayer } = get();
+    if (selection.length === 0) return;
+    const count = selection.length;
     selection.forEach((id) => deleteLayer(id));
+    showToast(count === 1 ? "Deleted 1 layer" : `Deleted ${count} layers`);
   },
 
   duplicateLayer: (id) =>
@@ -486,7 +497,8 @@ export const useSceneStore = create<SceneState>()(
       return { layers, rootIds, selection: [newId] };
     }),
 
-  duplicateSelection: () =>
+  duplicateSelection: () => {
+    let count = 0;
     set((state) => {
       const layers = { ...state.layers };
       const rootIds = [...state.rootIds];
@@ -538,8 +550,97 @@ export const useSceneStore = create<SceneState>()(
       }
 
       if (newIds.length === 0) return {};
+      count = newIds.length;
       return { layers, rootIds, selection: newIds };
-    }),
+    });
+    if (count > 0) showToast(count === 1 ? "Duplicated 1 layer" : `Duplicated ${count} layers`);
+  },
+
+  copySelection: () => {
+    const state = get();
+    // Only copy top-of-selection items, same as duplicateSelection.
+    const selectedSet = new Set(state.selection);
+    const topLevel = state.selection.filter((id) => {
+      let cur = state.layers[id];
+      while (cur?.parentId) {
+        if (selectedSet.has(cur.parentId)) return false;
+        cur = state.layers[cur.parentId];
+      }
+      return true;
+    });
+    if (topLevel.length === 0) return;
+
+    const snapshotLayers: Record<string, Layer> = {};
+    function collect(id: string) {
+      const layer = state.layers[id];
+      if (!layer) return;
+      snapshotLayers[id] = layer;
+      if (layer.type === "group") layer.children.forEach(collect);
+    }
+    topLevel.forEach(collect);
+
+    const cloned = structuredClone(snapshotLayers);
+    // Bake each top-level item's full world transform into its own clone —
+    // paste always lands at the document root (parentId null), so what was
+    // relative to some original parent group must become correct on its
+    // own, exactly as if that parent's transform had been applied once.
+    for (const id of topLevel) {
+      cloned[id] = { ...cloned[id], transform: getWorldTransform(state.layers, id) };
+    }
+
+    clipboard = { layers: cloned, rootIds: [...topLevel] };
+    showToast(topLevel.length === 1 ? "Copied 1 layer" : `Copied ${topLevel.length} layers`);
+  },
+
+  pasteClipboard: () => {
+    if (!clipboard) return;
+    const source = clipboard;
+    // A small nudge so a paste doesn't land exactly on top of its source,
+    // matching the common copy/paste convention (and duplicateSelection's
+    // own offset-free-but-reordered placement wouldn't be visible here
+    // since pasted items always land at the root, away from any sibling
+    // list position to offset within).
+    const PASTE_OFFSET_MM = 8;
+    let count = 0;
+    set((state) => {
+      const layers = { ...state.layers };
+      const rootIds = [...state.rootIds];
+      const newIds: string[] = [];
+
+      function cloneSubtree(sourceId: string, parentId: string | null): string {
+        const src = source.layers[sourceId];
+        const newId = nanoid(8);
+        if (src.type === "group") {
+          const newChildren = src.children.map((c) => cloneSubtree(c, newId));
+          layers[newId] = { ...src, id: newId, parentId, children: newChildren };
+        } else {
+          layers[newId] = { ...src, id: newId, parentId };
+        }
+        return newId;
+      }
+
+      for (const id of source.rootIds) {
+        if (!source.layers[id]) continue;
+        const newId = cloneSubtree(id, null);
+        const layer = layers[newId];
+        layers[newId] = {
+          ...layer,
+          transform: {
+            ...layer.transform,
+            x: layer.transform.x + PASTE_OFFSET_MM,
+            y: layer.transform.y + PASTE_OFFSET_MM,
+          },
+        };
+        newIds.push(newId);
+        rootIds.push(newId);
+      }
+
+      if (newIds.length === 0) return {};
+      count = newIds.length;
+      return { layers, rootIds, selection: newIds };
+    });
+    if (count > 0) showToast(count === 1 ? "Pasted 1 layer" : `Pasted ${count} layers`);
+  },
 
   alignSelection: (mode) =>
     set((state) => {
@@ -660,7 +761,8 @@ export const useSceneStore = create<SceneState>()(
       return { layers, rootIds };
     }),
 
-  mergeLayers: (ids) =>
+  mergeLayers: (ids) => {
+    let mergedCount = 0;
     set((state) => {
       const unique = Array.from(new Set(ids)).filter((id) => state.layers[id]);
 
@@ -798,10 +900,14 @@ export const useSceneStore = create<SceneState>()(
             .map((r) => (r === topId ? mergedId : r))
             .filter((r) => r === mergedId || !toRemove.has(r));
 
+      mergedCount = shapeLayers.length;
       return { layers, rootIds, selection: [mergedId] };
-    }),
+    });
+    if (mergedCount > 0) showToast(`Merged ${mergedCount} shapes`);
+  },
 
-  groupSelection: () =>
+  groupSelection: () => {
+    let grouped = 0;
     set((state) => {
       // Keep only top-of-selection ids, same as mergeLayers/duplicateSelection.
       const selectedSet = new Set(state.selection);
@@ -881,10 +987,14 @@ export const useSceneStore = create<SceneState>()(
             .map((r) => (r === topId ? groupId : r))
             .filter((r) => r === groupId || !selectedSet.has(r));
 
+      grouped = orderedSelected.length;
       return { layers, rootIds, selection: [groupId] };
-    }),
+    });
+    if (grouped > 0) showToast(`Grouped ${grouped} layers`);
+  },
 
-  ungroupSelection: () =>
+  ungroupSelection: () => {
+    let ungrouped = 0;
     set((state) => {
       const groups = state.selection
         .map((id) => state.layers[id])
@@ -932,8 +1042,11 @@ export const useSceneStore = create<SceneState>()(
       }
 
       if (newSelection.length === 0) return {};
+      ungrouped = groups.length;
       return { layers, rootIds, selection: newSelection };
-    }),
+    });
+    if (ungrouped > 0) showToast(ungrouped === 1 ? "Ungrouped 1 group" : `Ungrouped ${ungrouped} groups`);
+  },
 
   setViewMode: (mode) => set({ viewMode: mode }),
   toggleGrid: () => set((state) => ({ showGrid: !state.showGrid })),
@@ -987,7 +1100,11 @@ export const useSceneStore = create<SceneState>()(
           },
         ];
       } else {
-        const r = 10;
+        // "hole" reuses the circle path — a round negative-space cutout
+        // (screw holes, magnet pockets) is by far the common case, and the
+        // Inspector's own hole tools (shape presets, recessed-pocket snap)
+        // already assume that starting point.
+        const r = kind === "hole" ? 4 : 10;
         w = r * 2;
         h = r * 2;
         const segments = 64;
@@ -1001,7 +1118,7 @@ export const useSceneStore = create<SceneState>()(
       const layer: ShapeLayer = {
         id,
         type: "shape",
-        name: kind === "rect" ? "Rectangle" : "Circle",
+        name: kind === "rect" ? "Rectangle" : kind === "hole" ? "Hole" : "Circle",
         visible: true,
         locked: false,
         color: "#4f46e5",
@@ -1016,7 +1133,7 @@ export const useSceneStore = create<SceneState>()(
         cornerRadius: 0,
         bevelBottom: 0,
         bevelTop: 0,
-        isHole: false,
+        isHole: kind === "hole",
       };
 
       return {

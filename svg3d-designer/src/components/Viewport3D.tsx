@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
 import { OrbitControls, GizmoHelper, GizmoViewport } from "@react-three/drei";
 import * as THREE from "three";
-import { useSceneStore } from "../state/store";
+import { beginGesture, endGesture, useSceneStore, type TrackedSceneSlice } from "../state/store";
 import type { ResolvedTheme } from "../state/theme";
 import { buildAssemblyGroup, computeVisibleBounds } from "../geometry/extrude";
 import { flattenForDisplay } from "../state/sceneUtils";
@@ -119,7 +119,19 @@ function Assembly() {
   const rootIds = useSceneStore((s) => s.rootIds);
   const selection = useSceneStore((s) => s.selection);
   const wireframe = useSceneStore((s) => s.wireframe);
-  const selectLayer = useSceneStore((s) => s.selectLayer);
+  const setSelection = useSceneStore((s) => s.setSelection);
+  const setLayerTransform = useSceneStore((s) => s.setLayerTransform);
+
+  const camera = useThree((s) => s.camera);
+  const gl = useThree((s) => s.gl);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see
+  // CameraRig's controlsRef: only `.enabled` is used here, stable across
+  // drei/three versions. `makeDefault` on OrbitControls (in CameraRig)
+  // registers the instance in R3F's shared store, so it's reachable here
+  // without prop-drilling.
+  const controls = useThree((s) => s.controls) as any;
+  const controlsRef = useRef(controls);
+  controlsRef.current = controls;
 
   const group = useMemo(
     () => buildAssemblyGroup(layers, rootIds, { respectVisibility: true, showHoleOverlays: true }),
@@ -203,9 +215,82 @@ function Assembly() {
     };
   }, [group, selection]);
 
-  // Click-to-select, with a movement threshold so an orbit/pan drag that
-  // happens to end up over a mesh doesn't get mistaken for a click.
-  const pointerDownInfo = useRef<{ x: number; y: number; layerId?: string } | null>(null);
+  // Click-to-select AND drag-to-move, for whatever is currently selected —
+  // single shape, multiple shapes (shift-clicked, no grouping required), or
+  // a group. Dragging is resolved against a horizontal plane at world Y=0
+  // (matching the print bed / data z=0), raycast from the pointer each
+  // move. Because our data model extrudes along Z but the preview group is
+  // rotated -90° about X (see DISPLAY_ROTATION) to show Z as "up", a delta
+  // on this plane's world X/Z axes maps directly to a delta on the data
+  // model's x/y axes (world X -> data x, world Z -> data y) — derived from
+  // that same rotation and how extrude.ts builds local positions/points.
+  const raycaster = useMemo(() => new THREE.Raycaster(), []);
+  const dragPlane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), []);
+
+  function raycastToPlane(clientX: number, clientY: number): THREE.Vector3 | null {
+    const rect = gl.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    raycaster.setFromCamera(ndc, camera);
+    const point = new THREE.Vector3();
+    return raycaster.ray.intersectPlane(dragPlane, point) ? point : null;
+  }
+
+  const dragRef = useRef<{
+    ids: string[];
+    originals: Record<string, { x: number; y: number }>;
+    startPoint: THREE.Vector3;
+    startClientX: number;
+    startClientY: number;
+    moved: boolean;
+    snapshot: TrackedSceneSlice;
+    layerId: string;
+    additive: boolean;
+    /** True when the click landed on a shape that was already part of the
+     * current (possibly multi-shape) selection — the selection is kept
+     * as-is for the drag (so the whole thing moves together, matching
+     * Figma), and only collapsed down to just this shape if pointerup
+     * finds the pointer never actually moved. */
+    keptSelection: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    function onWindowPointerMove(e: PointerEvent) {
+      const drag = dragRef.current;
+      if (!drag) return;
+      if (Math.abs(e.clientX - drag.startClientX) + Math.abs(e.clientY - drag.startClientY) > 2) {
+        drag.moved = true;
+      }
+      const point = raycastToPlane(e.clientX, e.clientY);
+      if (!point) return;
+      const deltaX = point.x - drag.startPoint.x;
+      const deltaY = point.z - drag.startPoint.z;
+      for (const [id, orig] of Object.entries(drag.originals)) {
+        setLayerTransform(id, { x: orig.x + deltaX, y: orig.y + deltaY });
+      }
+    }
+
+    function onWindowPointerUp() {
+      const drag = dragRef.current;
+      dragRef.current = null;
+      if (!drag) return;
+      if (controlsRef.current) controlsRef.current.enabled = true;
+      endGesture(drag.snapshot, drag.moved);
+      if (!drag.moved && !drag.additive && drag.keptSelection) {
+        setSelection([drag.layerId]);
+      }
+    }
+
+    window.addEventListener("pointermove", onWindowPointerMove);
+    window.addEventListener("pointerup", onWindowPointerUp);
+    return () => {
+      window.removeEventListener("pointermove", onWindowPointerMove);
+      window.removeEventListener("pointerup", onWindowPointerUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <primitive
@@ -236,16 +321,48 @@ function Assembly() {
             bestDist = Math.min(bestDist, hit.distance);
           }
         }
-        pointerDownInfo.current = { x: e.clientX, y: e.clientY, layerId };
-      }}
-      onPointerUp={(e: ThreeEvent<PointerEvent>) => {
-        const down = pointerDownInfo.current;
-        pointerDownInfo.current = null;
-        if (!down?.layerId) return;
-        if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return;
-        e.stopPropagation();
+        if (!layerId) return;
+
         const additive = e.nativeEvent.shiftKey || e.nativeEvent.metaKey || e.nativeEvent.ctrlKey;
-        selectLayer(down.layerId, additive);
+        let dragIds: string[];
+        let keptSelection = false;
+        if (additive) {
+          const nextSelection = selection.includes(layerId)
+            ? selection.filter((s) => s !== layerId)
+            : [...selection, layerId];
+          setSelection(nextSelection);
+          dragIds = nextSelection;
+        } else if (selection.includes(layerId)) {
+          dragIds = selection;
+          keptSelection = true;
+        } else {
+          setSelection([layerId]);
+          dragIds = [layerId];
+        }
+
+        const startPoint = raycastToPlane(e.clientX, e.clientY);
+        if (!startPoint) return;
+
+        if (controlsRef.current) controlsRef.current.enabled = false;
+        const originals: Record<string, { x: number; y: number }> = {};
+        for (const id of dragIds) {
+          const layer = layers[id];
+          if (layer) originals[id] = { x: layer.transform.x, y: layer.transform.y };
+        }
+        dragRef.current = {
+          ids: dragIds,
+          originals,
+          startPoint,
+          startClientX: e.clientX,
+          startClientY: e.clientY,
+          moved: false,
+          // The whole drag — however many pointermove events it produces —
+          // should collapse into a single undo step.
+          snapshot: beginGesture(),
+          layerId,
+          additive,
+          keptSelection,
+        };
       }}
     />
   );

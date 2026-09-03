@@ -1,5 +1,5 @@
 import { useSceneStore } from "../state/store";
-import { CircleToolIcon, CursorToolIcon, RectangleToolIcon } from "./icons";
+import { CircleToolIcon, CursorToolIcon, HoleToolIcon, RectangleToolIcon } from "./icons";
 
 /** Figma-style floating toolbar for adding primitive shapes to the artboard. */
 export function ShapeToolbar() {
@@ -30,6 +30,14 @@ export function ShapeToolbar() {
         onClick={() => createShapeLayer("circle")}
       >
         <CircleToolIcon />
+      </button>
+      <div className="shape-toolbar-divider" />
+      <button
+        className="shape-tool-btn hole-tool-btn"
+        title="Add hole (negative space) — cuts through whatever it overlaps"
+        onClick={() => createShapeLayer("hole")}
+      >
+        <HoleToolIcon />
       </button>
     </div>
   );
