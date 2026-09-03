@@ -1,4 +1,5 @@
 import type { Layer, Point2, ShapeLayer, ShapeRegion, Transform2D } from "../types";
+import { regionsArea, regionsIntersectionArea, unionRegions } from "../geometry/booleanOps";
 
 export const IDENTITY_TRANSFORM: Transform2D = {
   x: 0,
@@ -304,4 +305,48 @@ export function getWorldRegions(layers: Record<string, Layer>, id: string): Shap
     outer: { points: region.outer.points.map((p) => applyTransform2D(p, world)) },
     holes: region.holes.map((h) => ({ points: h.points.map((p) => applyTransform2D(p, world)) })),
   }));
+}
+
+// How close two Z heights (mm) need to be to count as "the same surface" —
+// loose enough to absorb the rounding a display-unit round-trip (mm<->in)
+// can introduce, tight enough to never treat two genuinely different
+// stacking heights as the same one.
+const Z_ALIGN_EPSILON_MM = 0.01;
+
+/**
+ * Which currently-placed shapes are, right now, NOT fully supported by
+ * whatever they're resting on — read-only, unlike autoStackLayers (which
+ * also repositions everything): this checks each shape's REAL current Z
+ * against every other shape's real current footprint, so it reflects
+ * wherever things actually are on screen, whether they got there via
+ * Auto-Stack, a manual Z edit, or a drag. A shape sitting on the bed
+ * (world Z ~0) is always considered supported.
+ */
+export function computeFloatingLayerIds(layers: Record<string, Layer>, rootIds: string[]): string[] {
+  const order = flattenForDisplay(layers, rootIds)
+    .map((r) => r.id)
+    .filter((id) => isShapeLayer(layers[id]));
+
+  const info = order
+    .map((id) => {
+      const layer = layers[id] as ShapeLayer;
+      const regions = getWorldRegions(layers, id);
+      const z = getWorldTransform(layers, id).z;
+      return { id, layer, regions, area: regionsArea(regions), z, topZ: z + layer.extrusionDepth };
+    })
+    .filter((item) => !item.layer.isHole && item.area > 1e-6);
+
+  const floating: string[] = [];
+  for (const item of info) {
+    if (item.z <= Z_ALIGN_EPSILON_MM) continue;
+    const supporters = info.filter((o) => o.id !== item.id && Math.abs(o.topZ - item.z) < Z_ALIGN_EPSILON_MM);
+    if (supporters.length === 0) {
+      floating.push(item.id);
+      continue;
+    }
+    const supportUnion = unionRegions(supporters.flatMap((s) => s.regions));
+    const supportedArea = regionsIntersectionArea(item.regions, supportUnion);
+    if (supportedArea < item.area * 0.98) floating.push(item.id);
+  }
+  return floating;
 }

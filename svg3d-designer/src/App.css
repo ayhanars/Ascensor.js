@@ -86,14 +86,25 @@
 }
 .export-menu-item:hover { background: var(--bg-hover); }
 .export-menu-item-hint { font-size: 10.5px; font-weight: 400; color: var(--text-muted); }
-.boolean-ops-menu { min-width: 160px; }
-.boolean-ops-item {
-  flex-direction: row;
+.boolean-ops-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+}
+.boolean-op-btn {
+  display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-muted);
+  font-size: 11px;
   font-weight: 500;
 }
-.boolean-ops-item .export-menu-item-hint { margin-left: auto; }
+.boolean-op-btn:hover { background: var(--bg-hover); color: var(--text); }
 .toggle-switch {
   display: flex;
   align-items: center;
@@ -694,6 +705,56 @@
   content: " (click to dismiss)";
   opacity: 0.75;
   font-weight: 400;
+}
+
+.floating-warning-banner {
+  position: absolute;
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #b45309;
+  color: #fff;
+  border-radius: var(--radius-sm);
+  padding: 7px 10px 7px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  max-width: min(480px, calc(100% - 28px));
+}
+.floating-warning-icon {
+  flex: none;
+}
+.floating-warning-text {
+  flex: 1 1 auto;
+}
+.floating-warning-select-btn,
+.floating-warning-fix-btn {
+  flex: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.floating-warning-select-btn {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+.floating-warning-select-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+.floating-warning-fix-btn {
+  background: #fff;
+  color: #b45309;
+}
+.floating-warning-fix-btn:hover {
+  background: #fff7ed;
 }
 
 @keyframes toast-in {

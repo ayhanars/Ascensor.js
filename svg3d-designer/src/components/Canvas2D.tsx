@@ -460,6 +460,15 @@ export function Canvas2D({ resetSignal }: Props) {
   function handleShapeDown(e: React.PointerEvent, rawId: string) {
     e.stopPropagation();
     if (tryZoomToolClick(e)) return;
+    // Space+drag pans even when the pointer happens to come down on a
+    // shape — without this, the shape's own handler (which runs first and
+    // stops the event before it ever reaches the canvas-level pan check)
+    // always started moving that shape instead, no matter where you
+    // pressed down.
+    if (spaceHeld) {
+      beginPan(e);
+      return;
+    }
     const additive = e.shiftKey || e.metaKey || e.ctrlKey;
 
     if (additive) {

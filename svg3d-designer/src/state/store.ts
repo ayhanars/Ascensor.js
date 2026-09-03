@@ -31,7 +31,6 @@ import { roundRegions } from "../geometry/roundCorners";
 import {
   differenceRegions,
   intersectionRegions,
-  regionsArea,
   regionsIntersectionArea,
   unionRegions,
   xorRegions,
@@ -159,6 +158,7 @@ interface SceneState {
   snapHoleToRecessedPocket: (id: string, floorThicknessMM: number) => void;
   setLayerZ: (id: string, z: number) => void;
   autoStackLayers: () => void;
+  fixFloatingLayers: (ids: string[]) => void;
   deleteLayer: (id: string) => void;
   deleteSelection: () => void;
   duplicateLayer: (id: string) => void;
@@ -423,15 +423,6 @@ export const useSceneStore = create<SceneState>()(
     }),
 
   autoStackLayers: () => {
-    // Shapes that end up raised above the bed without their own footprint
-    // being FULLY covered by whatever raised them — i.e. at least part of
-    // the shape has nothing underneath it and can't physically print as
-    // placed. Collected during the reducer below and reported afterward (a
-    // store reducer must stay a pure state transition; the side-effecting
-    // toast/selection happens once, after).
-    let floatingNames: string[] = [];
-    let floatingIds: string[] = [];
-
     set((state) => {
       // Each layer sits on top of whatever it *actually* overlaps — real
       // polygon overlap, not just a bounding-box check — so two unrelated
@@ -448,31 +439,16 @@ export const useSceneStore = create<SceneState>()(
       for (const id of order) {
         const layer = layers[id] as ShapeLayer;
         const regions = getWorldRegions(layers, id);
-        const ownArea = regionsArea(regions);
 
         // baseZ is the tallest already-placed shape this one's real
-        // outline genuinely overlaps — not merely bbox-adjacent to.
+        // outline genuinely overlaps — not merely bbox-adjacent to. A
+        // shape only partially covered by that support (part of it
+        // hanging over empty space) is left for the persistent
+        // floating-shape banner to catch and offer a targeted fix for.
         let baseZ = 0;
         for (const p of placed) {
           if (p.topZ <= baseZ) continue; // can't raise baseZ any further
           if (regionsIntersectionArea(regions, p.regions) > 1e-6) baseZ = p.topZ;
-        }
-
-        // A shape resting on solid ground (baseZ 0) is always fully
-        // supported by definition. One raised onto something else is only
-        // safe to print if what it landed on actually covers its WHOLE
-        // footprint — a shape whose bounding box merely brushed a taller
-        // neighbor, but whose real outline only partly overlaps it, would
-        // otherwise end up with part of it hanging in mid-air.
-        if (baseZ > 0 && ownArea > 1e-6 && !layer.isHole) {
-          const supportUnion = unionRegions(
-            placed.filter((p) => p.topZ === baseZ).flatMap((p) => p.regions),
-          );
-          const supportedArea = regionsIntersectionArea(regions, supportUnion);
-          if (supportedArea < ownArea * 0.98) {
-            floatingNames.push(layer.name);
-            floatingIds.push(id);
-          }
         }
 
         // baseZ is a world-space height; convert it back to this layer's
@@ -485,22 +461,54 @@ export const useSceneStore = create<SceneState>()(
       }
       return { layers };
     });
+    showToast("Auto-stacked all layers");
+  },
 
-    if (floatingIds.length > 0) {
-      // Select them directly — a highlighted outline right on the canvas
-      // is far harder to miss than toast text alone, and stays visible
-      // until you do something else (unlike the toast, which now needs an
-      // explicit dismiss anyway since this is worth actually reading).
-      set({ selection: floatingIds });
-      const shown = floatingNames.slice(0, 3).join(", ");
-      const rest = floatingNames.length > 3 ? ` +${floatingNames.length - 3} more` : "";
-      showToast(
-        `Auto-stacked — ${floatingNames.length} shape${floatingNames.length === 1 ? "" : "s"} may be floating and now selected: ${shown}${rest}`,
-        { tone: "warning", sticky: true },
-      );
-    } else {
-      showToast("Auto-stacked all layers");
-    }
+  fixFloatingLayers: (ids) => {
+    let fixedCount = 0;
+    set((state) => {
+      const layers = { ...state.layers };
+      const allIds = flattenForDisplay(state.layers, state.rootIds)
+        .map((r) => r.id)
+        .filter((id) => state.layers[id]?.type === "shape");
+      // Support is computed against everyone else's CURRENT position, using
+      // the original (pre-fix) snapshot — fixing one floating shape should
+      // never change what another floating shape in the same batch is
+      // measured against.
+      const info = allIds.map((id, orderIndex) => {
+        const layer = state.layers[id] as ShapeLayer;
+        return {
+          id,
+          orderIndex,
+          layer,
+          regions: getWorldRegions(state.layers, id),
+          z: getWorldTransform(state.layers, id).z,
+        };
+      });
+      for (const id of ids) {
+        const item = info.find((i) => i.id === id);
+        if (!item) continue;
+        // Only a shape earlier in layer order can be "underneath" this one
+        // — the same document-order-is-stacking-order convention
+        // autoStackLayers uses. Without this, raising a large background
+        // shape that everything else was drawn on top of would have it
+        // "rest on" whatever it overlaps and invert the stack, burying the
+        // foreground shapes it was actually supposed to support.
+        const others = info.filter((o) => o.id !== id && o.orderIndex < item.orderIndex);
+        let baseZ = 0;
+        for (const o of others) {
+          const topZ = o.z + o.layer.extrusionDepth;
+          if (topZ <= baseZ) continue;
+          if (regionsIntersectionArea(item.regions, o.regions) > 1e-6) baseZ = topZ;
+        }
+        const parentWorldZ = item.layer.parentId ? getWorldTransform(layers, item.layer.parentId).z : 0;
+        const localZ = Math.max(0, baseZ - parentWorldZ);
+        layers[id] = { ...layers[id], transform: { ...layers[id].transform, z: localZ } } as ShapeLayer;
+        fixedCount++;
+      }
+      return { layers };
+    });
+    if (fixedCount > 0) showToast(`Fixed ${fixedCount} floating shape${fixedCount === 1 ? "" : "s"}`);
   },
 
   deleteLayer: (id) =>
