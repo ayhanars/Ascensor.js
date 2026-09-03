@@ -22,12 +22,13 @@ import {
   type Bounds,
   getLayerWorldBounds,
   getMultiLayerWorldBounds,
+  getWorldRegions,
   getWorldTransform,
   IDENTITY_TRANSFORM,
   invertTransform2D,
 } from "./sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
-import { unionRegions } from "../geometry/booleanOps";
+import { regionsArea, regionsIntersectionArea, unionRegions } from "../geometry/booleanOps";
 import { showToast } from "./toastStore";
 
 /**
@@ -387,29 +388,53 @@ export const useSceneStore = create<SceneState>()(
       };
     }),
 
-  autoStackLayers: () =>
+  autoStackLayers: () => {
+    // Names of shapes that end up raised above the bed without their own
+    // footprint being FULLY covered by whatever raised them — i.e. at
+    // least part of the shape has nothing underneath it and can't
+    // physically print as placed. Collected during the reducer below and
+    // reported via a toast afterward (a store reducer must stay a pure
+    // state transition; the side-effecting toast happens once, after).
+    let floatingNames: string[] = [];
+
     set((state) => {
-      // Each layer sits on top of whatever it actually overlaps in X/Y —
-      // not blindly on top of everything painted before it — so two
-      // unrelated shapes on the same background (e.g. separate letters,
-      // or an icon off to the side) end up resting at the same height
-      // instead of one floating on top of the other.
+      // Each layer sits on top of whatever it *actually* overlaps — real
+      // polygon overlap, not just a bounding-box check — so two unrelated
+      // shapes that merely have overlapping bounding boxes (e.g. two
+      // circles near the same corner, or an L-shaped part) don't get
+      // stacked on each other when their real outlines never touch.
       const order = flattenForDisplay(state.layers, state.rootIds)
         .map((r) => r.id)
         .filter((id) => state.layers[id]?.type === "shape");
 
       const layers = { ...state.layers };
-      const placed: { bounds: ReturnType<typeof getLayerWorldBounds>; topZ: number }[] = [];
+      const placed: { regions: ReturnType<typeof getWorldRegions>; topZ: number }[] = [];
 
       for (const id of order) {
         const layer = layers[id] as ShapeLayer;
-        const bounds = getLayerWorldBounds(layers, id);
+        const regions = getWorldRegions(layers, id);
+        const ownArea = regionsArea(regions);
 
+        // baseZ is the tallest already-placed shape this one's real
+        // outline genuinely overlaps — not merely bbox-adjacent to.
         let baseZ = 0;
-        if (bounds) {
-          for (const p of placed) {
-            if (p.bounds && boundsOverlap(bounds, p.bounds)) baseZ = Math.max(baseZ, p.topZ);
-          }
+        for (const p of placed) {
+          if (p.topZ <= baseZ) continue; // can't raise baseZ any further
+          if (regionsIntersectionArea(regions, p.regions) > 1e-6) baseZ = p.topZ;
+        }
+
+        // A shape resting on solid ground (baseZ 0) is always fully
+        // supported by definition. One raised onto something else is only
+        // safe to print if what it landed on actually covers its WHOLE
+        // footprint — a shape whose bounding box merely brushed a taller
+        // neighbor, but whose real outline only partly overlaps it, would
+        // otherwise end up with part of it hanging in mid-air.
+        if (baseZ > 0 && ownArea > 1e-6 && !layer.isHole) {
+          const supportUnion = unionRegions(
+            placed.filter((p) => p.topZ === baseZ).flatMap((p) => p.regions),
+          );
+          const supportedArea = regionsIntersectionArea(regions, supportUnion);
+          if (supportedArea < ownArea * 0.98) floatingNames.push(layer.name);
         }
 
         // baseZ is a world-space height; convert it back to this layer's
@@ -418,10 +443,21 @@ export const useSceneStore = create<SceneState>()(
         const localZ = Math.max(0, baseZ - parentWorldZ);
         layers[id] = { ...layer, transform: { ...layer.transform, z: localZ } };
 
-        if (bounds) placed.push({ bounds, topZ: baseZ + layer.extrusionDepth });
+        placed.push({ regions, topZ: baseZ + layer.extrusionDepth });
       }
       return { layers };
-    }),
+    });
+
+    if (floatingNames.length > 0) {
+      const shown = floatingNames.slice(0, 3).join(", ");
+      const rest = floatingNames.length > 3 ? ` +${floatingNames.length - 3} more` : "";
+      showToast(
+        `Auto-stacked — ${floatingNames.length} shape${floatingNames.length === 1 ? "" : "s"} may be floating: ${shown}${rest}`,
+      );
+    } else {
+      showToast("Auto-stacked all layers");
+    }
+  },
 
   deleteLayer: (id) =>
     set((state) => {

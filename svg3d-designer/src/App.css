@@ -294,6 +294,32 @@
   margin-bottom: 8px;
 }
 
+.inspector-section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.inspector-section-title-row .inspector-section-title {
+  margin-bottom: 0;
+}
+.section-toggle-btn {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+}
+.section-toggle-btn:hover { background: var(--bg-hover); color: var(--text); border-color: var(--accent); }
+
 .field-row {
   display: flex;
   align-items: center;

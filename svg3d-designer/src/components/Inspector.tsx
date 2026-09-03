@@ -14,6 +14,48 @@ import {
   AlignTopIcon,
 } from "./icons";
 
+/**
+ * A section whose control(s) take real vertical space but are frequently
+ * left at "no value" (corner radius, edge bevel) — collapses to just its
+ * title + a small "+" when inactive, matching Figma's own pattern for
+ * optional properties like this, so a shape with nothing set doesn't cost
+ * the same room in the panel as one that does. `active` is derived
+ * straight from the real value (not separate UI state) so it can never
+ * drift out of sync when the selection changes. The "+"/"×" button itself
+ * both toggles visibility AND sets/clears the real value in one action —
+ * "add" starts it at a small visible default, "remove" resets to 0.
+ */
+function CollapsibleSection({
+  title,
+  active,
+  onAdd,
+  onRemove,
+  children,
+}: {
+  title: string;
+  active: boolean;
+  onAdd: () => void;
+  onRemove: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="inspector-section">
+      <div className="inspector-section-title-row">
+        <div className="inspector-section-title">{title}</div>
+        <button
+          type="button"
+          className="section-toggle-btn"
+          title={active ? "Remove" : "Add"}
+          onClick={active ? onRemove : onAdd}
+        >
+          {active ? "−" : "+"}
+        </button>
+      </div>
+      {active && children}
+    </div>
+  );
+}
+
 /** Left/center/right + top/middle/bottom align buttons — aligns to the
  * artboard for a single selection, or the selection's own combined
  * bounding box for several, matching Figma. */
@@ -483,8 +525,12 @@ export function Inspector() {
                 />
               </div>
 
-              <div className="inspector-section">
-                <div className="inspector-section-title">Corners{isBatch ? " (all shapes in group)" : ""}</div>
+              <CollapsibleSection
+                title={`Corners${isBatch ? " (all shapes in group)" : ""}`}
+                active={display.cornerRadius > 0}
+                onAdd={() => applyToAll(targets.map((t) => t.id), (id) => setCornerRadius(id, 2))}
+                onRemove={() => applyToAll(targets.map((t) => t.id), (id) => setCornerRadius(id, 0))}
+              >
                 <div className="field-row">
                   <span className="field-label">Radius ({unitLabel})</span>
                   <input
@@ -516,78 +562,91 @@ export function Inspector() {
                     onChange={(v) => applyToAll(targets.map((t) => t.id), (id) => setCornerRadius(id, v))}
                   />
                 </div>
-              </div>
+              </CollapsibleSection>
 
-              <div className="inspector-section">
-                <div className="inspector-section-title">Edge bevel{isBatch ? " (all shapes in group)" : ""}</div>
-                {(() => {
-                  const bevelMax = Math.max(0.5, display.extrusionDepth / 2);
-                  return (
-                    <>
-                      <div className="field-row">
-                        <span className="field-label">Top ({unitLabel})</span>
-                        <input
-                          className="field-input"
-                          type="range"
-                          min={0}
-                          max={bevelMax}
-                          step={0.05}
-                          value={Math.min(bevelMax, display.bevelTop)}
-                          onPointerDown={() => {
-                            bevelTopGesture.current = beginGesture();
-                          }}
-                          onPointerUp={() => {
-                            if (bevelTopGesture.current) {
-                              endGesture(bevelTopGesture.current, true);
-                              bevelTopGesture.current = null;
-                            }
-                          }}
-                          onChange={(e) => targets.forEach((t) => setBevelTop(t.id, parseFloat(e.target.value)))}
-                          style={{ flex: "1 1 auto" }}
-                        />
-                        <NumberField
-                          value={display.bevelTop}
-                          min={0}
-                          step={0.05}
-                          unit={unit}
-                          style={{ flex: "0 0 60px" }}
-                          onChange={(v) => applyToAll(targets.map((t) => t.id), (id) => setBevelTop(id, v))}
-                        />
-                      </div>
-                      <div className="field-row">
-                        <span className="field-label">Bottom ({unitLabel})</span>
-                        <input
-                          className="field-input"
-                          type="range"
-                          min={0}
-                          max={bevelMax}
-                          step={0.05}
-                          value={Math.min(bevelMax, display.bevelBottom)}
-                          onPointerDown={() => {
-                            bevelBottomGesture.current = beginGesture();
-                          }}
-                          onPointerUp={() => {
-                            if (bevelBottomGesture.current) {
-                              endGesture(bevelBottomGesture.current, true);
-                              bevelBottomGesture.current = null;
-                            }
-                          }}
-                          onChange={(e) => targets.forEach((t) => setBevelBottom(t.id, parseFloat(e.target.value)))}
-                          style={{ flex: "1 1 auto" }}
-                        />
-                        <NumberField
-                          value={display.bevelBottom}
-                          min={0}
-                          step={0.05}
-                          unit={unit}
-                          style={{ flex: "0 0 60px" }}
-                          onChange={(v) => applyToAll(targets.map((t) => t.id), (id) => setBevelBottom(id, v))}
-                        />
-                      </div>
-                    </>
-                  );
-                })()}
-              </div>
+              {(() => {
+                const bevelMax = Math.max(0.5, display.extrusionDepth / 2);
+                const bevelDefault = Math.min(0.3, bevelMax);
+                return (
+                  <CollapsibleSection
+                    title={`Edge bevel${isBatch ? " (all shapes in group)" : ""}`}
+                    active={display.bevelTop > 0 || display.bevelBottom > 0}
+                    onAdd={() =>
+                      applyToAll(targets.map((t) => t.id), (id) => {
+                        setBevelTop(id, bevelDefault);
+                        setBevelBottom(id, bevelDefault);
+                      })
+                    }
+                    onRemove={() =>
+                      applyToAll(targets.map((t) => t.id), (id) => {
+                        setBevelTop(id, 0);
+                        setBevelBottom(id, 0);
+                      })
+                    }
+                  >
+                    <div className="field-row">
+                      <span className="field-label">Top ({unitLabel})</span>
+                      <input
+                        className="field-input"
+                        type="range"
+                        min={0}
+                        max={bevelMax}
+                        step={0.05}
+                        value={Math.min(bevelMax, display.bevelTop)}
+                        onPointerDown={() => {
+                          bevelTopGesture.current = beginGesture();
+                        }}
+                        onPointerUp={() => {
+                          if (bevelTopGesture.current) {
+                            endGesture(bevelTopGesture.current, true);
+                            bevelTopGesture.current = null;
+                          }
+                        }}
+                        onChange={(e) => targets.forEach((t) => setBevelTop(t.id, parseFloat(e.target.value)))}
+                        style={{ flex: "1 1 auto" }}
+                      />
+                      <NumberField
+                        value={display.bevelTop}
+                        min={0}
+                        step={0.05}
+                        unit={unit}
+                        style={{ flex: "0 0 60px" }}
+                        onChange={(v) => applyToAll(targets.map((t) => t.id), (id) => setBevelTop(id, v))}
+                      />
+                    </div>
+                    <div className="field-row">
+                      <span className="field-label">Bottom ({unitLabel})</span>
+                      <input
+                        className="field-input"
+                        type="range"
+                        min={0}
+                        max={bevelMax}
+                        step={0.05}
+                        value={Math.min(bevelMax, display.bevelBottom)}
+                        onPointerDown={() => {
+                          bevelBottomGesture.current = beginGesture();
+                        }}
+                        onPointerUp={() => {
+                          if (bevelBottomGesture.current) {
+                            endGesture(bevelBottomGesture.current, true);
+                            bevelBottomGesture.current = null;
+                          }
+                        }}
+                        onChange={(e) => targets.forEach((t) => setBevelBottom(t.id, parseFloat(e.target.value)))}
+                        style={{ flex: "1 1 auto" }}
+                      />
+                      <NumberField
+                        value={display.bevelBottom}
+                        min={0}
+                        step={0.05}
+                        unit={unit}
+                        style={{ flex: "0 0 60px" }}
+                        onChange={(v) => applyToAll(targets.map((t) => t.id), (id) => setBevelBottom(id, v))}
+                      />
+                    </div>
+                  </CollapsibleSection>
+                );
+              })()}
 
               <div className="inspector-section">
                 <div className="inspector-section-title">Negative space{isBatch ? " (all shapes in group)" : ""}</div>
