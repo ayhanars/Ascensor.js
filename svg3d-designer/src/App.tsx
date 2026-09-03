@@ -8,6 +8,7 @@ import { Viewport3D } from "./components/Viewport3D";
 import { ShapeToolbar } from "./components/ShapeToolbar";
 import { ImportDialog } from "./components/ImportDialog";
 import { ToastStack } from "./components/ToastStack";
+import { FloatingWarningBanner } from "./components/FloatingWarningBanner";
 import { useSceneStore } from "./state/store";
 import { useTheme } from "./state/theme";
 import { isEffectivelyVisible } from "./state/sceneUtils";
@@ -195,6 +196,7 @@ function App() {
           )}
           {viewMode === "2d" && <ShapeToolbar />}
           {isDragOver && <div className="dropzone-overlay">Drop SVG to import</div>}
+          <FloatingWarningBanner />
           <ToastStack />
         </div>
 

@@ -142,6 +142,11 @@ export function LayerPanel() {
               onDragLeave={() => setDropTarget((t) => (t?.id === id ? null : t))}
               onDrop={(e) => {
                 e.preventDefault();
+                // Without this, an internal row-to-row reorder drop bubbles
+                // up to the app-level drag/drop handler meant for OS file
+                // drops — which sees no dropped Files and pops the "Drop a
+                // .svg file to import it" error dialog on every reorder.
+                e.stopPropagation();
                 if (dropTarget?.id === id) handleDrop(id, dropTarget.position);
               }}
               onDragEnd={() => {

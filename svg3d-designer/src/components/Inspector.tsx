@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import {
   BED_PRESETS,
   beginGesture,
@@ -27,60 +27,45 @@ import {
   BookmarkIcon,
 } from "./icons";
 
-/** Figma-style boolean-operations dropdown: Union (an alias for the
- * existing Merge/Flatten action, which already does a real polygon union),
- * Subtract, Intersect, and Exclude — presented as one menu the way Figma's
- * own boolean-ops button groups them, rather than four separate buttons. */
-function BooleanOpsMenu({ selection }: { selection: string[] }) {
+/** Figma-style boolean operations — Union (an alias for the existing Merge/
+ * Flatten action, which already does a real polygon union), Subtract,
+ * Intersect, and Exclude — always shown as a row of four buttons rather
+ * than tucked behind a dropdown, so they're all visible/reachable in one
+ * glance for a multi-selection. */
+function BooleanOpsRow({ selection }: { selection: string[] }) {
   const mergeLayers = useSceneStore((s) => s.mergeLayers);
   const booleanOp = useSceneStore((s) => s.booleanOp);
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    function onDocDown(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onDocDown);
-    return () => document.removeEventListener("mousedown", onDocDown);
-  }, [open]);
-
-  const items: { label: string; Icon: typeof BoolUnionIcon; onClick: () => void; shortcut?: string }[] = [
-    { label: "Union", Icon: BoolUnionIcon, onClick: () => mergeLayers(selection), shortcut: "⌘E" },
-    { label: "Subtract", Icon: BoolSubtractIcon, onClick: () => booleanOp(selection, "subtract") },
-    { label: "Intersect", Icon: BoolIntersectIcon, onClick: () => booleanOp(selection, "intersect") },
-    { label: "Exclude", Icon: BoolExcludeIcon, onClick: () => booleanOp(selection, "exclude") },
+  const items: { label: string; Icon: typeof BoolUnionIcon; onClick: () => void; title: string }[] = [
+    { label: "Union", Icon: BoolUnionIcon, onClick: () => mergeLayers(selection), title: "Union — combine into one shape (Cmd/Ctrl+E)" },
+    {
+      label: "Subtract",
+      Icon: BoolSubtractIcon,
+      onClick: () => booleanOp(selection, "subtract"),
+      title: "Subtract — cuts the front shape(s) out of the back one",
+    },
+    {
+      label: "Intersect",
+      Icon: BoolIntersectIcon,
+      onClick: () => booleanOp(selection, "intersect"),
+      title: "Intersect — keeps only the overlapping area",
+    },
+    {
+      label: "Exclude",
+      Icon: BoolExcludeIcon,
+      onClick: () => booleanOp(selection, "exclude"),
+      title: "Exclude — keeps everything except the overlap",
+    },
   ];
 
   return (
-    <div className="export-menu-wrap" ref={wrapRef}>
-      <button
-        className="btn primary"
-        style={{ width: "100%" }}
-        onClick={() => setOpen((v) => !v)}
-        title="Combine the selected shapes with a boolean operation"
-      >
-        Boolean ▾
-      </button>
-      {open && (
-        <div className="export-menu boolean-ops-menu">
-          {items.map(({ label, Icon, onClick, shortcut }) => (
-            <button
-              key={label}
-              className="export-menu-item boolean-ops-item"
-              onClick={() => {
-                onClick();
-                setOpen(false);
-              }}
-            >
-              <Icon size={15} />
-              <span style={{ flex: "1 1 auto" }}>{label}</span>
-              {shortcut && <span className="export-menu-item-hint">{shortcut}</span>}
-            </button>
-          ))}
-        </div>
-      )}
+    <div className="boolean-ops-row">
+      {items.map(({ label, Icon, onClick, title }) => (
+        <button key={label} className="boolean-op-btn" title={title} onClick={onClick}>
+          <Icon size={16} />
+          <span>{label}</span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -304,16 +289,34 @@ export function Inspector() {
   const radiusGesture = useRef<TrackedSceneSlice | null>(null);
   const bevelBottomGesture = useRef<TrackedSceneSlice | null>(null);
   const bevelTopGesture = useRef<TrackedSceneSlice | null>(null);
-  const fitDocumentToSelection = useSceneStore((s) => s.fitDocumentToSelection);
   const matchDocumentToBed = useSceneStore((s) => s.matchDocumentToBed);
   const mergeLayers = useSceneStore((s) => s.mergeLayers);
   const groupSelection = useSceneStore((s) => s.groupSelection);
   const ungroupSelection = useSceneStore((s) => s.ungroupSelection);
 
   if (selection.length === 0) {
-    const preset = BED_PRESETS.find(
-      (p) => p.width === docSettings.bed.width && p.depth === docSettings.bed.depth,
-    );
+    // Several Bambu beds share identical dimensions (X1 Carbon/X1/X1E/P1S/
+    // P1P/A1 are all 256x256x256), so matching on width+depth alone always
+    // resolved to whichever of them happens to come first in BED_PRESETS —
+    // picking any of the others from the dropdown would immediately look
+    // like it snapped back to "Bambu Lab X1 Carbon". `bed.name` already
+    // carries the real selected preset (setBed merges the whole preset
+    // object, name included); only fall back to dimension-matching if that
+    // name no longer matches the bed's actual current size (e.g. after
+    // manually editing a Width/Depth/Height field by hand).
+    const byName = BED_PRESETS.find((p) => p.name === docSettings.bed.name);
+    const preset =
+      byName &&
+      byName.width === docSettings.bed.width &&
+      byName.depth === docSettings.bed.depth &&
+      byName.height === docSettings.bed.height
+        ? byName
+        : BED_PRESETS.find(
+            (p) =>
+              p.width === docSettings.bed.width &&
+              p.depth === docSettings.bed.depth &&
+              p.height === docSettings.bed.height,
+          );
     return (
       <div className="sidebar sidebar-right">
         <div className="sidebar-header">Document</div>
@@ -351,7 +354,14 @@ export function Inspector() {
                 value={preset?.name ?? "Custom"}
                 onChange={(e) => {
                   const p = BED_PRESETS.find((b) => b.name === e.target.value);
-                  if (p) setBed(p);
+                  if (!p) return;
+                  // Picking a different printer should just work — no
+                  // separate "now go match the artboard to it" step.
+                  // Bundled as one undo step, same as any other batch edit.
+                  const snapshot = beginGesture();
+                  setBed(p);
+                  matchDocumentToBed();
+                  endGesture(snapshot, true);
                 }}
               >
                 {BED_PRESETS.map((p) => (
@@ -401,9 +411,6 @@ export function Inspector() {
               <span className="k">Height</span>
               <span>{formatLength(docSettings.heightMM, unit)} {unitLabel}</span>
             </div>
-            <button className="btn" style={{ width: "100%", marginTop: 6 }} onClick={matchDocumentToBed}>
-              Match print bed size
-            </button>
           </div>
 
           <p className="empty-inspector">Select a layer on the canvas or in the Layers panel to edit its properties.</p>
@@ -448,12 +455,10 @@ export function Inspector() {
           >
             Group selection
           </button>
-          <div style={{ marginTop: 6 }}>
-            <BooleanOpsMenu selection={selection} />
+          <div className="inspector-section" style={{ marginTop: 10 }}>
+            <div className="inspector-section-title">Boolean</div>
+            <BooleanOpsRow selection={selection} />
           </div>
-          <button className="btn" style={{ width: "100%", marginTop: 6 }} onClick={fitDocumentToSelection}>
-            Fit artboard to selection
-          </button>
         </div>
       </div>
     );
@@ -554,12 +559,8 @@ export function Inspector() {
             label="Rotation (deg)"
             value={layer.transform.rotation}
             step={1}
-            style={{ marginBottom: 6 }}
             onChange={(v) => setLayerTransform(layer.id, { rotation: v })}
           />
-          <button className="btn" style={{ width: "100%" }} onClick={fitDocumentToSelection}>
-            Fit artboard to selection
-          </button>
         </div>
 
         {(() => {
