@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BED_PRESETS, beginGesture, endGesture, useSceneStore, type TrackedSceneSlice } from "../state/store";
 import { collectShapeLayers, getLocalShapeBounds } from "../state/sceneUtils";
 import { ToggleSwitch } from "./ToggleSwitch";
@@ -34,6 +34,68 @@ function AlignRow() {
         </button>
       ))}
     </div>
+  );
+}
+
+/**
+ * A native color-swatch input, wired so the WHOLE picker interaction —
+ * however many `input` events dragging inside the OS color wheel fires —
+ * collapses into ONE undo step, the same way the range sliders below do
+ * for a drag. Without this, each tiny drag tick inside the native picker
+ * pushed its own history entry, so a single Ctrl+Z only undid the very
+ * last (usually imperceptible) color increment — indistinguishable from
+ * undo "not working" once you'd dragged across the picker at all.
+ */
+function ColorSwatchInput({
+  value,
+  onChange,
+  className,
+}: {
+  /** Omit for an uncontrolled swatch (e.g. the multi-select "apply to
+   * all" picker, which has no single current color to reflect). */
+  value?: string;
+  onChange: (color: string) => void;
+  className?: string;
+}) {
+  const gesture = useRef<TrackedSceneSlice | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    // The native `change` event (distinct from the `input` event React's
+    // onChange is actually bound to for this input type) fires exactly
+    // once, when the picker is closed/committed — the real end of the
+    // gesture.
+    function onNativeChange() {
+      if (gesture.current) {
+        endGesture(gesture.current, true);
+        gesture.current = null;
+      }
+    }
+    el.addEventListener("change", onNativeChange);
+    return () => el.removeEventListener("change", onNativeChange);
+  }, []);
+
+  return (
+    <input
+      ref={inputRef}
+      className={className}
+      type="color"
+      {...(value !== undefined ? { value } : {})}
+      onPointerDown={() => {
+        if (!gesture.current) gesture.current = beginGesture();
+      }}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={() => {
+        // Safety net in case a browser never fires a distinct native
+        // `change` here — don't leave undo tracking paused forever.
+        if (gesture.current) {
+          endGesture(gesture.current, true);
+          gesture.current = null;
+        }
+      }}
+    />
   );
 }
 
@@ -253,10 +315,9 @@ export function Inspector() {
             <div className="field-row" style={{ marginTop: 8 }}>
               <span className="field-label">Color</span>
               <div className="color-field field-input" style={{ height: 26 }}>
-                <input
+                <ColorSwatchInput
                   className="color-swatch-input"
-                  type="color"
-                  onChange={(e) => applyToAll(selection, (id) => setLayerColor(id, e.target.value))}
+                  onChange={(color) => selection.forEach((id) => setLayerColor(id, color))}
                 />
                 <span style={{ color: "var(--text-faint)" }}>Apply to all</span>
               </div>
@@ -424,14 +485,10 @@ export function Inspector() {
               <div className="inspector-section">
                 <div className="inspector-section-title">Color{isBatch ? " (all shapes in group)" : ""}</div>
                 <div className="color-field">
-                  <input
+                  <ColorSwatchInput
                     className="color-swatch-input"
-                    type="color"
                     value={display.color}
-                    onChange={(e) => {
-                      const color = e.target.value;
-                      applyToAll(targets.map((t) => t.id), (id) => setLayerColor(id, color));
-                    }}
+                    onChange={(color) => targets.forEach((t) => setLayerColor(t.id, color))}
                   />
                   <input
                     className="field-input"

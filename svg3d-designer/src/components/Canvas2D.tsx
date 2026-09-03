@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { beginGesture, endGesture, useSceneStore, type TrackedSceneSlice } from "../state/store";
-import { getLayerWorldBounds } from "../state/sceneUtils";
+import { boundsOverlap, getLayerWorldBounds } from "../state/sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
 import type { Layer, ShapeRegion } from "../types";
+
+function isEditableTarget(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.isContentEditable) return true;
+  return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT";
+}
 
 interface ViewBox {
   x: number;
@@ -32,6 +38,15 @@ function fitView(width: number, height: number): ViewBox {
   return { x: -pad, y: -pad, w: width + pad * 2, h: height + pad * 2 };
 }
 
+// Wheel/pinch zoom: multiplies deltaY into an exponential zoom factor. The
+// old 0.001 needed several full pinch gestures or wheel notches to move
+// the zoom level at all — this makes a single mouse-wheel notch (~deltaY
+// 100) and a trackpad pinch both give a clearly visible step.
+const ZOOM_SENSITIVITY = 0.003;
+// Discrete zoom step for keyboard shortcuts (Z / Option+Z, +/-) — a single
+// keypress should read as one clear zoom level change, like a zoom button.
+const ZOOM_KEY_FACTOR = 1.4;
+
 interface Props {
   resetSignal: number;
 }
@@ -42,16 +57,21 @@ export function Canvas2D({ resetSignal }: Props) {
   const rootIds = useSceneStore((s) => s.rootIds);
   const selection = useSceneStore((s) => s.selection);
   const selectLayer = useSceneStore((s) => s.selectLayer);
+  const setSelection = useSceneStore((s) => s.setSelection);
   const clearSelection = useSceneStore((s) => s.clearSelection);
   const setLayerTransform = useSceneStore((s) => s.setLayerTransform);
   const showGrid = useSceneStore((s) => s.showGrid);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const [vb, setVb] = useState<ViewBox>(() => fitView(document_.widthMM, document_.heightMM));
+  const vbRef = useRef(vb);
+  vbRef.current = vb;
   const [isPanning, setIsPanning] = useState(false);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const [marqueeRect, setMarqueeRect] = useState<ViewBox | null>(null);
 
   const dragState = useRef<{
-    mode: "pan" | "move" | null;
+    mode: "pan" | "move" | "marquee" | null;
     startClientX: number;
     startClientY: number;
     startSvg: { x: number; y: number };
@@ -59,7 +79,31 @@ export function Canvas2D({ resetSignal }: Props) {
     moved: boolean;
     originals: Record<string, { x: number; y: number }>;
     preGestureSnapshot: TrackedSceneSlice | null;
+    /** Marquee only: shift/cmd/ctrl held at drag start — adds to the
+     * existing selection instead of replacing it, matching how a single
+     * shift-click already behaves. */
+    additive: boolean;
   } | null>(null);
+
+  // Space+drag pans, matching the 3D viewport's own convention — plain
+  // drag on empty canvas is reserved for marquee-select instead.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.code !== "Space" || e.repeat || isEditableTarget(e.target)) return;
+      e.preventDefault();
+      setSpaceHeld(true);
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.code !== "Space") return;
+      setSpaceHeld(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
 
   useEffect(() => {
     setVb(fitView(document_.widthMM, document_.heightMM));
@@ -78,6 +122,36 @@ export function Canvas2D({ resetSignal }: Props) {
     return { x: transformed.x, y: transformed.y };
   }
 
+  function zoomAround(center: { x: number; y: number }, factor: number) {
+    setVb((old) => ({
+      w: old.w * factor,
+      h: old.h * factor,
+      x: center.x - (center.x - old.x) * factor,
+      y: center.y - (center.y - old.y) * factor,
+    }));
+  }
+
+  // Figma-style keyboard zoom: Z zooms in, Option/Alt+Z zooms out, both
+  // centered on the viewport's current center; +/- mirror the universal
+  // browser-zoom convention. Skipped while typing in a form field.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (isEditableTarget(e.target) || e.metaKey || e.ctrlKey) return;
+      // A factor < 1 shrinks the viewBox, i.e. zooms IN (higher zoom%).
+      let factor = 0;
+      if (e.key === "z" || e.key === "Z") factor = e.altKey ? ZOOM_KEY_FACTOR : 1 / ZOOM_KEY_FACTOR;
+      else if (e.key === "+" || e.key === "=") factor = 1 / ZOOM_KEY_FACTOR;
+      else if (e.key === "-" || e.key === "_") factor = ZOOM_KEY_FACTOR;
+      if (!factor) return;
+      e.preventDefault();
+      const v = vbRef.current;
+      zoomAround({ x: v.x + v.w / 2, y: v.y + v.h / 2 }, factor);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // A native (non-passive) listener is required here: React attaches wheel
   // handlers as passive by default, so e.preventDefault() inside a React
   // onWheel prop is silently ignored — the browser's own pinch-zoom keeps
@@ -91,15 +165,12 @@ export function Canvas2D({ resetSignal }: Props) {
       e.preventDefault();
       if (e.ctrlKey) {
         // Trackpad pinch (Mac reports it as wheel+ctrlKey) or Ctrl/Cmd+scroll: zoom.
-        const factor = Math.exp(e.deltaY * 0.001);
-        const cursor = clientToSvg(e.clientX, e.clientY);
-        setVb((old) => {
-          const w = old.w * factor;
-          const h = old.h * factor;
-          const x = cursor.x - (cursor.x - old.x) * factor;
-          const y = cursor.y - (cursor.y - old.y) * factor;
-          return { x, y, w, h };
-        });
+        // ZOOM_SENSITIVITY tuned so a single mouse-wheel notch (~deltaY 100)
+        // gives a clearly visible step and a trackpad pinch tracks the
+        // fingers closely — the previous 0.001 needed several full pinch
+        // gestures to change the zoom level at all.
+        const factor = Math.exp(e.deltaY * ZOOM_SENSITIVITY);
+        zoomAround(clientToSvg(e.clientX, e.clientY), factor);
       } else {
         // Plain scroll / two-finger trackpad swipe: pan, same as Figma.
         setVb((old) => {
@@ -125,8 +196,26 @@ export function Canvas2D({ resetSignal }: Props) {
       moved: false,
       originals: {},
       preGestureSnapshot: null,
+      additive: false,
     };
     setIsPanning(true);
+  }
+
+  function beginMarquee(e: React.PointerEvent) {
+    (e.target as Element).setPointerCapture(e.pointerId);
+    const start = clientToSvg(e.clientX, e.clientY);
+    dragState.current = {
+      mode: "marquee",
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startSvg: start,
+      startVb: vb,
+      moved: false,
+      originals: {},
+      preGestureSnapshot: null,
+      additive: e.shiftKey || e.metaKey || e.ctrlKey,
+    };
+    setMarqueeRect({ x: start.x, y: start.y, w: 0, h: 0 });
   }
 
   function beginMove(e: React.PointerEvent, ids: string[]) {
@@ -147,6 +236,7 @@ export function Canvas2D({ resetSignal }: Props) {
       // The whole drag — however many pointermove events it produces —
       // should collapse into a single undo step.
       preGestureSnapshot: beginGesture(),
+      additive: false,
     };
   }
 
@@ -169,6 +259,14 @@ export function Canvas2D({ resetSignal }: Props) {
       for (const [id, orig] of Object.entries(drag.originals)) {
         setLayerTransform(id, { x: orig.x + dx, y: orig.y + dy });
       }
+    } else if (drag.mode === "marquee") {
+      const cur = clientToSvg(e.clientX, e.clientY);
+      setMarqueeRect({
+        x: Math.min(drag.startSvg.x, cur.x),
+        y: Math.min(drag.startSvg.y, cur.y),
+        w: Math.abs(cur.x - drag.startSvg.x),
+        h: Math.abs(cur.y - drag.startSvg.y),
+      });
     }
   }
 
@@ -177,6 +275,30 @@ export function Canvas2D({ resetSignal }: Props) {
     if (drag?.mode === "pan" && !drag.moved) clearSelection();
     if (drag?.mode === "move" && drag.preGestureSnapshot) {
       endGesture(drag.preGestureSnapshot, drag.moved);
+    }
+    if (drag?.mode === "marquee") {
+      if (drag.moved && marqueeRect) {
+        const box = {
+          minX: marqueeRect.x,
+          minY: marqueeRect.y,
+          maxX: marqueeRect.x + marqueeRect.w,
+          maxY: marqueeRect.y + marqueeRect.h,
+        };
+        // Top-level items only — matches "Select All" (Cmd/Ctrl+A), which
+        // also only ever selects rootIds, not individual nested children.
+        const hitIds = rootIds.filter((id) => {
+          const b = getLayerWorldBounds(layers, id);
+          return b && boundsOverlap(b, box);
+        });
+        if (drag.additive) {
+          setSelection([...new Set([...selection, ...hitIds])]);
+        } else {
+          setSelection(hitIds);
+        }
+      } else if (!drag.moved) {
+        clearSelection();
+      }
+      setMarqueeRect(null);
     }
     dragState.current = null;
     setIsPanning(false);
@@ -237,10 +359,13 @@ export function Canvas2D({ resetSignal }: Props) {
     <>
       <svg
         ref={svgRef}
-        className={"canvas2d" + (isPanning ? " panning" : "")}
+        className={"canvas2d" + (isPanning ? " panning" : "") + (spaceHeld ? " space-pan" : "")}
         viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
         onPointerDown={(e) => {
-          if (e.target === svgRef.current || (e.target as Element).tagName === "rect") beginPan(e);
+          if (e.target === svgRef.current || (e.target as Element).tagName === "rect") {
+            if (spaceHeld) beginPan(e);
+            else beginMarquee(e);
+          }
         }}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -288,9 +413,21 @@ export function Canvas2D({ resetSignal }: Props) {
             />
           );
         })}
+
+        {marqueeRect && (
+          <rect
+            className="marquee-box"
+            x={marqueeRect.x}
+            y={marqueeRect.y}
+            width={marqueeRect.w}
+            height={marqueeRect.h}
+            pointerEvents="none"
+          />
+        )}
       </svg>
       <div className="canvas-hint">
-        Scroll or drag empty space to pan · Cmd/Ctrl+scroll or pinch to zoom · Click a shape to select, drag to move
+        Drag empty space to select · Space+drag or scroll to pan · Cmd/Ctrl+scroll or pinch to zoom · Click a shape
+        to select, drag to move
       </div>
       <div className="zoom-indicator">{zoomPct}%</div>
     </>
