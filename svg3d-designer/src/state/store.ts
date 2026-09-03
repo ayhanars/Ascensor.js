@@ -28,7 +28,14 @@ import {
   invertTransform2D,
 } from "./sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
-import { regionsArea, regionsIntersectionArea, unionRegions } from "../geometry/booleanOps";
+import {
+  differenceRegions,
+  intersectionRegions,
+  regionsArea,
+  regionsIntersectionArea,
+  unionRegions,
+  xorRegions,
+} from "../geometry/booleanOps";
 import { showToast } from "./toastStore";
 
 /**
@@ -75,13 +82,39 @@ export const BED_PRESETS: PrintBed[] = [
   { name: "Custom", width: 200, depth: 200, height: 200 },
 ];
 
+// A pinned default bed preset — deliberately plain localStorage, not part
+// of the scene/undo state: it's a standing app preference ("I always print
+// on my X1 Carbon"), not document content, so it shouldn't be undoable and
+// should survive across brand-new projects, not just this one document.
+const PINNED_BED_PRESET_KEY = "svg3d-designer:pinnedBedPreset";
+
+export function getPinnedBedPresetName(): string | null {
+  try {
+    return localStorage.getItem(PINNED_BED_PRESET_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setPinnedBedPresetName(name: string | null): void {
+  try {
+    if (name) localStorage.setItem(PINNED_BED_PRESET_KEY, name);
+    else localStorage.removeItem(PINNED_BED_PRESET_KEY);
+  } catch {
+    // Private-browsing / storage-disabled — the pin just won't persist
+    // across reloads, which is an acceptable degrade, not worth surfacing.
+  }
+}
+
 function defaultDocument(): DocumentSettings {
+  const pinnedName = getPinnedBedPresetName();
+  const pinned = pinnedName ? BED_PRESETS.find((p) => p.name === pinnedName) : undefined;
   return {
     name: "Untitled",
     widthMM: 100,
     heightMM: 100,
     units: "mm",
-    bed: { ...BED_PRESETS[0] },
+    bed: { ...(pinned ?? BED_PRESETS[0]) },
   };
 }
 
@@ -132,8 +165,9 @@ interface SceneState {
   duplicateSelection: () => void;
   copySelection: () => void;
   pasteClipboard: () => void;
-  moveLayer: (id: string, targetParentId: string | null, index: number) => void;
+  moveLayers: (ids: string[], targetParentId: string | null, index: number) => void;
   mergeLayers: (ids: string[]) => void;
+  booleanOp: (ids: string[], op: "subtract" | "intersect" | "exclude") => void;
   groupSelection: () => void;
   ungroupSelection: () => void;
   alignSelection: (mode: AlignMode) => void;
@@ -389,13 +423,14 @@ export const useSceneStore = create<SceneState>()(
     }),
 
   autoStackLayers: () => {
-    // Names of shapes that end up raised above the bed without their own
-    // footprint being FULLY covered by whatever raised them — i.e. at
-    // least part of the shape has nothing underneath it and can't
-    // physically print as placed. Collected during the reducer below and
-    // reported via a toast afterward (a store reducer must stay a pure
-    // state transition; the side-effecting toast happens once, after).
+    // Shapes that end up raised above the bed without their own footprint
+    // being FULLY covered by whatever raised them — i.e. at least part of
+    // the shape has nothing underneath it and can't physically print as
+    // placed. Collected during the reducer below and reported afterward (a
+    // store reducer must stay a pure state transition; the side-effecting
+    // toast/selection happens once, after).
     let floatingNames: string[] = [];
+    let floatingIds: string[] = [];
 
     set((state) => {
       // Each layer sits on top of whatever it *actually* overlaps — real
@@ -434,7 +469,10 @@ export const useSceneStore = create<SceneState>()(
             placed.filter((p) => p.topZ === baseZ).flatMap((p) => p.regions),
           );
           const supportedArea = regionsIntersectionArea(regions, supportUnion);
-          if (supportedArea < ownArea * 0.98) floatingNames.push(layer.name);
+          if (supportedArea < ownArea * 0.98) {
+            floatingNames.push(layer.name);
+            floatingIds.push(id);
+          }
         }
 
         // baseZ is a world-space height; convert it back to this layer's
@@ -448,11 +486,17 @@ export const useSceneStore = create<SceneState>()(
       return { layers };
     });
 
-    if (floatingNames.length > 0) {
+    if (floatingIds.length > 0) {
+      // Select them directly — a highlighted outline right on the canvas
+      // is far harder to miss than toast text alone, and stays visible
+      // until you do something else (unlike the toast, which now needs an
+      // explicit dismiss anyway since this is worth actually reading).
+      set({ selection: floatingIds });
       const shown = floatingNames.slice(0, 3).join(", ");
       const rest = floatingNames.length > 3 ? ` +${floatingNames.length - 3} more` : "";
       showToast(
-        `Auto-stacked — ${floatingNames.length} shape${floatingNames.length === 1 ? "" : "s"} may be floating: ${shown}${rest}`,
+        `Auto-stacked — ${floatingNames.length} shape${floatingNames.length === 1 ? "" : "s"} may be floating and now selected: ${shown}${rest}`,
+        { tone: "warning", sticky: true },
       );
     } else {
       showToast("Auto-stacked all layers");
@@ -488,9 +532,16 @@ export const useSceneStore = create<SceneState>()(
     }),
 
   deleteSelection: () => {
-    const { selection, deleteLayer } = get();
+    const { selection, layers, deleteLayer } = get();
     if (selection.length === 0) return;
-    const count = selection.length;
+    // Count every layer actually removed, not just the top-level selected
+    // ones — deleting one folder with several shapes inside it removes all
+    // of them, and a toast saying "Deleted 1 layer" for that is misleading.
+    let count = 0;
+    for (const id of selection) {
+      if (!layers[id]) continue;
+      count += 1 + collectAllDescendantIds(layers, id).length;
+    }
     selection.forEach((id) => deleteLayer(id));
     showToast(count === 1 ? "Deleted 1 layer" : `Deleted ${count} layers`);
   },
@@ -752,46 +803,81 @@ export const useSceneStore = create<SceneState>()(
       return { layers };
     }),
 
-  moveLayer: (id, targetParentId, index) =>
+  moveLayers: (ids, targetParentId, index) =>
     set((state) => {
-      const layer = state.layers[id];
-      if (!layer) return {};
-      // Guard against dropping a group into its own descendant.
-      if (targetParentId) {
+      if (targetParentId && ids.includes(targetParentId)) return {};
+
+      // Only move top-of-selection ids — a selected descendant of an
+      // already-selected group would otherwise get moved twice (once
+      // directly, once again as part of its ancestor), the same
+      // invariant mergeLayers/groupSelection/duplicateSelection enforce.
+      const idSet = new Set(ids);
+      const topLevel = ids.filter((id) => {
+        let cur = state.layers[id];
+        while (cur?.parentId) {
+          if (idSet.has(cur.parentId)) return false;
+          cur = state.layers[cur.parentId];
+        }
+        return true;
+      });
+      if (topLevel.length === 0) return {};
+
+      // Guard against dropping any of them into their own descendant.
+      for (const id of topLevel) {
+        if (!targetParentId) continue;
         const descendants = new Set(collectAllDescendantIds(state.layers, id));
         if (descendants.has(targetParentId) || targetParentId === id) return {};
       }
 
       const layers = { ...state.layers };
       let rootIds = [...state.rootIds];
+      // The world position each moved layer keeps composing INTO its new
+      // parent must stay exactly what it already looked like — otherwise
+      // dragging a shape into a folder in the layer panel silently
+      // relocates it on the canvas, since its stored x/y is interpreted
+      // relative to whatever parent it has.
+      const targetParentWorld = targetParentId
+        ? getWorldTransform(state.layers, targetParentId)
+        : IDENTITY_TRANSFORM;
 
-      // Remove from old location.
-      if (layer.parentId) {
-        const oldParent = layers[layer.parentId];
-        if (oldParent && oldParent.type === "group") {
-          layers[oldParent.id] = {
-            ...oldParent,
-            children: oldParent.children.filter((c) => c !== id),
-          };
+      let insertAt = index;
+      for (const id of topLevel) {
+        const layer = layers[id];
+        if (!layer) continue;
+        const world = getWorldTransform(layers, id);
+
+        if (layer.parentId) {
+          const oldParent = layers[layer.parentId];
+          if (oldParent && oldParent.type === "group") {
+            layers[oldParent.id] = {
+              ...oldParent,
+              children: oldParent.children.filter((c) => c !== id),
+            };
+          }
+        } else {
+          rootIds = rootIds.filter((r) => r !== id);
         }
-      } else {
-        rootIds = rootIds.filter((r) => r !== id);
-      }
 
-      layers[id] = { ...layer, parentId: targetParentId };
+        layers[id] = {
+          ...layer,
+          parentId: targetParentId,
+          transform: rebaseWorldToParent(world, targetParentWorld),
+        };
 
-      // Insert at new location.
-      if (targetParentId) {
-        const newParent = layers[targetParentId];
-        if (newParent && newParent.type === "group") {
-          const children = [...newParent.children];
-          const clampedIndex = Math.max(0, Math.min(index, children.length));
-          children.splice(clampedIndex, 0, id);
-          layers[targetParentId] = { ...newParent, children };
+        if (targetParentId) {
+          const newParent = layers[targetParentId];
+          if (newParent && newParent.type === "group") {
+            const children = [...newParent.children];
+            const clamped = Math.max(0, Math.min(insertAt, children.length));
+            children.splice(clamped, 0, id);
+            layers[targetParentId] = { ...newParent, children };
+            insertAt = clamped + 1;
+          }
+        } else {
+          const clamped = Math.max(0, Math.min(insertAt, rootIds.length));
+          rootIds.splice(clamped, 0, id);
+          insertAt = clamped + 1;
         }
-      } else {
-        const clampedIndex = Math.max(0, Math.min(index, rootIds.length));
-        rootIds.splice(clampedIndex, 0, id);
       }
 
       return { layers, rootIds };
@@ -940,6 +1026,147 @@ export const useSceneStore = create<SceneState>()(
       return { layers, rootIds, selection: [mergedId] };
     });
     if (mergedCount > 0) showToast(`Merged ${mergedCount} shapes`);
+  },
+
+  /**
+   * Subtract/Intersect/Exclude — Figma's other three boolean operations,
+   * alongside Union (which "Merge layers"/mergeLayers already provides).
+   * Unlike union, these aren't symmetric across a flat list of shapes: each
+   * TOP-LEVEL selected item (a lone shape, or a whole group — its own
+   * shapes unioned together first) becomes one distinct operand, combined
+   * in back-to-front paint order — subject-minus-clips for Subtract
+   * (Figma cuts the front object(s) OUT of the back one, e.g. drawing a
+   * circle on top of a rectangle and subtracting punches a hole where the
+   * circle was), and order-independent for Intersect/Exclude.
+   */
+  booleanOp: (ids, op) => {
+    let resultCount = 0;
+    set((state) => {
+      const unique = Array.from(new Set(ids)).filter((id) => state.layers[id]);
+      const selectedSet = new Set(unique);
+      const selected = unique.filter((id) => {
+        let cur = state.layers[id];
+        while (cur?.parentId) {
+          if (selectedSet.has(cur.parentId)) return false;
+          cur = state.layers[cur.parentId];
+        }
+        return true;
+      });
+      if (selected.length < 2) return {};
+
+      const order = flattenForDisplay(state.layers, state.rootIds).map((r) => r.id);
+      const rankOf = (id: string) => order.indexOf(id);
+      const orderedSelected = [...selected].sort((a, b) => rankOf(a) - rankOf(b));
+      const topId = orderedSelected[orderedSelected.length - 1];
+      const topLayer = state.layers[topId];
+      if (!topLayer) return {};
+
+      const bakeShape = (shapeLayer: ShapeLayer): ShapeRegion[] => {
+        const world = getWorldTransform(state.layers, shapeLayer.id);
+        const rounded = roundRegions(shapeLayer.regions, shapeLayer.cornerRadius);
+        return rounded.map((region) => ({
+          outer: { points: region.outer.points.map((p) => applyTransform2D(p, world)) },
+          holes: region.holes.map((h) => ({ points: h.points.map((p) => applyTransform2D(p, world)) })),
+        }));
+      };
+
+      // operands[0] is the back-most selected item (the Subtract subject);
+      // the rest are cut away from it. Each operand's own shapes (if it's
+      // a group with several) are unioned together first, same as a
+      // single combined operand.
+      const operandRegions: ShapeRegion[][] = [];
+      let frontMost: ShapeLayer | undefined;
+      for (const id of orderedSelected) {
+        const shapeLayers = collectShapeLayers(state.layers, id).sort((a, b) => rankOf(a.id) - rankOf(b.id));
+        if (shapeLayers.length === 0) continue;
+        operandRegions.push(unionRegions(shapeLayers.flatMap(bakeShape)));
+        frontMost = shapeLayers[shapeLayers.length - 1];
+      }
+      if (operandRegions.length < 2 || !frontMost) return {};
+
+      let regions: ShapeRegion[];
+      let label: string;
+      if (op === "subtract") {
+        regions = differenceRegions(operandRegions);
+        label = "subtracted";
+      } else if (op === "intersect") {
+        regions = intersectionRegions(operandRegions);
+        label = "intersected";
+      } else {
+        regions = xorRegions(operandRegions);
+        label = "excluded";
+      }
+      if (regions.length === 0) return {};
+
+      if (topLayer.parentId) {
+        const parentWorld = getWorldTransform(state.layers, topLayer.parentId);
+        regions = regions.map((region) => ({
+          outer: { points: region.outer.points.map((p) => invertTransform2D(p, parentWorld)) },
+          holes: region.holes.map((h) => ({ points: h.points.map((p) => invertTransform2D(p, parentWorld)) })),
+        }));
+      }
+
+      const resultId = nanoid(8);
+      const frontMostWorldZ = getWorldTransform(state.layers, frontMost.id).z;
+      const resultParentWorldZ = topLayer.parentId ? getWorldTransform(state.layers, topLayer.parentId).z : 0;
+
+      const result: ShapeLayer = {
+        id: resultId,
+        type: "shape",
+        name: `${topLayer.name} (${label})`,
+        visible: true,
+        locked: false,
+        color: frontMost.color,
+        transform: { ...IDENTITY_TRANSFORM, z: Math.max(0, frontMostWorldZ - resultParentWorldZ) },
+        parentId: topLayer.parentId,
+        regions,
+        extrusionDepth: frontMost.extrusionDepth,
+        cornerRadius: 0,
+        bevelBottom: 0,
+        bevelTop: 0,
+        isHole: false,
+      };
+
+      const toRemove = new Set<string>();
+      for (const id of selected) {
+        toRemove.add(id);
+        collectAllDescendantIds(state.layers, id).forEach((d) => toRemove.add(d));
+      }
+
+      const layers = { ...state.layers };
+      for (const id of toRemove) delete layers[id];
+      layers[resultId] = result;
+
+      const touchedParentIds = new Set<string>();
+      for (const id of selected) {
+        const l = state.layers[id];
+        if (l.parentId) touchedParentIds.add(l.parentId);
+      }
+      for (const pid of touchedParentIds) {
+        const original = state.layers[pid];
+        if (!original || original.type !== "group") continue;
+        const children =
+          pid === topLayer.parentId
+            ? original.children
+                .map((c) => (c === topId ? resultId : c))
+                .filter((c) => c === resultId || !toRemove.has(c))
+            : original.children.filter((c) => !toRemove.has(c));
+        layers[pid] = { ...layers[pid], children } as GroupLayer;
+      }
+
+      const rootIds = topLayer.parentId
+        ? state.rootIds.filter((r) => !toRemove.has(r))
+        : state.rootIds
+            .map((r) => (r === topId ? resultId : r))
+            .filter((r) => r === resultId || !toRemove.has(r));
+
+      resultCount = 1;
+      return { layers, rootIds, selection: [resultId] };
+    });
+    if (resultCount > 0) {
+      const label = op === "subtract" ? "Subtracted" : op === "intersect" ? "Intersected" : "Excluded";
+      showToast(`${label} selection`);
+    }
   },
 
   groupSelection: () => {

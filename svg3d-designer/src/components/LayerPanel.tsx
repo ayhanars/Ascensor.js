@@ -35,11 +35,17 @@ export function LayerPanel() {
   const renameLayer = useSceneStore((s) => s.renameLayer);
   const deleteLayer = useSceneStore((s) => s.deleteLayer);
   const duplicateLayer = useSceneStore((s) => s.duplicateLayer);
-  const moveLayer = useSceneStore((s) => s.moveLayer);
+  const moveLayers = useSceneStore((s) => s.moveLayers);
+  const setSelection = useSceneStore((s) => s.setSelection);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [dragId, setDragId] = useState<string | null>(null);
+  // Every id being dragged — the whole current selection when the dragged
+  // row was already part of it, otherwise just that one row. Fixed at drag
+  // start so a multi-selection actually moves together into a folder,
+  // instead of dropping only the single row the pointer happened to grab.
+  const [dragIds, setDragIds] = useState<string[]>([]);
   const [dropTarget, setDropTarget] = useState<{ id: string; position: DropPosition } | null>(null);
 
   const rows = flattenForDisplay(layers, rootIds);
@@ -51,19 +57,20 @@ export function LayerPanel() {
   }
 
   function handleDrop(targetId: string, position: DropPosition) {
-    if (!dragId) return;
+    if (!dragId || dragIds.length === 0) return;
     const targetLayer = layers[targetId];
     if (!targetLayer) return;
 
     if (position === "inside" && targetLayer.type === "group") {
-      moveLayer(dragId, targetId, targetLayer.children.length);
+      moveLayers(dragIds, targetId, targetLayer.children.length);
     } else {
       const { parentId, siblings } = siblingContext(layers, rootIds, targetId);
       let index = siblings.indexOf(targetId);
       if (position === "below") index += 1;
-      moveLayer(dragId, parentId, index);
+      moveLayers(dragIds, parentId, index);
     }
     setDragId(null);
+    setDragIds([]);
     setDropTarget(null);
   }
 
@@ -101,18 +108,29 @@ export function LayerPanel() {
                 "layer-row",
                 selected ? "selected" : "",
                 !layer.visible ? "dim" : "",
-                isDropTarget ? "drop-target" : "",
+                isDropTarget ? `drop-${dropTarget.position}` : "",
                 isHole ? "hole" : "",
               ].join(" ").trim()}
               style={{ paddingLeft: 8 + depth * 14 }}
               draggable={!isEditing}
               onDragStart={(e) => {
                 setDragId(id);
+                // Dragging a row that's already part of the current
+                // multi-selection moves the WHOLE selection together;
+                // dragging any other row selects and moves just that one
+                // (replacing the old selection), matching how the canvas's
+                // own drag already resolves this.
+                if (selected && selection.length > 1) {
+                  setDragIds(selection);
+                } else {
+                  setDragIds([id]);
+                  setSelection([id]);
+                }
                 e.dataTransfer.effectAllowed = "move";
               }}
               onDragOver={(e) => {
                 e.preventDefault();
-                if (!dragId || dragId === id) return;
+                if (!dragId || dragIds.includes(id)) return;
                 const rect = e.currentTarget.getBoundingClientRect();
                 const ratio = (e.clientY - rect.top) / rect.height;
                 let position: DropPosition = ratio < 0.25 ? "above" : ratio > 0.75 ? "below" : "inside";
@@ -128,6 +146,7 @@ export function LayerPanel() {
               }}
               onDragEnd={() => {
                 setDragId(null);
+                setDragIds([]);
                 setDropTarget(null);
               }}
               onClick={(e) => selectLayer(id, e.shiftKey || e.metaKey || e.ctrlKey)}

@@ -12,8 +12,31 @@ import type { Contour, Point2, ShapeRegion } from "../types";
  * cross — the same safe-clamp strategy used for rounded-rectangle corners,
  * generalized to arbitrary polygons (convex or reflex).
  */
-function roundContour(points: Point2[], radius: number, segments: number): Point2[] {
+export function roundContour(points: Point2[], radius: number, segments: number): Point2[] {
   if (radius <= 0 || points.length < 3) return points;
+
+  // A closed SVG path (or a boolean-op/merge result) can store an explicit
+  // point at both the start and end of what's already an implicitly-closed
+  // loop here (points[n-1] always connects back to points[0]). Left in
+  // place, that duplicate — or any other pair of coincident consecutive
+  // points — makes the edge on either side of it look zero-length, which
+  // silently skips rounding at that corner entirely (see the lenPrev/
+  // lenNext guard below): imported shapes would then have exactly the one
+  // corner that happened to be the path's start/end point stay sharp no
+  // matter what radius was set, while hand-drawn rect/circle shapes (which
+  // never have such a duplicate) rounded fine.
+  const deduped: Point2[] = [];
+  for (const p of points) {
+    const prev = deduped[deduped.length - 1];
+    if (!prev || Math.hypot(p.x - prev.x, p.y - prev.y) > 1e-7) deduped.push(p);
+  }
+  if (deduped.length > 1) {
+    const first = deduped[0];
+    const last = deduped[deduped.length - 1];
+    if (Math.hypot(first.x - last.x, first.y - last.y) <= 1e-7) deduped.pop();
+  }
+  points = deduped;
+  if (points.length < 3) return points;
 
   const n = points.length;
   const out: Point2[] = [];

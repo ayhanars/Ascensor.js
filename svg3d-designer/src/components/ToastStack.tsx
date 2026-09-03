@@ -20,10 +20,20 @@ export function ToastStack() {
 
 function ToastItem({ toast, onDismiss }: { toast: ToastMessage; onDismiss: (id: number) => void }) {
   useEffect(() => {
+    if (toast.sticky) return;
     const timer = setTimeout(() => onDismiss(toast.id), TOAST_DURATION_MS);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast.id]);
+  }, [toast.id, toast.sticky]);
 
-  return <div className="toast">{toast.text}</div>;
+  return (
+    <button
+      type="button"
+      className={"toast" + (toast.tone === "warning" ? " toast-warning" : "") + (toast.sticky ? " toast-sticky" : "")}
+      onClick={() => onDismiss(toast.id)}
+      title="Dismiss"
+    >
+      {toast.text}
+    </button>
+  );
 }

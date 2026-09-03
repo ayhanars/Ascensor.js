@@ -185,3 +185,46 @@ export const HoleToolIcon = ({ size = 16 }: IconProps) => (
     <circle cx="8" cy="8" r="2.2" fill="currentColor" stroke="none" />
   </svg>
 );
+
+export const BookmarkIcon = ({ size = 14, filled = false }: IconProps & { filled?: boolean }) => (
+  <svg {...base(size)} fill={filled ? "currentColor" : "none"}>
+    <path d="M4 2h8a1 1 0 0 1 1 1v11l-5-3-5 3V3a1 1 0 0 1 1-1Z" />
+  </svg>
+);
+
+export const BoolUnionIcon = ({ size = 14 }: IconProps) => (
+  <svg {...base(size)}>
+    <path
+      d="M2 2h7a2 2 0 0 1 2 2v3h3a2 2 0 0 1 2 2v5H9a2 2 0 0 1-2-2V9H2V2Z"
+      fill="currentColor"
+      fillOpacity={0.3}
+    />
+    <rect x="2" y="2" width="9" height="9" rx="1" />
+    <rect x="5" y="5" width="9" height="9" rx="1" />
+  </svg>
+);
+
+export const BoolSubtractIcon = ({ size = 14 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M2 2h9v3H9a2 2 0 0 0-2 2v2H2V2Z" fill="currentColor" fillOpacity={0.3} />
+    <rect x="2" y="2" width="9" height="9" rx="1" />
+    <rect x="5" y="5" width="9" height="9" rx="1" strokeDasharray="2 1.5" />
+  </svg>
+);
+
+export const BoolIntersectIcon = ({ size = 14 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M5 5h6v6H5V5Z" fill="currentColor" fillOpacity={0.35} />
+    <rect x="2" y="2" width="9" height="9" rx="1" strokeDasharray="2 1.5" />
+    <rect x="5" y="5" width="9" height="9" rx="1" strokeDasharray="2 1.5" />
+  </svg>
+);
+
+export const BoolExcludeIcon = ({ size = 14 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M2 2h9v3H9a2 2 0 0 0-2 2v2H2V2Z" fill="currentColor" fillOpacity={0.3} />
+    <path d="M14 14H5v-3h2a2 2 0 0 0 2-2V7h5v7Z" fill="currentColor" fillOpacity={0.3} />
+    <rect x="2" y="2" width="9" height="9" rx="1" />
+    <rect x="5" y="5" width="9" height="9" rx="1" />
+  </svg>
+);
