@@ -64,6 +64,79 @@ function hsvToHex(hsv: Hsv): string {
   return rgbToHex(r, g, b);
 }
 
+function rgbToHsl(r: number, g: number, b: number): { h: number; s: number; l: number } {
+  r /= 255;
+  g /= 255;
+  b /= 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+  let h = 0;
+  let s = 0;
+  if (d !== 0) {
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  return { h, s: s * 100, l: l * 100 };
+}
+
+function hslToRgb(h: number, s: number, l: number): { r: number; g: number; b: number } {
+  s /= 100;
+  l /= 100;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (h < 60) [r, g, b] = [c, x, 0];
+  else if (h < 120) [r, g, b] = [x, c, 0];
+  else if (h < 180) [r, g, b] = [0, c, x];
+  else if (h < 240) [r, g, b] = [0, x, c];
+  else if (h < 300) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+  return { r: (r + m) * 255, g: (g + m) * 255, b: (b + m) * 255 };
+}
+
+type ColorFormat = "hex" | "rgb" | "css" | "hsl" | "hsb";
+
+/** A small number field for the RGB/HSL/HSB rows, editable the same way
+ * NumberField/HexColorInput are elsewhere: shows the raw typed text while
+ * focused so clearing-to-retype isn't fought, commits a parsed, clamped
+ * number on every valid keystroke, and reconciles to the real value on
+ * blur. */
+function MiniNumberInput({
+  value,
+  onChange,
+  min,
+  max,
+}: {
+  value: number;
+  onChange: (n: number) => void;
+  min: number;
+  max: number;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <input
+      className="color-picker-mini-input"
+      value={draft ?? String(Math.round(value))}
+      onChange={(e) => {
+        const raw = e.target.value;
+        setDraft(raw);
+        const n = parseFloat(raw);
+        if (Number.isFinite(n)) onChange(clamp(n, min, max));
+      }}
+      onBlur={() => setDraft(null)}
+    />
+  );
+}
+
 const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/;
 
 /** "#f00" / "f00" -> "#ff0000"; already-6-digit input is just lowercased.
@@ -77,10 +150,12 @@ export function normalizeHexColor(raw: string): string | null {
 
 /**
  * A Figma-style color picker: click the swatch to open a popover with a
- * saturation/value square, a hue strip, and a hex field — replacing the
- * OS's native color dialog (which looks and behaves differently on every
- * platform, and whose picking session is only reachable through DOM
- * events, not something we control the layout or feel of).
+ * saturation/value square, a hue strip, and a format-switchable value field
+ * (Hex / RGB / CSS / HSL / HSB) — replacing the OS's native color dialog
+ * (which looks and behaves differently on every platform, and whose
+ * picking session is only reachable through DOM events, not something we
+ * control the layout or feel of). No alpha field: shape colors in this
+ * app's data model are plain opaque hex, there's no opacity channel to edit.
  *
  * The whole open-to-close session collapses into ONE undo step, the same
  * pause/mutate/resume gesture pattern used everywhere else a drag needs to
@@ -102,6 +177,8 @@ export function ColorPickerButton({
     return rgbToHsv(rgb.r, rgb.g, rgb.b);
   });
   const [hexDraft, setHexDraft] = useState<string | null>(null);
+  const [cssDraft, setCssDraft] = useState<string | null>(null);
+  const [format, setFormat] = useState<ColorFormat>("hex");
   const [popoverPos, setPopoverPos] = useState({ top: 0, left: 0 });
   const wrapperRef = useRef<HTMLDivElement>(null);
   const svRef = useRef<HTMLDivElement>(null);
@@ -109,12 +186,13 @@ export function ColorPickerButton({
   const gesture = useRef<TrackedSceneSlice | null>(null);
   const changed = useRef(false);
 
-  const POPOVER_WIDTH = 200;
+  const POPOVER_WIDTH = 220;
 
   function openPicker() {
     const rgb = hexToRgb(value);
     setHsv(rgbToHsv(rgb?.r ?? 0, rgb?.g ?? 0, rgb?.b ?? 0));
     setHexDraft(null);
+    setCssDraft(null);
     // Fixed positioning computed from the trigger's own screen position,
     // clamped to the viewport — the swatch can sit anywhere in the
     // sidebar (flush left in the single-shape Color row, further right
@@ -203,6 +281,19 @@ export function ColorPickerButton({
   }
 
   const pureHue = hsvToHex({ h: hsv.h, s: 100, v: 100 });
+  const rgbFloat = hsvToRgb(hsv.h, hsv.s, hsv.v);
+  const rgb = { r: Math.round(rgbFloat.r), g: Math.round(rgbFloat.g), b: Math.round(rgbFloat.b) };
+  const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+
+  function setRgb(next: Partial<typeof rgb>) {
+    const merged = { ...rgb, ...next };
+    apply(rgbToHsv(merged.r, merged.g, merged.b));
+  }
+  function setHsl(next: Partial<typeof hsl>) {
+    const merged = { ...hsl, ...next };
+    const nextRgb = hslToRgb(merged.h, merged.s, merged.l);
+    apply(rgbToHsv(nextRgb.r, nextRgb.g, nextRgb.b));
+  }
 
   return (
     <div className="color-picker-wrapper" ref={wrapperRef}>
@@ -235,21 +326,80 @@ export function ColorPickerButton({
             <div className="color-picker-hue-thumb" style={{ left: `${(hsv.h / 360) * 100}%` }} />
           </div>
           <div className="color-picker-hex-row">
-            <span className="color-picker-hex-label">Hex</span>
-            <input
-              className="field-input"
-              value={hexDraft ?? value}
-              onChange={(e) => {
-                const raw = e.target.value;
-                setHexDraft(raw);
-                const normalized = normalizeHexColor(raw);
-                if (normalized) {
-                  const rgb = hexToRgb(normalized)!;
-                  apply(rgbToHsv(rgb.r, rgb.g, rgb.b));
-                }
-              }}
-              onBlur={() => setHexDraft(null)}
-            />
+            <select
+              className="color-picker-format-select"
+              value={format}
+              onChange={(e) => setFormat(e.target.value as ColorFormat)}
+            >
+              <option value="hex">Hex</option>
+              <option value="rgb">RGB</option>
+              <option value="css">CSS</option>
+              <option value="hsl">HSL</option>
+              <option value="hsb">HSB</option>
+            </select>
+
+            {format === "hex" && (
+              <input
+                className="field-input"
+                value={hexDraft ?? value}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setHexDraft(raw);
+                  const normalized = normalizeHexColor(raw);
+                  if (normalized) {
+                    const parsed = hexToRgb(normalized)!;
+                    apply(rgbToHsv(parsed.r, parsed.g, parsed.b));
+                  }
+                }}
+                onBlur={() => setHexDraft(null)}
+              />
+            )}
+
+            {format === "rgb" && (
+              <div className="color-picker-mini-row">
+                <MiniNumberInput value={rgb.r} min={0} max={255} onChange={(r) => setRgb({ r })} />
+                <MiniNumberInput value={rgb.g} min={0} max={255} onChange={(g) => setRgb({ g })} />
+                <MiniNumberInput value={rgb.b} min={0} max={255} onChange={(b) => setRgb({ b })} />
+              </div>
+            )}
+
+            {format === "css" && (
+              <input
+                className="field-input"
+                value={cssDraft ?? `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setCssDraft(raw);
+                  const m = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(raw);
+                  if (m) {
+                    apply(
+                      rgbToHsv(
+                        clamp(parseInt(m[1], 10), 0, 255),
+                        clamp(parseInt(m[2], 10), 0, 255),
+                        clamp(parseInt(m[3], 10), 0, 255),
+                      ),
+                    );
+                  }
+                }}
+                onBlur={() => setCssDraft(null)}
+              />
+            )}
+
+            {format === "hsl" && (
+              <div className="color-picker-mini-row">
+                <MiniNumberInput value={hsl.h} min={0} max={360} onChange={(h) => setHsl({ h })} />
+                <MiniNumberInput value={hsl.s} min={0} max={100} onChange={(s) => setHsl({ s })} />
+                <MiniNumberInput value={hsl.l} min={0} max={100} onChange={(l) => setHsl({ l })} />
+              </div>
+            )}
+
+            {format === "hsb" && (
+              <div className="color-picker-mini-row">
+                <MiniNumberInput value={hsv.h} min={0} max={360} onChange={(h) => apply({ ...hsv, h })} />
+                <MiniNumberInput value={hsv.s} min={0} max={100} onChange={(s) => apply({ ...hsv, s })} />
+                <MiniNumberInput value={hsv.v} min={0} max={100} onChange={(v) => apply({ ...hsv, v })} />
+              </div>
+            )}
           </div>
         </div>
       )}
