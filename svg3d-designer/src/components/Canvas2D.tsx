@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { beginGesture, endGesture, useSceneStore, type TrackedSceneSlice } from "../state/store";
-import { boundsOverlap, getLayerWorldBounds } from "../state/sceneUtils";
+import { boundsOverlap, getLayerWorldBounds, getTopLevelId } from "../state/sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
 import type { Layer, ShapeRegion } from "../types";
 
@@ -177,14 +177,21 @@ export function Canvas2D({ resetSignal }: Props) {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (isEditableTarget(e.target)) return;
-      if ((e.key === "z" || e.key === "Z") && !e.metaKey && !e.ctrlKey) {
+      // e.code, not e.key: with Option/Alt held, macOS remaps the letter
+      // "z" produces (e.g. to "Ω") — matching on e.key meant that once the
+      // user pressed Option to zoom out, the keyup for the Z key no longer
+      // matched "z"/"Z" at all, so it never cleared zoomToolArmed and the
+      // magnifier cursor + zoom-on-click stuck on permanently. e.code is
+      // the physical key and is immune to modifier remapping (same reason
+      // Space is matched by e.code elsewhere in this file).
+      if (e.code === "KeyZ" && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         setZoomToolArmed(true);
       }
       if (e.key === "Alt") setZoomToolOut(true);
     }
     function onKeyUp(e: KeyboardEvent) {
-      if (e.key === "z" || e.key === "Z") setZoomToolArmed(false);
+      if (e.code === "KeyZ") setZoomToolArmed(false);
       if (e.key === "Alt") setZoomToolOut(false);
     }
     // Losing focus mid-hold (e.g. Alt-tabbing away) would otherwise leave
@@ -369,9 +376,14 @@ export function Canvas2D({ resetSignal }: Props) {
     (e.target as Element).releasePointerCapture?.(e.pointerId);
   }
 
-  function handleShapeDown(e: React.PointerEvent, id: string) {
+  function handleShapeDown(e: React.PointerEvent, rawId: string) {
     e.stopPropagation();
     if (tryZoomToolClick(e)) return;
+    // Clicking any member of a group selects/moves the whole group, not
+    // just the one shape under the cursor — otherwise dragging a grouped
+    // shape on the canvas silently broke the group selection down to that
+    // single child instead of moving everything together.
+    const id = getTopLevelId(layers, rawId);
     const additive = e.shiftKey || e.metaKey || e.ctrlKey;
     let nextSelection = selection;
     if (additive) {
