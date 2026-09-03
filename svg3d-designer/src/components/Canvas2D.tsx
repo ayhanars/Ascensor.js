@@ -488,21 +488,25 @@ export function Canvas2D({ resetSignal }: Props) {
       return;
     }
 
-    // A plain click on a group's member should select/move the whole
-    // group as one unit — but ONLY once resolved as a genuine click
-    // (see below); if this same mousedown turns into a drag, it should
-    // move whatever's currently selected exactly as-is, unchanged,
-    // otherwise dragging a grouped shape on the canvas silently broke the
-    // group selection down to that single child instead of moving
-    // everything together.
-    const singleSelected = selection.length === 1 ? selection[0] : undefined;
-    if (singleSelected !== undefined && isAncestorOrSelf(layers, singleSelected, rawId)) {
-      // Clicking within the already-selected group/shape: keep the
-      // current selection for the drag, and only resolve this as a "step
-      // one level deeper" click in onPointerUp, if the pointer turns out
-      // not to have moved at all — Figma's own "click to select the
-      // group, click again (without dragging) to work on what's inside
-      // it," generalized to any nesting depth.
+    // A plain click on a group's member — or on any member of an existing
+    // MULTI-selection built via shift-click/marquee — should keep moving
+    // the whole current selection as one unit, not just the shape under
+    // the cursor. This has to be resolved ONLY once the gesture turns out
+    // to be a genuine click with no movement (see below); if this same
+    // mousedown turns into a drag, it must move whatever's currently
+    // selected exactly as-is, unchanged. Getting this wrong (checking only
+    // a single-shape selection, as this used to) silently narrowed ANY
+    // multi-selection down to just the one shape you happened to grab the
+    // instant you tried to drag it — selecting several shapes and dragging
+    // one looked like it "deselected everything but that one."
+    const clickedWithinSelection = selection.some((s) => isAncestorOrSelf(layers, s, rawId));
+    if (clickedWithinSelection) {
+      // Resolved in onPointerUp: if the pointer never actually moved, this
+      // was a plain click, not a drag — collapse to just this shape (or,
+      // for a single already-selected group, step one level deeper),
+      // Figma's own "click to select the group, click again to work on
+      // what's inside it," generalized to any nesting depth or selection
+      // size.
       beginMove(e, selection, rawId);
       return;
     }

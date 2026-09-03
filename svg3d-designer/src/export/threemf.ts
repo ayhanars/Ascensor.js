@@ -46,17 +46,25 @@ function xmlEscape(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-/** Builds the 3MF model XML: one `<basematerials>` color entry and one
+/**
+ * Builds the 3MF model XML: one `<m:colorgroup>` color entry and one
  * `<object>` per printable shape, referenced 1:1 by `pindex`, so every
- * shape keeps its own color independent of any other shape's. */
+ * shape keeps its own color independent of any other shape's.
+ *
+ * Deliberately uses the Materials Extension's `<m:colorgroup>`/`<m:color>`
+ * rather than the 3MF core spec's `<basematerials>`/`displaycolor` — pulled
+ * BambuStudio's own bbs_3mf.cpp source (its foreign-3MF color importer only
+ * recognizes COLOR_GROUP_TAG = "m:colorgroup" / COLOR_TAG = "m:color", read
+ * via the same `pid`/`pindex` attributes on `<object>`; it never parses
+ * `<basematerials>` at all). A first version of this exporter used
+ * basematerials and colors silently never showed up in Bambu Studio.
+ */
 function buildModelXml(meshes: WorldMesh[]): string {
-  const materialEntries = meshes
-    .map((m) => `<base name="${xmlEscape(m.name)}" displaycolor="${m.colorHex.toUpperCase()}FF"/>`)
-    .join("");
+  const colorEntries = meshes.map((m) => `<m:color color="${m.colorHex.toUpperCase()}FF"/>`).join("");
 
   const objects = meshes
     .map((m, i) => {
-      const objectId = i + 2; // 1 is reserved for the basematerials resource
+      const objectId = i + 2; // 1 is reserved for the colorgroup resource
       const vertexCount = m.positions.length / 3;
       let vertices = "";
       for (let v = 0; v < vertexCount; v++) {
@@ -78,8 +86,10 @@ function buildModelXml(meshes: WorldMesh[]): string {
 
   return (
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
-    `<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">` +
-    `<resources><basematerials id="1">${materialEntries}</basematerials>${objects}</resources>` +
+    `<model unit="millimeter" xml:lang="en-US" ` +
+    `xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" ` +
+    `xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02">` +
+    `<resources><m:colorgroup id="1">${colorEntries}</m:colorgroup>${objects}</resources>` +
     `<build>${items}</build>` +
     `</model>`
   );
@@ -102,9 +112,9 @@ const RELS_XML =
  * 3MF export — unlike STL, 3MF keeps each shape as its own colored object
  * inside a single file, with every object's real position preserved (no
  * manual re-assembly needed after opening it in a slicer). Colors are
- * carried per-object via the 3MF core spec's `<basematerials>`/`pindex`,
- * which Bambu Studio (and any other 3MF-reading slicer) shows in the
- * object list for you to assign an actual filament/AMS slot to.
+ * carried per-object via a `<m:colorgroup>`/`pindex` (see buildModelXml),
+ * which Bambu Studio recognizes on import and shows per-object so you can
+ * assign an actual filament/AMS slot to each one.
  */
 export function exportSceneToThreeMfBlob(layers: Record<string, Layer>, rootIds: string[]): Blob {
   const assembly = buildAssemblyGroup(layers, rootIds, { respectVisibility: true });

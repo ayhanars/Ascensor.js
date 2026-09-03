@@ -1,4 +1,4 @@
-import type { Layer, Point2, ShapeLayer, Transform2D } from "../types";
+import type { Layer, Point2, ShapeLayer, ShapeRegion, Transform2D } from "../types";
 
 export const IDENTITY_TRANSFORM: Transform2D = {
   x: 0,
@@ -289,4 +289,19 @@ export function getLocalShapeBounds(shape: ShapeLayer): Bounds | null {
     }
   }
   return bounds;
+}
+
+/** A shape's own regions (including its holes), with the layer's full
+ * world transform baked into every point — its real printed footprint in
+ * document space, not just its bounding box. Used wherever an actual
+ * polygon overlap/support check is needed (e.g. auto-stack), since two
+ * shapes' bounding boxes can overlap while their real outlines don't. */
+export function getWorldRegions(layers: Record<string, Layer>, id: string): ShapeRegion[] {
+  const layer = layers[id];
+  if (!isShapeLayer(layer)) return [];
+  const world = getWorldTransform(layers, id);
+  return layer.regions.map((region) => ({
+    outer: { points: region.outer.points.map((p) => applyTransform2D(p, world)) },
+    holes: region.holes.map((h) => ({ points: h.points.map((p) => applyTransform2D(p, world)) })),
+  }));
 }
