@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useSceneStore } from "../state/store";
+import { useActivePlateRootIds, useSceneStore } from "../state/store";
 import { flattenForDisplay, isEffectivelyVisible, isEffectivelyLocked } from "../state/sceneUtils";
 import {
   DuplicateIcon,
@@ -27,7 +27,7 @@ function siblingContext(layers: Record<string, Layer>, rootIds: string[], id: st
 
 export function LayerPanel() {
   const layers = useSceneStore((s) => s.layers);
-  const rootIds = useSceneStore((s) => s.rootIds);
+  const rootIds = useActivePlateRootIds();
   const selection = useSceneStore((s) => s.selection);
   const selectLayer = useSceneStore((s) => s.selectLayer);
   const toggleVisibility = useSceneStore((s) => s.toggleVisibility);
@@ -120,13 +120,19 @@ export function LayerPanel() {
                 // dragging any other row selects and moves just that one
                 // (replacing the old selection), matching how the canvas's
                 // own drag already resolves this.
-                if (selected && selection.length > 1) {
+                const draggedIds = selected && selection.length > 1 ? selection : [id];
+                if (draggedIds === selection) {
                   setDragIds(selection);
                 } else {
                   setDragIds([id]);
                   setSelection([id]);
                 }
                 e.dataTransfer.effectAllowed = "move";
+                // A plate tab (a sibling component, outside any local
+                // React state this panel owns) reads the dragged ids back
+                // out of the native DataTransfer to support "drag an
+                // object onto a plate tab to move it there."
+                e.dataTransfer.setData("application/x-svg3d-layer-ids", JSON.stringify(draggedIds));
               }}
               onDragOver={(e) => {
                 e.preventDefault();

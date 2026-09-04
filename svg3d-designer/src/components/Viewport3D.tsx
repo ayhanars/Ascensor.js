@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
 import { OrbitControls, GizmoHelper, GizmoViewport } from "@react-three/drei";
 import * as THREE from "three";
-import { beginGesture, endGesture, useSceneStore, type TrackedSceneSlice } from "../state/store";
+import { beginGesture, endGesture, useActivePlateRootIds, useSceneStore, type TrackedSceneSlice } from "../state/store";
 import type { ResolvedTheme } from "../state/theme";
 import { buildAssemblyGroup, computeVisibleBounds } from "../geometry/extrude";
 import { flattenForDisplay } from "../state/sceneUtils";
@@ -116,7 +116,7 @@ const DEPTH_TIE_EPSILON = 0.01;
 
 function Assembly() {
   const layers = useSceneStore((s) => s.layers);
-  const rootIds = useSceneStore((s) => s.rootIds);
+  const rootIds = useActivePlateRootIds();
   const selection = useSceneStore((s) => s.selection);
   const wireframe = useSceneStore((s) => s.wireframe);
   const setSelection = useSceneStore((s) => s.setSelection);
@@ -375,7 +375,7 @@ interface Props {
 
 export function Viewport3D({ resetSignal, theme }: Props) {
   const layers = useSceneStore((s) => s.layers);
-  const rootIds = useSceneStore((s) => s.rootIds);
+  const rootIds = useActivePlateRootIds();
   const bed = useSceneStore((s) => s.document.bed);
   const clearSelection = useSceneStore((s) => s.clearSelection);
   const bgColor = theme === "dark" ? "#232326" : "#e8e8e8";

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 import { temporal } from "zundo";
 import { nanoid } from "nanoid";
 import type {
@@ -6,6 +7,7 @@ import type {
   DocumentSettings,
   GroupLayer,
   Layer,
+  Plate,
   PrintBed,
   ShapeLayer,
   ShapeRegion,
@@ -22,6 +24,7 @@ import {
   type Bounds,
   getLayerWorldBounds,
   getMultiLayerWorldBounds,
+  getTopLevelId,
   getWorldRegions,
   getWorldTransform,
   IDENTITY_TRANSFORM,
@@ -64,6 +67,38 @@ function rebaseWorldToParent(world: Transform2D, newParentWorld: Transform2D): T
  * of the store: it must survive selection changes and isn't itself
  * document content, so it shouldn't be undo-tracked or persisted. */
 let clipboard: { layers: Record<string, Layer>; rootIds: string[] } | null = null;
+
+/**
+ * Every top-level (root) layer belongs to exactly one plate — `plateOf`
+ * maps a root layer id to its plate's id. An entry only exists for
+ * layers that are (or were) root-level; a root with no entry defaults to
+ * the first plate, which covers every layer created before plates existed
+ * (or restored from an older save) without needing a migration pass.
+ */
+export function getRootIdsForPlate(
+  state: Pick<SceneState, "rootIds" | "plateOf" | "plates">,
+  plateId: string,
+): string[] {
+  const fallback = state.plates[0]?.id;
+  return state.rootIds.filter((id) => (state.plateOf[id] ?? fallback) === plateId);
+}
+
+/** "Plate 1", "Plate 2", ... — picks the next free number rather than just
+ * `plates.length + 1`, so re-adding a plate after deleting one in the
+ * middle never collides with a name that's still in use. */
+function nextPlateName(plates: Plate[]): string {
+  const used = new Set(
+    plates.map((p) => /^Plate (\d+)$/.exec(p.name)).filter((m): m is RegExpExecArray => !!m).map((m) => parseInt(m[1], 10)),
+  );
+  let n = 1;
+  while (used.has(n)) n++;
+  return `Plate ${n}`;
+}
+
+function defaultPlates(): { plates: Plate[]; activePlateId: string } {
+  const id = nanoid(8);
+  return { plates: [{ id, name: "Plate 1" }], activePlateId: id };
+}
 
 export const BED_PRESETS: PrintBed[] = [
   { name: "Bambu Lab X1 Carbon", width: 256, depth: 256, height: 256 },
@@ -125,10 +160,24 @@ interface SceneState {
   document: DocumentSettings;
   layers: Record<string, Layer>;
   rootIds: string[];
+  plates: Plate[];
+  /** Root layer id -> plate id. Missing entries default to `plates[0]`. */
+  plateOf: Record<string, string>;
+  /** Which plate the canvas/viewport/layer panel currently show — a view
+   * concern like `selection`/`viewMode`, not undo-tracked. */
+  activePlateId: string;
   selection: string[];
   viewMode: ViewMode2D3D;
   showGrid: boolean;
   wireframe: boolean;
+
+  addPlate: () => void;
+  renamePlate: (id: string, name: string) => void;
+  deletePlate: (id: string) => void;
+  setActivePlate: (id: string) => void;
+  /** Reassigns the top-level ancestor of each id to a different plate —
+   * how an object "doesn't fit" on one plate moves to another. */
+  moveRootsToPlate: (ids: string[], plateId: string) => void;
 
   newProject: () => void;
   importParsedScene: (input: {
@@ -199,6 +248,8 @@ export interface TrackedSceneSlice {
   document: DocumentSettings;
   layers: Record<string, Layer>;
   rootIds: string[];
+  plates: Plate[];
+  plateOf: Record<string, string>;
 }
 
 function partializeScene(state: SceneState): TrackedSceneSlice {
@@ -206,6 +257,8 @@ function partializeScene(state: SceneState): TrackedSceneSlice {
     document: state.document,
     layers: state.layers,
     rootIds: state.rootIds,
+    plates: state.plates,
+    plateOf: state.plateOf,
   };
 }
 
@@ -215,16 +268,92 @@ export const useSceneStore = create<SceneState>()(
   document: defaultDocument(),
   layers: {},
   rootIds: [],
+  ...defaultPlates(),
+  plateOf: {},
   selection: [],
   viewMode: "2d",
   showGrid: true,
   wireframe: false,
+
+  addPlate: () =>
+    set((state) => {
+      const id = nanoid(8);
+      const name = nextPlateName(state.plates);
+      return { plates: [...state.plates, { id, name }], activePlateId: id, selection: [] };
+    }),
+
+  renamePlate: (id, name) =>
+    set((state) => {
+      const trimmed = name.trim();
+      if (!trimmed) return {};
+      return { plates: state.plates.map((p) => (p.id === id ? { ...p, name: trimmed } : p)) };
+    }),
+
+  deletePlate: (id) =>
+    set((state) => {
+      // Always keep at least one plate — there's nowhere else for the
+      // document's objects (or a freshly drawn shape) to live.
+      if (state.plates.length <= 1) return {};
+      const idsOnPlate = getRootIdsForPlate(state, id);
+
+      const layers = { ...state.layers };
+      let rootIds = state.rootIds;
+      for (const rootId of idsOnPlate) {
+        const toRemove = new Set([rootId, ...collectAllDescendantIds(state.layers, rootId)]);
+        for (const rid of toRemove) delete layers[rid];
+        rootIds = rootIds.filter((r) => r !== rootId);
+      }
+
+      const plateOf = { ...state.plateOf };
+      for (const rootId of idsOnPlate) delete plateOf[rootId];
+
+      const plates = state.plates.filter((p) => p.id !== id);
+      const activePlateId = state.activePlateId === id ? plates[0].id : state.activePlateId;
+
+      return {
+        layers,
+        rootIds,
+        plateOf,
+        plates,
+        activePlateId,
+        selection: state.selection.filter((sid) => !idsOnPlate.includes(sid)),
+      };
+    }),
+
+  setActivePlate: (id) =>
+    set((state) => (state.plates.some((p) => p.id === id) && id !== state.activePlateId ? { activePlateId: id, selection: [] } : {})),
+
+  moveRootsToPlate: (ids, plateId) => {
+    let movedCount = 0;
+    let plateName = "";
+    set((state) => {
+      if (!state.plates.some((p) => p.id === plateId)) return {};
+      const rootTargets = Array.from(new Set(ids.map((id) => getTopLevelId(state.layers, id))));
+      const plateOf = { ...state.plateOf };
+      const moved: string[] = [];
+      for (const rootId of rootTargets) {
+        if (!state.layers[rootId]) continue;
+        if ((plateOf[rootId] ?? state.plates[0]?.id) === plateId) continue;
+        plateOf[rootId] = plateId;
+        moved.push(rootId);
+      }
+      if (moved.length === 0) return {};
+      movedCount = moved.length;
+      plateName = state.plates.find((p) => p.id === plateId)?.name ?? "";
+      return { plateOf, selection: state.selection.filter((sid) => !moved.includes(sid)) };
+    });
+    if (movedCount > 0) {
+      showToast(`Moved ${movedCount} object${movedCount === 1 ? "" : "s"} to ${plateName}`);
+    }
+  },
 
   newProject: () =>
     set({
       document: defaultDocument(),
       layers: {},
       rootIds: [],
+      ...defaultPlates(),
+      plateOf: {},
       selection: [],
     }),
 
@@ -232,9 +361,12 @@ export const useSceneStore = create<SceneState>()(
     set((state) => {
       // Merge the imported tree in as new top-level siblings, and grow the
       // document to fit if the import is larger than the current page.
+      const plateOf = { ...state.plateOf };
+      for (const id of rootIds) plateOf[id] = state.activePlateId;
       return {
         layers: { ...state.layers, ...layers },
         rootIds: [...state.rootIds, ...rootIds],
+        plateOf,
         document: {
           ...state.document,
           widthMM: Math.max(state.document.widthMM, widthMM),
@@ -256,7 +388,7 @@ export const useSceneStore = create<SceneState>()(
     }),
   setSelection: (ids) => set({ selection: ids }),
   clearSelection: () => set({ selection: [] }),
-  selectAll: () => set((state) => ({ selection: [...state.rootIds] })),
+  selectAll: () => set((state) => ({ selection: getRootIdsForPlate(state, state.activePlateId) })),
 
   renameLayer: (id, name) =>
     set((state) => ({
@@ -432,8 +564,10 @@ export const useSceneStore = create<SceneState>()(
       // polygon overlap, not just a bounding-box check — so two unrelated
       // shapes that merely have overlapping bounding boxes (e.g. two
       // circles near the same corner, or an L-shaped part) don't get
-      // stacked on each other when their real outlines never touch.
-      const order = flattenForDisplay(state.layers, state.rootIds)
+      // stacked on each other when their real outlines never touch. Scoped
+      // to the active plate only — a different plate is a different
+      // physical bed, so its objects have nothing to do with this stack.
+      const order = flattenForDisplay(state.layers, getRootIdsForPlate(state, state.activePlateId))
         .map((r) => r.id)
         .filter((id) => state.layers[id]?.type === "shape");
 
@@ -472,7 +606,7 @@ export const useSceneStore = create<SceneState>()(
     let fixedCount = 0;
     set((state) => {
       const layers = { ...state.layers };
-      const allIds = flattenForDisplay(state.layers, state.rootIds)
+      const allIds = flattenForDisplay(state.layers, getRootIdsForPlate(state, state.activePlateId))
         .map((r) => r.id)
         .filter((id) => state.layers[id]?.type === "shape");
       // Support is computed against everyone else's CURRENT position, using
@@ -524,6 +658,7 @@ export const useSceneStore = create<SceneState>()(
       for (const rid of toRemove) delete layers[rid];
 
       let rootIds = state.rootIds;
+      let plateOf = state.plateOf;
       if (layer.parentId) {
         const parent = layers[layer.parentId];
         if (parent && parent.type === "group") {
@@ -534,11 +669,16 @@ export const useSceneStore = create<SceneState>()(
         }
       } else {
         rootIds = rootIds.filter((r) => r !== id);
+        if (id in plateOf) {
+          plateOf = { ...plateOf };
+          delete plateOf[id];
+        }
       }
 
       return {
         layers,
         rootIds,
+        plateOf,
         selection: state.selection.filter((s) => !toRemove.has(s)),
       };
     }),
@@ -580,6 +720,7 @@ export const useSceneStore = create<SceneState>()(
       const newId = cloneSubtree(id, original.parentId);
       layers[newId] = { ...layers[newId], name: `${original.name} copy` };
 
+      let plateOf = state.plateOf;
       if (original.parentId) {
         const parent = layers[original.parentId];
         if (parent && parent.type === "group") {
@@ -591,9 +732,10 @@ export const useSceneStore = create<SceneState>()(
       } else {
         const idx = rootIds.indexOf(id);
         rootIds.splice(idx + 1, 0, newId);
+        plateOf = { ...plateOf, [newId]: plateOf[id] ?? state.activePlateId };
       }
 
-      return { layers, rootIds, selection: [newId] };
+      return { layers, rootIds, plateOf, selection: [newId] };
     }),
 
   duplicateSelection: () => {
@@ -627,6 +769,7 @@ export const useSceneStore = create<SceneState>()(
         return true;
       });
 
+      let plateOf = state.plateOf;
       for (const id of topLevel) {
         const original = layers[id];
         if (!original) continue;
@@ -645,12 +788,13 @@ export const useSceneStore = create<SceneState>()(
         } else {
           const idx = rootIds.indexOf(id);
           rootIds.splice(idx + 1, 0, newId);
+          plateOf = { ...plateOf, [newId]: plateOf[id] ?? state.activePlateId };
         }
       }
 
       if (newIds.length === 0) return {};
       count = newIds.length;
-      return { layers, rootIds, selection: newIds };
+      return { layers, rootIds, plateOf, selection: newIds };
     });
     if (count > 0) showToast(count === 1 ? "Duplicated 1 layer" : `Duplicated ${count} layers`);
   },
@@ -736,7 +880,11 @@ export const useSceneStore = create<SceneState>()(
 
       if (newIds.length === 0) return {};
       count = newIds.length;
-      return { layers, rootIds, selection: newIds };
+      // Paste always lands on whichever plate is currently active — even
+      // if the copy happened on a different one.
+      const plateOf = { ...state.plateOf };
+      for (const id of newIds) plateOf[id] = state.activePlateId;
+      return { layers, rootIds, plateOf, selection: newIds };
     });
     if (count > 0) showToast(count === 1 ? "Pasted 1 layer" : `Pasted ${count} layers`);
   },
@@ -853,10 +1001,12 @@ export const useSceneStore = create<SceneState>()(
         : IDENTITY_TRANSFORM;
 
       let insertAt = index;
+      let plateOf = state.plateOf;
       for (const id of topLevel) {
         const layer = layers[id];
         if (!layer) continue;
         const world = getWorldTransform(layers, id);
+        const wasRoot = !layer.parentId;
 
         if (layer.parentId) {
           const oldParent = layers[layer.parentId];
@@ -885,14 +1035,23 @@ export const useSceneStore = create<SceneState>()(
             layers[targetParentId] = { ...newParent, children };
             insertAt = clamped + 1;
           }
+          // Filed into a group — it's no longer a root, so it no longer
+          // has a plate of its own (it now follows its new parent's).
+          if (wasRoot && id in plateOf) {
+            plateOf = { ...plateOf };
+            delete plateOf[id];
+          }
         } else {
           const clamped = Math.max(0, Math.min(insertAt, rootIds.length));
           rootIds.splice(clamped, 0, id);
           insertAt = clamped + 1;
+          // Pulled out to the top level from inside a group — it needs a
+          // plate now, and it's whichever one is currently being viewed.
+          if (!wasRoot) plateOf = { ...plateOf, [id]: state.activePlateId };
         }
       }
 
-      return { layers, rootIds };
+      return { layers, rootIds, plateOf };
     }),
 
   mergeLayers: (ids) => {
@@ -1034,8 +1193,12 @@ export const useSceneStore = create<SceneState>()(
             .map((r) => (r === topId ? mergedId : r))
             .filter((r) => r === mergedId || !toRemove.has(r));
 
+      const plateOf = { ...state.plateOf };
+      for (const id of toRemove) delete plateOf[id];
+      if (!topLayer.parentId) plateOf[mergedId] = state.plateOf[topId] ?? state.activePlateId;
+
       mergedCount = shapeLayers.length;
-      return { layers, rootIds, selection: [mergedId] };
+      return { layers, rootIds, plateOf, selection: [mergedId] };
     });
     if (mergedCount > 0) showToast(`Merged ${mergedCount} shapes`);
   },
@@ -1172,8 +1335,12 @@ export const useSceneStore = create<SceneState>()(
             .map((r) => (r === topId ? resultId : r))
             .filter((r) => r === resultId || !toRemove.has(r));
 
+      const plateOf = { ...state.plateOf };
+      for (const id of toRemove) delete plateOf[id];
+      if (!topLayer.parentId) plateOf[resultId] = state.plateOf[topId] ?? state.activePlateId;
+
       resultCount = 1;
-      return { layers, rootIds, selection: [resultId] };
+      return { layers, rootIds, plateOf, selection: [resultId] };
     });
     if (resultCount > 0) {
       const label = op === "subtract" ? "Subtracted" : op === "intersect" ? "Intersected" : "Excluded";
@@ -1262,8 +1429,12 @@ export const useSceneStore = create<SceneState>()(
             .map((r) => (r === topId ? groupId : r))
             .filter((r) => r === groupId || !selectedSet.has(r));
 
+      const plateOf = { ...state.plateOf };
+      for (const id of selectedSet) delete plateOf[id];
+      if (!groupParentId) plateOf[groupId] = state.plateOf[topId] ?? state.activePlateId;
+
       grouped = orderedSelected.length;
-      return { layers, rootIds, selection: [groupId] };
+      return { layers, rootIds, plateOf, selection: [groupId] };
     });
     if (grouped > 0) showToast(`Grouped ${grouped} layers`);
   },
@@ -1278,6 +1449,7 @@ export const useSceneStore = create<SceneState>()(
 
       const layers = { ...state.layers };
       let rootIds = [...state.rootIds];
+      let plateOf = state.plateOf;
       const newSelection: string[] = [];
 
       for (const group of groups) {
@@ -1311,14 +1483,23 @@ export const useSceneStore = create<SceneState>()(
         } else {
           const idx = rootIds.indexOf(group.id);
           rootIds = [...rootIds.slice(0, idx), ...current.children, ...rootIds.slice(idx + 1)];
+          // The group's children just became roots in its place — they
+          // inherit the group's own plate.
+          const plateId = plateOf[group.id] ?? state.activePlateId;
+          plateOf = { ...plateOf };
+          for (const childId of current.children) plateOf[childId] = plateId;
         }
 
+        if (group.id in plateOf) {
+          plateOf = { ...plateOf };
+          delete plateOf[group.id];
+        }
         delete layers[group.id];
       }
 
       if (newSelection.length === 0) return {};
       ungrouped = groups.length;
-      return { layers, rootIds, selection: newSelection };
+      return { layers, rootIds, plateOf, selection: newSelection };
     });
     if (ungrouped > 0) showToast(ungrouped === 1 ? "Ungrouped 1 group" : `Ungrouped ${ungrouped} groups`);
   },
@@ -1414,6 +1595,7 @@ export const useSceneStore = create<SceneState>()(
       return {
         layers: { ...state.layers, [id]: layer },
         rootIds: [...state.rootIds, id],
+        plateOf: { ...state.plateOf, [id]: state.activePlateId },
         selection: [id],
       };
     }),
@@ -1421,7 +1603,12 @@ export const useSceneStore = create<SceneState>()(
     {
       partialize: partializeScene,
       limit: 100,
-      equality: (a, b) => a.layers === b.layers && a.rootIds === b.rootIds && a.document === b.document,
+      equality: (a, b) =>
+        a.layers === b.layers &&
+        a.rootIds === b.rootIds &&
+        a.document === b.document &&
+        a.plates === b.plates &&
+        a.plateOf === b.plateOf,
     },
   ),
 );
@@ -1450,3 +1637,19 @@ export function endGesture(preGestureSnapshot: TrackedSceneSlice, changed: boole
 }
 
 export { IDENTITY_TRANSFORM };
+
+/**
+ * The root layer ids belonging to whichever plate is currently being
+ * viewed — what the canvas, viewport and layer panel should actually
+ * render/operate on, as opposed to `rootIds` (every root across every
+ * plate). Uses useShallow so a re-render that doesn't actually change
+ * which ids are on this plate still hands consumers back the SAME array
+ * reference — without it, every unrelated state change would produce a
+ * brand-new filtered array and defeat any `useMemo`/`useEffect` keyed on
+ * it (e.g. Viewport3D's fairly expensive assembly rebuild).
+ */
+export function useActivePlateRootIds(): string[] {
+  return useSceneStore(
+    useShallow((s) => s.rootIds.filter((id) => (s.plateOf[id] ?? s.plates[0]?.id) === s.activePlateId)),
+  );
+}
