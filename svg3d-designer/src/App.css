@@ -16,7 +16,13 @@
   padding: 0 8px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
-  z-index: 10;
+  /* Being a flex item with a non-auto z-index, this establishes its own
+     stacking context — every z-index inside it (like the Export dropdown)
+     is capped at this level relative to siblings, no matter how high it's
+     set locally. Must outrank every floating canvas-area overlay (plate
+     tabs, floating-warning banner, toasts, all 45-50) or a dropdown that
+     opens right under this bar — Export — gets rendered underneath them. */
+  z-index: 70;
 }
 
 .toolbar-brand {
@@ -66,7 +72,11 @@
   border-radius: var(--radius-sm);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
   padding: 4px;
-  z-index: 40;
+  /* Above the plate tabs (45) and the toast/floating-warning overlays
+     (50) — it opens right under the Export button, near where the plate
+     tabs sit at the top of the canvas, and being an open dropdown menu
+     it should always win that stacking fight rather than get covered. */
+  z-index: 60;
   display: flex;
   flex-direction: column;
   gap: 2px;
