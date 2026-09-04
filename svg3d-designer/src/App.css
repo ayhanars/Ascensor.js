@@ -763,7 +763,7 @@
 .plate-tabs {
   position: absolute;
   left: 12px;
-  bottom: 12px;
+  top: 12px;
   z-index: 45;
   display: flex;
   align-items: center;
@@ -773,7 +773,12 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  max-width: calc(100% - 24px);
+  /* A fixed cap (rather than a fraction of the canvas) so a long run of
+     plates always scrolls within this strip instead of growing into the
+     floating-warning banner, which sits top-center and can itself get
+     fairly wide — a percentage-based cap still let the two collide on
+     narrower windows. */
+  max-width: min(190px, calc(100% - 24px));
   overflow-x: auto;
 }
 
