@@ -168,6 +168,32 @@ function HexColorInput({
 }
 
 /**
+ * One-click swatches for every distinct color already used somewhere in
+ * the project — picked up from every shape layer, not just the current
+ * selection, so a color chosen for one part is easy to reuse exactly on
+ * another instead of re-eyeballing the same hex in the picker. Hidden
+ * entirely once there's nothing to offer (a single-color project, or the
+ * selected shape's own color is the only one in use).
+ */
+function ColorPaletteRow({ colors, current, onPick }: { colors: string[]; current?: string; onPick: (color: string) => void }) {
+  if (colors.length === 0 || (colors.length === 1 && colors[0].toLowerCase() === current?.toLowerCase())) return null;
+  return (
+    <div className="color-palette-row">
+      {colors.map((color) => (
+        <button
+          key={color}
+          type="button"
+          className={"color-palette-swatch" + (current?.toLowerCase() === color.toLowerCase() ? " active" : "")}
+          style={{ background: color }}
+          title={color}
+          onClick={() => onPick(color)}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
  * A controlled number input that's still editable. A plain
  * `value={someNumber}` input fights the user: clearing the field to type a
  * new value (e.g. replacing "1" with "30") produces an empty string, which
@@ -277,6 +303,11 @@ export function Inspector() {
   const selection = useSceneStore((s) => s.selection);
   const setLayerColor = useSceneStore((s) => s.setLayerColor);
   const setLayerTransform = useSceneStore((s) => s.setLayerTransform);
+  // Every distinct color already in use, most-recently-added first (Object
+  // key order follows insertion order, and layer ids are only ever
+  // inserted, never reordered in place) — cheap enough to recompute every
+  // render for the layer counts a single project realistically has.
+  const usedColors = Array.from(new Set(Object.values(layers).flatMap((l) => (l.type === "shape" ? [l.color] : [])))).reverse();
   const setExtrusionDepth = useSceneStore((s) => s.setExtrusionDepth);
   const setCornerRadius = useSceneStore((s) => s.setCornerRadius);
   const setBevelBottom = useSceneStore((s) => s.setBevelBottom);
@@ -445,6 +476,11 @@ export function Inspector() {
                 />
                 <span style={{ color: "var(--text-faint)" }}>Apply to all</span>
               </div>
+              <ColorPaletteRow
+                colors={usedColors}
+                current={firstShape?.color}
+                onPick={(color) => selection.forEach((id) => setLayerColor(id, color))}
+              />
             </div>
           )}
 
@@ -642,6 +678,11 @@ export function Inspector() {
                     onChange={(color) => applyToAll(targets.map((t) => t.id), (id) => setLayerColor(id, color))}
                   />
                 </div>
+                <ColorPaletteRow
+                  colors={usedColors}
+                  current={display.color}
+                  onPick={(color) => applyToAll(targets.map((t) => t.id), (id) => setLayerColor(id, color))}
+                />
               </div>
 
               <div className="inspector-section">
