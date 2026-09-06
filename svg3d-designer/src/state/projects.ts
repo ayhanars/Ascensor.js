@@ -23,6 +23,8 @@ export interface ProjectContent {
   rootIds: string[];
   plates: Plate[];
   plateOf: Record<string, string>;
+  /** Optional so projects saved before this field existed still parse. */
+  dismissedFloatingIds?: string[];
 }
 
 const INDEX_KEY = "svg3d-designer:projects:index";

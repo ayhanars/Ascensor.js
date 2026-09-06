@@ -167,7 +167,7 @@ function defaultDocument(): DocumentSettings {
 function buildBlankProjectContent(): { content: TrackedSceneSlice; activePlateId: string } {
   const { plates, activePlateId } = defaultPlates();
   return {
-    content: { document: defaultDocument(), layers: {}, rootIds: [], plates, plateOf: {} },
+    content: { document: defaultDocument(), layers: {}, rootIds: [], plates, plateOf: {}, dismissedFloatingIds: [] },
     activePlateId,
   };
 }
@@ -185,6 +185,8 @@ function resolveInitialState(): TrackedSceneSlice & { activePlateId: string; act
     if (content) {
       return {
         ...content,
+        // Older saved projects predate this field entirely.
+        dismissedFloatingIds: content.dismissedFloatingIds ?? [],
         activePlateId: content.plates[0]?.id ?? defaultPlates().activePlateId,
         activeProjectId: activeId,
       };
@@ -205,6 +207,12 @@ interface SceneState {
   plates: Plate[];
   /** Root layer id -> plate id. Missing entries default to `plates[0]`. */
   plateOf: Record<string, string>;
+  /** Ids the user has explicitly acknowledged from the "partial support"
+   * floating-shape warning (an ear or mustache resting on a real but
+   * partial contact area) — suppresses that warning for this shape until
+   * it changes position again. Purely floating (no real contact at all)
+   * shapes are never dismissible this way. */
+  dismissedFloatingIds: string[];
   /** Which plate the canvas/viewport/layer panel currently show — a view
    * concern like `selection`/`viewMode`, not undo-tracked. */
   activePlateId: string;
@@ -262,6 +270,7 @@ interface SceneState {
   setLayerZ: (id: string, z: number) => void;
   autoStackLayers: () => void;
   fixFloatingLayers: (ids: string[]) => void;
+  dismissFloatingWarning: (ids: string[]) => void;
   deleteLayer: (id: string) => void;
   deleteSelection: () => void;
   duplicateLayer: (id: string) => void;
@@ -300,6 +309,7 @@ export interface TrackedSceneSlice {
   rootIds: string[];
   plates: Plate[];
   plateOf: Record<string, string>;
+  dismissedFloatingIds: string[];
 }
 
 function partializeScene(state: SceneState): TrackedSceneSlice {
@@ -309,6 +319,7 @@ function partializeScene(state: SceneState): TrackedSceneSlice {
     rootIds: state.rootIds,
     plates: state.plates,
     plateOf: state.plateOf,
+    dismissedFloatingIds: state.dismissedFloatingIds,
   };
 }
 
@@ -324,6 +335,7 @@ export const useSceneStore = create<SceneState>()(
   activePlateId: initialState.activePlateId,
   activeProjectId: initialState.activeProjectId,
   plateOf: initialState.plateOf,
+  dismissedFloatingIds: initialState.dismissedFloatingIds,
   selection: [],
   viewMode: "2d",
   showGrid: true,
@@ -425,6 +437,7 @@ export const useSceneStore = create<SceneState>()(
     useSceneStore.temporal.getState().pause();
     set({
       ...content,
+      dismissedFloatingIds: content.dismissedFloatingIds ?? [],
       activePlateId: content.plates[0]?.id ?? defaultPlates().activePlateId,
       activeProjectId: id,
       selection: [],
@@ -747,6 +760,11 @@ export const useSceneStore = create<SceneState>()(
     if (fixedCount > 0) showToast(`Fixed ${fixedCount} floating shape${fixedCount === 1 ? "" : "s"}`);
   },
 
+  dismissFloatingWarning: (ids) =>
+    set((state) => ({
+      dismissedFloatingIds: Array.from(new Set([...state.dismissedFloatingIds, ...ids])),
+    })),
+
   deleteLayer: (id) =>
     set((state) => {
       const layer = state.layers[id];
@@ -773,10 +791,15 @@ export const useSceneStore = create<SceneState>()(
         }
       }
 
+      const dismissedFloatingIds = state.dismissedFloatingIds.some((did) => toRemove.has(did))
+        ? state.dismissedFloatingIds.filter((did) => !toRemove.has(did))
+        : state.dismissedFloatingIds;
+
       return {
         layers,
         rootIds,
         plateOf,
+        dismissedFloatingIds,
         selection: state.selection.filter((s) => !toRemove.has(s)),
       };
     }),
@@ -1706,7 +1729,8 @@ export const useSceneStore = create<SceneState>()(
         a.rootIds === b.rootIds &&
         a.document === b.document &&
         a.plates === b.plates &&
-        a.plateOf === b.plateOf,
+        a.plateOf === b.plateOf &&
+        a.dismissedFloatingIds === b.dismissedFloatingIds,
     },
   ),
 );
