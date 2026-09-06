@@ -23,6 +23,7 @@ import {
   boundsOverlap,
   type Bounds,
   getLayerWorldBounds,
+  getLocalShapeBounds,
   getMultiLayerWorldBounds,
   getTopLevelId,
   getWorldRegions,
@@ -31,6 +32,7 @@ import {
   invertTransform2D,
 } from "./sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
+import { BEVEL_SELF_INTERSECTION_SAFETY } from "../geometry/bevelExtrude";
 import {
   differenceRegions,
   intersectionRegions,
@@ -674,22 +676,39 @@ export const useSceneStore = create<SceneState>()(
     const baseWorld = getWorldTransform(state.layers, baseId);
     const baseTopZ = baseWorld.z + base.extrusionDepth;
 
-    // Presses in a fraction of the base's own thickness, leaving the rest
-    // as solid floor underneath — never so deep it eats the whole thing,
-    // never shallower than a print can resolve.
-    const DEPTH_FRACTION = 0.4;
-    const MIN_DEPTH_MM = 0.2;
-    const OVERSHOOT_MM = 1;
-    const maxDepth = Math.max(0.05, base.extrusionDepth - 0.1);
-    const depth = Math.min(Math.max(MIN_DEPTH_MM, base.extrusionDepth * DEPTH_FRACTION), maxDepth);
+    // This isn't a hole — it presses the stamp's own shape into the base
+    // as a smooth, continuous dent, the way a thumb presses into clay or a
+    // bowl is formed into a spoon. That means the recess has to actually
+    // curve, all the way from the base's flat surface at the stamp's
+    // outline down to its deepest point, rather than dropping straight in
+    // with mostly-vertical walls and only a thin rounded lip at the very
+    // bottom (which is what a small bevel on a much taller cut looks like
+    // — still recognizably a hole). A bevel whose amount equals the
+    // stamp's own narrowest half-width bows the *entire* footprint into
+    // one continuous curve down to a single ridge/point at its deepest —
+    // a true dome — instead of just rounding a rim.
+    const stampBounds = getLocalShapeBounds(stamp);
+    const stampHalfWidth = stampBounds
+      ? Math.min(stampBounds.maxX - stampBounds.minX, stampBounds.maxY - stampBounds.minY) / 2
+      : 0;
+    // Same fraction buildBeveledExtrudeGeometry's own safety clamp already
+    // caps a bevel at, so this lands exactly on the safe maximum instead
+    // of being silently re-clamped a second time to a different value.
+    const domeDepth = stampHalfWidth * BEVEL_SELF_INTERSECTION_SAFETY;
 
-    // The stamp becomes a hole-like cutting tool (real 3D boolean subtract,
-    // same as `isHole`) — except sized to only reach `depth` into the base
-    // rather than punching all the way through, and with its own bottom
-    // rim rounded off (bevelBottom) so the cut it leaves behind is a
-    // smooth dish instead of a flat-bottomed, sharp-walled pocket. A small
-    // overshoot above the base's top surface guarantees a cleanly open
-    // mouth.
+    const MIN_DEPTH_MM = 0.15;
+    const MIN_FLOOR_MM = 0.1;
+    const OVERSHOOT_MM = 1;
+    const maxDepthForFloor = Math.max(MIN_DEPTH_MM, base.extrusionDepth - MIN_FLOOR_MM);
+    const depth = Math.max(MIN_DEPTH_MM, Math.min(domeDepth, maxDepthForFloor));
+
+    // The stamp becomes a hole-like cutting tool under the hood (real 3D
+    // boolean subtract, same machinery `isHole` already uses) — but with
+    // its bevel set to the full dome depth above rather than a token rim
+    // rounding, and positioned so that dome's equator (where it's back to
+    // the stamp's full outline width) lands exactly at the base's surface
+    // and its apex sits `depth` below it. A small overshoot above the
+    // surface guarantees a cleanly open mouth.
     const parentWorldZ = stamp.parentId ? getWorldTransform(state.layers, stamp.parentId).z : 0;
     const newWorldZ = baseTopZ - depth;
 
