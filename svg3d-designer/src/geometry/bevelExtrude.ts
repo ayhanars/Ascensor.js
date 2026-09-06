@@ -54,6 +54,14 @@ const BEVEL_CURVE_SEGMENTS = 10;
 const BEVEL_CORNER_ROUNDING_FRACTION = 0.5;
 const BEVEL_CORNER_SEGMENTS = 6;
 
+/** How much of a region's own narrowest half-width a bevel may safely use
+ * before its offset contour risks folding past the opposite wall (see the
+ * self-intersection guard below). Exported so a caller that deliberately
+ * wants a bevel to reach all the way to a full, self-supporting dome (e.g.
+ * the Dimple tool pressing a smooth recess into another shape) can ask for
+ * that same safe maximum directly instead of guessing at a value. */
+export const BEVEL_SELF_INTERSECTION_SAFETY = 0.85;
+
 function getBevelVec(inPt: THREE.Vector2, inPrev: THREE.Vector2, inNext: THREE.Vector2): THREE.Vector2 {
   let v_trans_x: number, v_trans_y: number, shrink_by: number;
 
@@ -199,7 +207,6 @@ export function buildBeveledExtrudeGeometry(
   // region's offset rings from ever crossing themselves, at the cost of
   // silently softening a requested bevel that was simply too big for that
   // particular shape.
-  const BEVEL_WIDTH_SAFETY = 0.85;
   let minHalfWidth = Infinity;
   for (const shape of shapes) {
     const pts = shape.getPoints(1);
@@ -217,7 +224,7 @@ export function buildBeveledExtrudeGeometry(
     minHalfWidth = Math.min(minHalfWidth, (maxX - minX) / 2, (maxY - minY) / 2);
   }
   if (Number.isFinite(minHalfWidth)) {
-    const widthCap = Math.max(0, minHalfWidth * BEVEL_WIDTH_SAFETY);
+    const widthCap = Math.max(0, minHalfWidth * BEVEL_SELF_INTERSECTION_SAFETY);
     bottom = Math.min(bottom, widthCap);
     top = Math.min(top, widthCap);
   }

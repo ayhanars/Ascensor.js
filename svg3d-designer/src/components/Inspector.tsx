@@ -573,6 +573,22 @@ export function Inspector() {
             step={1}
             onChange={(v) => setLayerTransform(layer.id, { rotation: v })}
           />
+          <div className="field-grid-2" style={{ marginTop: 6 }}>
+            <button
+              className="btn"
+              onClick={() => setLayerTransform(layer.id, { rotation: layer.transform.rotation - 45 })}
+              title="Rotate 45° counterclockwise"
+            >
+              ⟲ 45°
+            </button>
+            <button
+              className="btn"
+              onClick={() => setLayerTransform(layer.id, { rotation: layer.transform.rotation + 45 })}
+              title="Rotate 45° clockwise"
+            >
+              ⟳ 45°
+            </button>
+          </div>
         </div>
 
         {(() => {

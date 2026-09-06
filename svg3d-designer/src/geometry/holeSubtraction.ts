@@ -18,6 +18,15 @@ import type { Layer, ShapeLayer } from "../types";
  * only overlays when `showHoleOverlays` is set, and removed entirely
  * otherwise (STL export always uses `showHoleOverlays: false` — a hole is
  * never itself printable material).
+ *
+ * This whole module gets called again on every render that touches
+ * `layers` at all — Assembly rebuilds its whole scene graph from scratch
+ * on any change, not just ones relevant to a given cut — so the actual
+ * CSG boolean (real mesh-boolean math, not cheap, and noticeably less
+ * cheap for a finely-tessellated tool like the Dimple one) is cached per
+ * solid layer and only re-run when that solid's or its holes' own
+ * geometry/position actually changed, rather than on every unrelated edit
+ * anywhere else in the scene.
  */
 
 const HOLE_OVERLAY_MATERIAL = new THREE.MeshStandardMaterial({
@@ -34,6 +43,60 @@ interface MeshEntry {
   layerId: string;
   box: THREE.Box3;
 }
+
+/**
+ * Everything about a shape that its extruded geometry and world position
+ * actually depend on — cheap to compare, and stable (by reference for
+ * `regions`, by value for the rest) across renders where nothing relevant
+ * changed. Used to skip re-running the expensive CSG boolean below for a
+ * solid/hole pair whose geometry and position are unchanged from the last
+ * time this ran, which is the overwhelmingly common case: every OTHER
+ * edit anywhere else in the scene (dragging an unrelated shape, tweaking
+ * an unrelated color) still produces a brand-new `layers` object and so
+ * still re-triggers this whole function on every affected render.
+ */
+interface GeometrySignature {
+  regions: unknown;
+  cornerRadius: number;
+  extrusionDepth: number;
+  bevelBottom: number;
+  bevelTop: number;
+  matrixWorld: number[];
+}
+
+function signatureOf(layer: ShapeLayer, mesh: THREE.Mesh): GeometrySignature {
+  return {
+    regions: layer.regions,
+    cornerRadius: layer.cornerRadius,
+    extrusionDepth: layer.extrusionDepth,
+    bevelBottom: layer.bevelBottom,
+    bevelTop: layer.bevelTop,
+    matrixWorld: mesh.matrixWorld.toArray(),
+  };
+}
+
+function signaturesEqual(a: GeometrySignature, b: GeometrySignature): boolean {
+  if (a.regions !== b.regions) return false;
+  if (a.cornerRadius !== b.cornerRadius) return false;
+  if (a.extrusionDepth !== b.extrusionDepth) return false;
+  if (a.bevelBottom !== b.bevelBottom) return false;
+  if (a.bevelTop !== b.bevelTop) return false;
+  for (let i = 0; i < a.matrixWorld.length; i++) {
+    if (a.matrixWorld[i] !== b.matrixWorld[i]) return false;
+  }
+  return true;
+}
+
+interface CacheEntry {
+  solidSig: GeometrySignature;
+  holeSigs: { id: string; sig: GeometrySignature }[];
+  geometry: THREE.BufferGeometry;
+}
+
+/** One cached post-subtraction result per solid layer id, across calls —
+ * this module is a singleton, so the cache just lives for the app's
+ * lifetime and is pruned of anything no longer a cut solid on every call. */
+const resultCache = new Map<string, CacheEntry>();
 
 export function subtractHoles(
   root: THREE.Group,
@@ -52,41 +115,73 @@ export function subtractHoles(
     (layer.isHole ? holes : solids).push(entry);
   });
 
-  if (holes.length === 0) return;
+  if (holes.length === 0) {
+    resultCache.clear();
+    return;
+  }
 
   const evaluator = new Evaluator();
   evaluator.useGroups = false;
 
   for (const solid of solids) {
     const overlapping = holes.filter((h) => h.box.intersectsBox(solid.box));
-    if (overlapping.length === 0) continue;
-
-    let geometry = solid.mesh.geometry;
-    let matrixWorld = solid.mesh.matrixWorld.clone();
-    let result: Brush | null = null;
-    for (const hole of overlapping) {
-      const brushA = new Brush(geometry);
-      brushA.matrixWorld.copy(matrixWorld);
-      const brushB = new Brush(hole.mesh.geometry);
-      brushB.matrixWorld.copy(hole.mesh.matrixWorld);
-      result = evaluator.evaluate(brushA, brushB, SUBTRACTION) as Brush;
-      geometry = result.geometry;
-      // evaluate() re-derives the result's own matrixWorld from brush A's,
-      // so this is a no-op in practice — kept for clarity/robustness in
-      // case the exact frame ever changes across a chained subtraction.
-      matrixWorld = result.matrixWorld.clone();
+    if (overlapping.length === 0) {
+      resultCache.delete(solid.layerId);
+      continue;
     }
-    if (!result) continue;
 
-    result.geometry.computeVertexNormals();
-    result.material = solid.mesh.material;
-    result.name = solid.mesh.name;
-    result.userData.layerId = solid.layerId;
-    result.castShadow = solid.mesh.castShadow;
-    result.receiveShadow = solid.mesh.receiveShadow;
+    const solidLayer = layers[solid.layerId] as ShapeLayer;
+    const solidSig = signatureOf(solidLayer, solid.mesh);
+    const holeSigs = overlapping
+      .map((h) => ({ id: h.layerId, sig: signatureOf(layers[h.layerId] as ShapeLayer, h.mesh) }))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+
+    const cached = resultCache.get(solid.layerId);
+    const isCacheHit =
+      !!cached &&
+      signaturesEqual(cached.solidSig, solidSig) &&
+      cached.holeSigs.length === holeSigs.length &&
+      cached.holeSigs.every((c, i) => c.id === holeSigs[i].id && signaturesEqual(c.sig, holeSigs[i].sig));
+
+    let resultGeometry: THREE.BufferGeometry;
+    if (cached && isCacheHit) {
+      resultGeometry = cached.geometry;
+    } else {
+      let geometry = solid.mesh.geometry;
+      let matrixWorld = solid.mesh.matrixWorld.clone();
+      let result: Brush | null = null;
+      for (const hole of overlapping) {
+        const brushA = new Brush(geometry);
+        brushA.matrixWorld.copy(matrixWorld);
+        const brushB = new Brush(hole.mesh.geometry);
+        brushB.matrixWorld.copy(hole.mesh.matrixWorld);
+        result = evaluator.evaluate(brushA, brushB, SUBTRACTION) as Brush;
+        geometry = result.geometry;
+        // evaluate() re-derives the result's own matrixWorld from brush A's,
+        // so this is a no-op in practice — kept for clarity/robustness in
+        // case the exact frame ever changes across a chained subtraction.
+        matrixWorld = result.matrixWorld.clone();
+      }
+      if (!result) continue;
+
+      result.geometry.computeVertexNormals();
+      resultGeometry = result.geometry;
+      resultCache.set(solid.layerId, { solidSig, holeSigs, geometry: resultGeometry });
+    }
+
+    const resultMesh = new THREE.Mesh(resultGeometry, solid.mesh.material);
+    resultMesh.name = solid.mesh.name;
+    resultMesh.userData.layerId = solid.layerId;
+    resultMesh.castShadow = solid.mesh.castShadow;
+    resultMesh.receiveShadow = solid.mesh.receiveShadow;
 
     solid.mesh.removeFromParent();
-    root.add(result);
+    root.add(resultMesh);
+  }
+
+  const currentSolidIds = new Set(solids.map((s) => s.layerId));
+  for (const key of resultCache.keys()) {
+    if (!currentSolidIds.has(key)) resultCache.delete(key);
   }
 
   for (const hole of holes) {
