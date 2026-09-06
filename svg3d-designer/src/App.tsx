@@ -10,6 +10,7 @@ import { ImportDialog } from "./components/ImportDialog";
 import { ToastStack } from "./components/ToastStack";
 import { FloatingWarningBanner } from "./components/FloatingWarningBanner";
 import { PlateTabs } from "./components/PlateTabs";
+import { ProjectBrowser } from "./components/ProjectBrowser";
 import { getRootIdsForPlate, useActivePlateRootIds, useSceneStore } from "./state/store";
 import { useTheme } from "./state/theme";
 import { collectShapeLayers, isEffectivelyVisible } from "./state/sceneUtils";
@@ -30,6 +31,7 @@ function App() {
   const [pendingImport, setPendingImport] = useState<ParsedScene | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [projectsOpen, setProjectsOpen] = useState(false);
   const dragCounter = useRef(0);
   const [resetSignal, setResetSignal] = useState(0);
   const { resolved: theme, toggle: toggleTheme } = useTheme();
@@ -193,6 +195,7 @@ function App() {
           else showToast("No objects on any plate to export", { tone: "warning" });
         }}
         onResetView={() => setResetSignal((n) => n + 1)}
+        onOpenProjects={() => setProjectsOpen(true)}
         exportDisabled={!hasVisibleGeometry}
         multiPlateExportDisabled={plates.length < 2}
         theme={theme}
@@ -238,6 +241,8 @@ function App() {
           }}
         />
       )}
+
+      {projectsOpen && <ProjectBrowser onClose={() => setProjectsOpen(false)} />}
 
       {importError && (
         <div className="dialog-backdrop" onMouseDown={() => setImportError(null)}>

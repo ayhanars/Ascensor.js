@@ -11,6 +11,7 @@ interface Props {
   onExport3mf: () => void;
   onExportAllPlates: (format: "stl" | "3mf") => void;
   onResetView: () => void;
+  onOpenProjects: () => void;
   exportDisabled: boolean;
   multiPlateExportDisabled: boolean;
   theme: ResolvedTheme;
@@ -23,6 +24,7 @@ export function TopToolbar({
   onExport3mf,
   onExportAllPlates,
   onResetView,
+  onOpenProjects,
   exportDisabled,
   multiPlateExportDisabled,
   theme,
@@ -57,11 +59,14 @@ export function TopToolbar({
       <div className="toolbar-brand">SVG → 3D Print</div>
       <div className="toolbar-sep" />
 
+      <button className="toolbar-btn" onClick={onOpenProjects}>
+        Projects
+      </button>
+
       <button
         className="toolbar-btn"
-        onClick={() => {
-          if (confirm("Start a new project? Unsaved changes will be lost.")) newProject();
-        }}
+        title="Start a new local project — the one you're leaving stays saved"
+        onClick={() => newProject()}
       >
         New
       </button>
