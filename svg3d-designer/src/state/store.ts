@@ -39,6 +39,13 @@ import {
   xorRegions,
 } from "../geometry/booleanOps";
 import { showToast } from "./toastStore";
+import {
+  getActiveProjectId,
+  loadProjectContent,
+  saveProjectContent,
+  setActiveProjectId,
+  touchProjectMeta,
+} from "./projects";
 
 /**
  * Solves for the local transform that, composed under `newParentWorld`
@@ -156,6 +163,40 @@ function defaultDocument(): DocumentSettings {
   };
 }
 
+function buildBlankProjectContent(): { content: TrackedSceneSlice; activePlateId: string } {
+  const { plates, activePlateId } = defaultPlates();
+  return {
+    content: { document: defaultDocument(), layers: {}, rootIds: [], plates, plateOf: {} },
+    activePlateId,
+  };
+}
+
+/**
+ * What to show on first paint: resume the last-open project if one
+ * exists in this browser's storage, otherwise start a brand-new one (and
+ * persist it immediately, so it already exists in the project browser's
+ * list rather than only appearing once something changes).
+ */
+function resolveInitialState(): TrackedSceneSlice & { activePlateId: string; activeProjectId: string } {
+  const activeId = getActiveProjectId();
+  if (activeId) {
+    const content = loadProjectContent(activeId);
+    if (content) {
+      return {
+        ...content,
+        activePlateId: content.plates[0]?.id ?? defaultPlates().activePlateId,
+        activeProjectId: activeId,
+      };
+    }
+  }
+  const id = nanoid(8);
+  const { content, activePlateId } = buildBlankProjectContent();
+  saveProjectContent(id, content);
+  touchProjectMeta(id, content.document.name);
+  setActiveProjectId(id);
+  return { ...content, activePlateId, activeProjectId: id };
+}
+
 interface SceneState {
   document: DocumentSettings;
   layers: Record<string, Layer>;
@@ -166,6 +207,10 @@ interface SceneState {
   /** Which plate the canvas/viewport/layer panel currently show — a view
    * concern like `selection`/`viewMode`, not undo-tracked. */
   activePlateId: string;
+  /** Which locally-saved project this session is editing — like
+   * `activePlateId`, a view concern (not undo-tracked): switching projects
+   * isn't an edit to either project, just a change of which one is open. */
+  activeProjectId: string;
   selection: string[];
   viewMode: ViewMode2D3D;
   showGrid: boolean;
@@ -178,6 +223,10 @@ interface SceneState {
   /** Reassigns the top-level ancestor of each id to a different plate —
    * how an object "doesn't fit" on one plate moves to another. */
   moveRootsToPlate: (ids: string[], plateId: string) => void;
+  /** Loads a different locally-saved project into the editor, replacing
+   * everything currently open. The project being left is safe either way
+   * — autosave already persisted it continuously while it was open. */
+  loadProject: (id: string) => void;
 
   newProject: () => void;
   importParsedScene: (input: {
@@ -262,14 +311,18 @@ function partializeScene(state: SceneState): TrackedSceneSlice {
   };
 }
 
+const initialState = resolveInitialState();
+
 export const useSceneStore = create<SceneState>()(
   temporal(
     (set, get) => ({
-  document: defaultDocument(),
-  layers: {},
-  rootIds: [],
-  ...defaultPlates(),
-  plateOf: {},
+  document: initialState.document,
+  layers: initialState.layers,
+  rootIds: initialState.rootIds,
+  plates: initialState.plates,
+  activePlateId: initialState.activePlateId,
+  activeProjectId: initialState.activeProjectId,
+  plateOf: initialState.plateOf,
   selection: [],
   viewMode: "2d",
   showGrid: true,
@@ -347,15 +400,37 @@ export const useSceneStore = create<SceneState>()(
     }
   },
 
-  newProject: () =>
+  newProject: () => {
+    const id = nanoid(8);
+    const { content, activePlateId } = buildBlankProjectContent();
+    saveProjectContent(id, content);
+    touchProjectMeta(id, content.document.name);
+    setActiveProjectId(id);
+    // Swapping in a different project's content is not itself an
+    // undoable edit — pause zundo's automatic per-set tracking around the
+    // swap (otherwise this very set() call gets recorded as one history
+    // entry, leaving Undo able to jump back to the OLD project's content)
+    // and reset history only once the swap is safely untracked.
+    useSceneStore.temporal.getState().pause();
+    set({ ...content, activePlateId, activeProjectId: id, selection: [] });
+    useSceneStore.temporal.setState({ pastStates: [], futureStates: [] });
+    useSceneStore.temporal.getState().resume();
+  },
+
+  loadProject: (id) => {
+    const content = loadProjectContent(id);
+    if (!content) return;
+    setActiveProjectId(id);
+    useSceneStore.temporal.getState().pause();
     set({
-      document: defaultDocument(),
-      layers: {},
-      rootIds: [],
-      ...defaultPlates(),
-      plateOf: {},
+      ...content,
+      activePlateId: content.plates[0]?.id ?? defaultPlates().activePlateId,
+      activeProjectId: id,
       selection: [],
-    }),
+    });
+    useSceneStore.temporal.setState({ pastStates: [], futureStates: [] });
+    useSceneStore.temporal.getState().resume();
+  },
 
   importParsedScene: ({ layers, rootIds, widthMM, heightMM }) =>
     set((state) => {
@@ -1637,6 +1712,24 @@ export function endGesture(preGestureSnapshot: TrackedSceneSlice, changed: boole
 }
 
 export { IDENTITY_TRANSFORM };
+
+// Autosave — fires on every store change (not just tracked-content ones;
+// selection/view changes are cheap no-op re-saves, and filtering those
+// out isn't worth the extra bookkeeping), debounced so a burst of edits
+// only writes once shortly after things settle rather than on every
+// intermediate frame of a drag.
+let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+const AUTOSAVE_DEBOUNCE_MS = 600;
+useSceneStore.subscribe(() => {
+  const { activeProjectId } = useSceneStore.getState();
+  if (!activeProjectId) return;
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => {
+    const state = useSceneStore.getState();
+    saveProjectContent(state.activeProjectId, partializeScene(state));
+    touchProjectMeta(state.activeProjectId, state.document.name);
+  }, AUTOSAVE_DEBOUNCE_MS);
+});
 
 /**
  * The root layer ids belonging to whichever plate is currently being
