@@ -48,9 +48,11 @@ export function buildExtrudeGeometry(layer: ShapeLayer): THREE.BufferGeometry {
   const depth = Math.max(0.05, layer.extrusionDepth);
   const bevelBottom = layer.bevelBottom ?? 0;
   const bevelTop = layer.bevelTop ?? 0;
+  const indentBottom = layer.indentBottom ?? 0;
+  const indentTop = layer.indentTop ?? 0;
 
-  if (bevelBottom > 0 || bevelTop > 0) {
-    return buildBeveledExtrudeGeometry(shapes, depth, bevelBottom, bevelTop);
+  if (bevelBottom > 0 || bevelTop > 0 || indentBottom !== 0 || indentTop !== 0) {
+    return buildBeveledExtrudeGeometry(shapes, depth, bevelBottom, bevelTop, indentBottom, indentTop);
   }
 
   const geometry = new THREE.ExtrudeGeometry(shapes, {

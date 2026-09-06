@@ -58,6 +58,20 @@ export interface ShapeLayer extends LayerCommon {
   /** Straight chamfer cut into the top rim (z=extrusionDepth), in mm. 0 = sharp edge. */
   bevelTop: number;
   /**
+   * Bows the *entire* bottom face of the shape's own solid into a smooth
+   * dent or bump, rather than just rounding its outer rim the way
+   * bevelBottom does — a real, printable part of this shape's own geometry
+   * (no cut against another shape involved). Positive presses the face's
+   * center inward/upward (concave, like a thumb pressed into clay, or a
+   * spoon's bowl); negative pushes it outward/downward instead (a convex
+   * bulge). 0 = flat. Ignored (bevelBottom applies instead) unless nonzero.
+   */
+  indentBottom: number;
+  /** Same as indentBottom, for the top face. Positive presses the face's
+   * center inward/downward (concave); negative pushes it outward/upward
+   * (convex bulge). */
+  indentTop: number;
+  /**
    * When true, this shape isn't printed as its own solid — its extruded
    * volume is subtracted (a real 3D boolean difference) from every solid
    * shape it overlaps, cutting a cavity or through-hole (e.g. a magnet

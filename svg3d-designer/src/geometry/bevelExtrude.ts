@@ -177,36 +177,49 @@ interface Ring {
 
 /**
  * Builds an extruded, capped solid from `shapes`, with an optional rounded
- * bevel at the bottom (`z=0`) and/or top (`z=depth`) rim. A 0 amount on
- * either side degenerates to a plain (unbeveled) extrusion.
+ * bevel at the bottom (`z=0`) and/or top (`z=depth`) rim, and/or an Indent
+ * — a whole-face concave dent or convex bulge, real printable geometry of
+ * this same solid rather than a rim treatment or a cut against another
+ * shape. A 0 amount on a given side/feature degenerates to a plain
+ * (untouched) cap for that side. Indent and bevel don't compose on the
+ * same face (both start from that face's rim) — indent wins whenever it's
+ * nonzero, per the field's own doc comment on `ShapeLayer`.
  */
 export function buildBeveledExtrudeGeometry(
   shapes: THREE.Shape[],
   depth: number,
   bevelBottom: number,
   bevelTop: number,
+  indentBottom = 0,
+  indentTop = 0,
 ): THREE.BufferGeometry {
-  let bottom = Math.max(0, bevelBottom);
-  let top = Math.max(0, bevelTop);
-  // The two chamfers eat into the same depth budget from either end — never
-  // let them overlap past the middle.
+  const bottomIsIndent = indentBottom !== 0;
+  const topIsIndent = indentTop !== 0;
+
+  let bottomMag = bottomIsIndent ? Math.abs(indentBottom) : Math.max(0, bevelBottom);
+  let topMag = topIsIndent ? Math.abs(indentTop) : Math.max(0, bevelTop);
+  // The two caps' treatments eat into the same depth budget from either
+  // end — never let them overlap past the middle. (A convex Indent that
+  // bulges outward doesn't actually need this shape's own depth at all,
+  // but sizing it the same way regardless of direction is simplest and
+  // always safe.)
   const maxTotal = depth * 0.98;
-  if (bottom + top > maxTotal) {
-    const scale = maxTotal / (bottom + top);
-    bottom *= scale;
-    top *= scale;
+  if (bottomMag + topMag > maxTotal) {
+    const scale = maxTotal / (bottomMag + topMag);
+    bottomMag *= scale;
+    topMag *= scale;
   }
 
   // A thin shape (a slim rectangle, a single stroke of an imported font
-  // glyph) can only safely take a bevel up to about half its own narrowest
-  // local dimension — insetting the contour further folds it past the
-  // opposite wall and flips it inside out, which is what "the shape
-  // changes" looks like: a warped or spiky mesh instead of a rounded edge.
-  // Scanning every region's own bounding box up front and capping the
-  // shared bevel amounts to whatever the thinnest one can take keeps every
-  // region's offset rings from ever crossing themselves, at the cost of
-  // silently softening a requested bevel that was simply too big for that
-  // particular shape.
+  // glyph) can only safely take a bevel/indent up to about half its own
+  // narrowest local dimension — insetting the contour further folds it
+  // past the opposite wall and flips it inside out, which is what "the
+  // shape changes" looks like: a warped or spiky mesh instead of a
+  // rounded edge. Scanning every region's own bounding box up front and
+  // capping the shared amounts to whatever the thinnest one can take
+  // keeps every region's offset rings from ever crossing themselves, at
+  // the cost of silently softening a requested amount that was simply too
+  // big for that particular shape.
   let minHalfWidth = Infinity;
   for (const shape of shapes) {
     const pts = shape.getPoints(1);
@@ -225,9 +238,11 @@ export function buildBeveledExtrudeGeometry(
   }
   if (Number.isFinite(minHalfWidth)) {
     const widthCap = Math.max(0, minHalfWidth * BEVEL_SELF_INTERSECTION_SAFETY);
-    bottom = Math.min(bottom, widthCap);
-    top = Math.min(top, widthCap);
+    bottomMag = Math.min(bottomMag, widthCap);
+    topMag = Math.min(topMag, widthCap);
   }
+  const bottom = bottomMag;
+  const top = topMag;
 
   const positions: number[] = [];
   const uvs: number[] = [];
@@ -267,7 +282,21 @@ export function buildBeveledExtrudeGeometry(
   // (concave — a cove/inner-bevel look, not a round-over). Verified
   // numerically, not just by eye: both formulas below hold |distance to
   // center - amount| < 1e-6 across the sweep.
-  if (bottom > 0) {
+  if (bottomIsIndent) {
+    // Indent, unlike a bevel, keeps the *rim* exactly where an untouched
+    // face would be (offset=0, z=0) and moves the *center* instead —
+    // sweeping the same quarter-circle arc as the bevel curves above, just
+    // paired with z the other way round. Positive indentBottom presses the
+    // center up into the material (concave); negative pushes it down and
+    // out instead (a convex bulge) — the sign of the original value (not
+    // just its clamped magnitude) decides which.
+    const sign = Math.sign(indentBottom);
+    for (let i = 0; i <= BEVEL_CURVE_SEGMENTS; i++) {
+      const t = i / BEVEL_CURVE_SEGMENTS;
+      const angle = (t * Math.PI) / 2;
+      pushRing(sign * bottom * Math.sin(angle), -bottom * (1 - Math.cos(angle)));
+    }
+  } else if (bottom > 0) {
     for (let i = 0; i <= BEVEL_CURVE_SEGMENTS; i++) {
       const t = i / BEVEL_CURVE_SEGMENTS;
       const angle = (t * Math.PI) / 2;
@@ -277,7 +306,18 @@ export function buildBeveledExtrudeGeometry(
     pushRing(0, 0);
   }
 
-  if (top > 0) {
+  if (topIsIndent) {
+    // Mirror of the bottom Indent case: the rim stays at the face's
+    // untouched height (offset=0, z=depth) and the center moves instead —
+    // down into the material for a positive indentTop (concave), or up
+    // and out for negative (a convex bulge).
+    const sign = Math.sign(indentTop);
+    for (let i = 0; i <= BEVEL_CURVE_SEGMENTS; i++) {
+      const t = i / BEVEL_CURVE_SEGMENTS;
+      const angle = (t * Math.PI) / 2;
+      pushRing(depth - sign * top * Math.sin(angle), -top * (1 - Math.cos(angle)));
+    }
+  } else if (top > 0) {
     for (let i = 0; i <= BEVEL_CURVE_SEGMENTS; i++) {
       const t = i / BEVEL_CURVE_SEGMENTS;
       const angle = (t * Math.PI) / 2;
