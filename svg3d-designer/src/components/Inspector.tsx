@@ -293,6 +293,7 @@ export function Inspector() {
   const mergeLayers = useSceneStore((s) => s.mergeLayers);
   const groupSelection = useSceneStore((s) => s.groupSelection);
   const ungroupSelection = useSceneStore((s) => s.ungroupSelection);
+  const applyDimple = useSceneStore((s) => s.applyDimple);
 
   if (selection.length === 0) {
     // Several Bambu beds share identical dimensions (X1 Carbon/X1/X1E/P1S/
@@ -459,6 +460,17 @@ export function Inspector() {
             <div className="inspector-section-title">Boolean</div>
             <BooleanOpsRow selection={selection} />
           </div>
+
+          {allShapes && selection.length === 2 && (
+            <button
+              className="btn"
+              style={{ width: "100%", marginTop: 4 }}
+              onClick={() => applyDimple(selection)}
+              title="Presses whichever of these two overlapping shapes sits higher down into the other as a smooth, rounded recess — like pressing a stamp into clay. Adjust Bevel Bottom on the result afterward to change how rounded it is."
+            >
+              Create dimple
+            </button>
+          )}
         </div>
       </div>
     );

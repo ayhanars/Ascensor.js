@@ -189,6 +189,39 @@ export function buildBeveledExtrudeGeometry(
     top *= scale;
   }
 
+  // A thin shape (a slim rectangle, a single stroke of an imported font
+  // glyph) can only safely take a bevel up to about half its own narrowest
+  // local dimension — insetting the contour further folds it past the
+  // opposite wall and flips it inside out, which is what "the shape
+  // changes" looks like: a warped or spiky mesh instead of a rounded edge.
+  // Scanning every region's own bounding box up front and capping the
+  // shared bevel amounts to whatever the thinnest one can take keeps every
+  // region's offset rings from ever crossing themselves, at the cost of
+  // silently softening a requested bevel that was simply too big for that
+  // particular shape.
+  const BEVEL_WIDTH_SAFETY = 0.85;
+  let minHalfWidth = Infinity;
+  for (const shape of shapes) {
+    const pts = shape.getPoints(1);
+    if (pts.length < 2) continue;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const p of pts) {
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y);
+      maxY = Math.max(maxY, p.y);
+    }
+    minHalfWidth = Math.min(minHalfWidth, (maxX - minX) / 2, (maxY - minY) / 2);
+  }
+  if (Number.isFinite(minHalfWidth)) {
+    const widthCap = Math.max(0, minHalfWidth * BEVEL_WIDTH_SAFETY);
+    bottom = Math.min(bottom, widthCap);
+    top = Math.min(top, widthCap);
+  }
+
   const positions: number[] = [];
   const uvs: number[] = [];
 

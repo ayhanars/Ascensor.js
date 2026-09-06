@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { beginGesture, endGesture, useActivePlateRootIds, useSceneStore, type TrackedSceneSlice } from "../state/store";
-import { boundsOverlap, getLayerWorldBounds, getMultiLayerWorldBounds, getTopLevelId, isAncestorOrSelf, stepIntoOnClick } from "../state/sceneUtils";
+import { boundsOverlap, getLayerWorldBounds, getMultiLayerWorldBounds, getTopLevelId, isAncestorOrSelf, isEffectivelyLocked, stepIntoOnClick } from "../state/sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
 import type { Layer, ShapeRegion } from "../types";
 import { InfoIcon } from "./icons";
@@ -328,7 +328,10 @@ export function Canvas2D({ resetSignal }: Props) {
     const originals: Record<string, { x: number; y: number }> = {};
     for (const id of ids) {
       const layer = layers[id];
-      if (layer) originals[id] = { x: layer.transform.x, y: layer.transform.y };
+      // A locked shape that ended up in a multi-selection some other way
+      // (marquee-selected before being locked, part of a shift-clicked
+      // group) still shouldn't move along with the rest of the drag.
+      if (layer && !isEffectivelyLocked(layers, id)) originals[id] = { x: layer.transform.x, y: layer.transform.y };
     }
     dragState.current = {
       mode: "move",
@@ -552,13 +555,17 @@ export function Canvas2D({ resetSignal }: Props) {
           strokeDasharray={layer.isHole ? "3 2" : undefined}
           vectorEffect={layer.isHole ? "non-scaling-stroke" : undefined}
           style={{
-            cursor: zoomToolArmed ? (zoomToolOut ? "zoom-out" : "zoom-in") : layer.locked ? "default" : "move",
+            cursor: zoomToolArmed ? (zoomToolOut ? "zoom-out" : "zoom-in") : isEffectivelyLocked(layers, id) ? "default" : "move",
           }}
           onPointerDown={(e) => {
             // The zoom tool zooms on anything you click, lock included —
             // it's not a selection action.
             if (tryZoomToolClick(e)) return;
-            if (!layer.locked) handleShapeDown(e, id);
+            // A shape locked directly OR inherited from a locked ancestor
+            // group is entirely inert to canvas clicks — matches Figma:
+            // locking a group freezes everything inside it too, not just
+            // whatever's locked at the top level.
+            if (!isEffectivelyLocked(layers, id)) handleShapeDown(e, id);
           }}
         />
       </g>
