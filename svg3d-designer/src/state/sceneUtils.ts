@@ -313,6 +313,24 @@ export function getWorldRegions(layers: Record<string, Layer>, id: string): Shap
 // stacking heights as the same one.
 const Z_ALIGN_EPSILON_MM = 0.01;
 
+// Above this fraction of a shape's own footprint being supported, it's
+// considered fully attached (not worth flagging at all). Below
+// PARTIAL_CONTACT_FRACTION, there's no meaningful contact — it's genuinely
+// floating and will fail to print. In between (a real but partial contact,
+// like an ear or mustache resting on a small sliver of the head beneath it)
+// it's flagged as a softer, dismissible warning rather than a hard error.
+const FULLY_SUPPORTED_FRACTION = 0.98;
+const PARTIAL_CONTACT_FRACTION = 0.03;
+
+export interface FloatingSeverities {
+  /** No real support at all — will fail to print; always shown, never dismissible. */
+  critical: string[];
+  /** Some genuine contact area but not fully supported — likely fine in
+   * practice (a small attached feature), shown as a softer warning the
+   * user can dismiss once acknowledged. */
+  partial: string[];
+}
+
 /**
  * Which currently-placed shapes are, right now, NOT fully supported by
  * whatever they're resting on — read-only, unlike autoStackLayers (which
@@ -322,7 +340,10 @@ const Z_ALIGN_EPSILON_MM = 0.01;
  * Auto-Stack, a manual Z edit, or a drag. A shape sitting on the bed
  * (world Z ~0) is always considered supported.
  */
-export function computeFloatingLayerIds(layers: Record<string, Layer>, rootIds: string[]): string[] {
+export function computeFloatingLayerSeverities(
+  layers: Record<string, Layer>,
+  rootIds: string[],
+): FloatingSeverities {
   const order = flattenForDisplay(layers, rootIds)
     .map((r) => r.id)
     .filter((id) => isShapeLayer(layers[id]));
@@ -336,17 +357,19 @@ export function computeFloatingLayerIds(layers: Record<string, Layer>, rootIds: 
     })
     .filter((item) => !item.layer.isHole && item.area > 1e-6);
 
-  const floating: string[] = [];
+  const critical: string[] = [];
+  const partial: string[] = [];
   for (const item of info) {
     if (item.z <= Z_ALIGN_EPSILON_MM) continue;
     const supporters = info.filter((o) => o.id !== item.id && Math.abs(o.topZ - item.z) < Z_ALIGN_EPSILON_MM);
     if (supporters.length === 0) {
-      floating.push(item.id);
+      critical.push(item.id);
       continue;
     }
     const supportUnion = unionRegions(supporters.flatMap((s) => s.regions));
     const supportedArea = regionsIntersectionArea(item.regions, supportUnion);
-    if (supportedArea < item.area * 0.98) floating.push(item.id);
+    if (supportedArea < item.area * PARTIAL_CONTACT_FRACTION) critical.push(item.id);
+    else if (supportedArea < item.area * FULLY_SUPPORTED_FRACTION) partial.push(item.id);
   }
-  return floating;
+  return { critical, partial };
 }

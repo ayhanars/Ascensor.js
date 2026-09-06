@@ -1,59 +1,87 @@
 import { useEffect, useState } from "react";
-import { computeFloatingLayerIds } from "../state/sceneUtils";
+import { computeFloatingLayerSeverities } from "../state/sceneUtils";
 import { useActivePlateRootIds, useSceneStore } from "../state/store";
 
-// Debounced rather than a synchronous useMemo: while a raised shape is
-// being dragged across the canvas, its Z-alignment-based support check
-// flickers on/off every frame as it passes over and off other shapes'
-// footprints — waiting for a short pause in edits before checking keeps
-// the banner from flashing during normal dragging and only shows up once
-// the user has actually settled on a position.
 const CHECK_DEBOUNCE_MS = 450;
 
 export function FloatingWarningBanner() {
   const layers = useSceneStore((s) => s.layers);
   const rootIds = useActivePlateRootIds();
+  const dismissedFloatingIds = useSceneStore((s) => s.dismissedFloatingIds);
   const fixFloatingLayers = useSceneStore((s) => s.fixFloatingLayers);
+  const dismissFloatingWarning = useSceneStore((s) => s.dismissFloatingWarning);
   const setSelection = useSceneStore((s) => s.setSelection);
-  const [floatingIds, setFloatingIds] = useState<string[]>([]);
+  const [severities, setSeverities] = useState<{ critical: string[]; partial: string[] }>({
+    critical: [],
+    partial: [],
+  });
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      setFloatingIds(computeFloatingLayerIds(layers, rootIds));
+      setSeverities(computeFloatingLayerSeverities(layers, rootIds));
     }, CHECK_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [layers, rootIds]);
 
-  // A layer can vanish (deleted, merged) between the debounce firing and
-  // the next render — filter defensively so the banner never points at a
-  // dangling id.
-  const liveIds = floatingIds.filter((id) => layers[id]);
-  if (liveIds.length === 0) return null;
+  const criticalIds = severities.critical.filter((id) => layers[id]);
+  const partialIds = severities.partial.filter((id) => layers[id] && !dismissedFloatingIds.includes(id));
+
+  if (criticalIds.length === 0 && partialIds.length === 0) return null;
 
   return (
-    <div className="floating-warning-banner">
-      <span className="floating-warning-icon">⚠</span>
-      <span className="floating-warning-text">
-        {liveIds.length === 1
-          ? "1 shape is floating above the model with no support underneath it"
-          : `${liveIds.length} shapes are floating above the model with no support underneath them`}
-      </span>
-      <button
-        type="button"
-        className="floating-warning-select-btn"
-        onClick={() => setSelection(liveIds)}
-        title="Select the floating shape(s)"
-      >
-        Select
-      </button>
-      <button
-        type="button"
-        className="floating-warning-fix-btn"
-        onClick={() => fixFloatingLayers(liveIds)}
-        title="Drop each floating shape down onto whatever actually supports it"
-      >
-        Fix
-      </button>
+    <div className="floating-warning-stack">
+      {criticalIds.length > 0 && (
+        <div className="floating-warning-banner floating-warning-banner--critical">
+          <span className="floating-warning-icon">⚠</span>
+          <span className="floating-warning-text">
+            {criticalIds.length === 1
+              ? "1 shape is floating above the model with no support underneath it"
+              : `${criticalIds.length} shapes are floating above the model with no support underneath them`}
+          </span>
+          <button
+            type="button"
+            className="floating-warning-select-btn"
+            onClick={() => setSelection(criticalIds)}
+            title="Select the floating shape(s)"
+          >
+            Select
+          </button>
+          <button
+            type="button"
+            className="floating-warning-fix-btn"
+            onClick={() => fixFloatingLayers(criticalIds)}
+            title="Drop each floating shape down onto whatever actually supports it"
+          >
+            Fix
+          </button>
+        </div>
+      )}
+      {partialIds.length > 0 && (
+        <div className="floating-warning-banner">
+          <span className="floating-warning-icon">⚠</span>
+          <span className="floating-warning-text">
+            {partialIds.length === 1
+              ? "1 shape only partially rests on what's below it"
+              : `${partialIds.length} shapes only partially rest on what's below them`}
+          </span>
+          <button
+            type="button"
+            className="floating-warning-select-btn"
+            onClick={() => setSelection(partialIds)}
+            title="Select the partially-supported shape(s)"
+          >
+            Select
+          </button>
+          <button
+            type="button"
+            className="floating-warning-dismiss-btn"
+            onClick={() => dismissFloatingWarning(partialIds)}
+            title="This is fine — dismiss this warning for these shape(s)"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
     </div>
   );
 }
