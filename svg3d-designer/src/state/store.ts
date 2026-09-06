@@ -34,6 +34,7 @@ import { roundRegions } from "../geometry/roundCorners";
 import {
   differenceRegions,
   intersectionRegions,
+  regionsArea,
   regionsIntersectionArea,
   unionRegions,
   xorRegions,
@@ -646,12 +647,24 @@ export const useSceneStore = create<SceneState>()(
         .map((r) => r.id)
         .filter((id) => state.layers[id]?.type === "shape");
 
+      // Process the largest footprint first, not layer-panel order — a
+      // real physical base (a background, a mounting plate) is reliably
+      // the larger of two overlapping shapes, while what rests on it is
+      // the smaller one. Layer order is just how things happen to be
+      // organized in the panel (grouped, sorted, dragged around) and
+      // isn't a reliable stand-in for which shape is physically underneath.
+      const withRegions = order
+        .map((id) => {
+          const regions = getWorldRegions(state.layers, id);
+          return { id, regions, area: regionsArea(regions) };
+        })
+        .sort((a, b) => b.area - a.area);
+
       const layers = { ...state.layers };
       const placed: { regions: ReturnType<typeof getWorldRegions>; topZ: number }[] = [];
 
-      for (const id of order) {
+      for (const { id, regions } of withRegions) {
         const layer = layers[id] as ShapeLayer;
-        const regions = getWorldRegions(layers, id);
 
         // baseZ is the tallest already-placed shape this one's real
         // outline genuinely overlaps — not merely bbox-adjacent to. A
@@ -688,26 +701,36 @@ export const useSceneStore = create<SceneState>()(
       // the original (pre-fix) snapshot — fixing one floating shape should
       // never change what another floating shape in the same batch is
       // measured against.
-      const info = allIds.map((id, orderIndex) => {
+      const info = allIds.map((id) => {
         const layer = state.layers[id] as ShapeLayer;
+        const regions = getWorldRegions(state.layers, id);
         return {
           id,
-          orderIndex,
           layer,
-          regions: getWorldRegions(state.layers, id),
+          regions,
+          area: regionsArea(regions),
           z: getWorldTransform(state.layers, id).z,
         };
       });
       for (const id of ids) {
         const item = info.find((i) => i.id === id);
         if (!item) continue;
-        // Only a shape earlier in layer order can be "underneath" this one
-        // — the same document-order-is-stacking-order convention
-        // autoStackLayers uses. Without this, raising a large background
-        // shape that everything else was drawn on top of would have it
-        // "rest on" whatever it overlaps and invert the stack, burying the
-        // foreground shapes it was actually supposed to support.
-        const others = info.filter((o) => o.id !== id && o.orderIndex < item.orderIndex);
+        // Only a shape whose own footprint isn't smaller counts as
+        // "underneath" this one — a real physical base (the badge
+        // background, a mounting plate) is reliably the larger of the two
+        // overlapping shapes, while whatever sits on top of it is the
+        // smaller one. This used to be decided by layer-panel order
+        // instead (assuming document order tracks stacking order), but
+        // that breaks the moment someone drags layers around for
+        // organization rather than stacking — reordering a shape in the
+        // panel should never change where Fix decides it physically
+        // rests. Area is a property of the geometry itself, so it holds
+        // regardless of list order, while still preventing the original
+        // bug this guarded against: raising a large background and
+        // hitting Fix must drop it back to the ground, not rest it on
+        // top of the small foreground pieces it's supposed to support.
+        const AREA_SLACK = 1e-6;
+        const others = info.filter((o) => o.id !== id && o.area >= item.area - AREA_SLACK);
         let baseZ = 0;
         for (const o of others) {
           const topZ = o.z + o.layer.extrusionDepth;

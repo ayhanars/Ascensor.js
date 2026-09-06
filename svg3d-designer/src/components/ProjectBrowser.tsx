@@ -111,7 +111,7 @@ export function ProjectBrowser({ onClose }: Props) {
                       handleDelete(p.id, p.name);
                     }}
                   >
-                    <TrashIcon size={12} />
+                    <TrashIcon size={15} />
                   </button>
                   {isEditing ? (
                     <input
