@@ -24,7 +24,14 @@ export interface Transform2D {
   y: number; // mm
   /** Height above the print bed the layer's extrusion starts at, in mm. Never negative. */
   z: number;
-  rotation: number; // degrees, around Z
+  rotation: number; // degrees, around Z (roll — the original, print-bed "spin" axis)
+  /** Degrees, around X (pitch) — tilts the object forward/back. 0 for a
+   * flat-on-the-bed object; only meaningful in the 3D preview/export, not
+   * the 2D canvas (see Viewport3D's rotation dial). */
+  rotationX: number;
+  /** Degrees, around Y (yaw) — tilts the object left/right. Same 3D-only
+   * scope as rotationX. */
+  rotationY: number;
   scaleX: number;
   scaleY: number;
 }

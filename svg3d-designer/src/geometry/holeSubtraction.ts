@@ -174,6 +174,19 @@ export function subtractHoles(
     resultMesh.userData.layerId = solid.layerId;
     resultMesh.castShadow = solid.mesh.castShadow;
     resultMesh.receiveShadow = solid.mesh.receiveShadow;
+    // The evaluator's output geometry is expressed in brushA's *local*
+    // frame, not baked into world space — the matrixWorld note above is
+    // about the Brush's own (discarded) matrixWorld property, not the
+    // vertex data. Since resultMesh is re-parented straight under `root`
+    // (which had an identity transform at the time these matrixWorld
+    // values were captured), decomposing the solid's original matrixWorld
+    // onto it reproduces the exact same placement — for a root-level solid
+    // that's just its own transform, and for one nested inside a group it
+    // correctly folds in every ancestor group's offset too, since
+    // matrixWorld already accumulates the whole chain. Skipping this left
+    // every cut solid sitting at the scene origin instead of where it
+    // actually was.
+    solid.mesh.matrixWorld.decompose(resultMesh.position, resultMesh.quaternion, resultMesh.scale);
 
     solid.mesh.removeFromParent();
     root.add(resultMesh);

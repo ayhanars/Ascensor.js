@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { beginGesture, endGesture, useActivePlateRootIds, useSceneStore, type TrackedSceneSlice } from "../state/store";
 import { boundsOverlap, getLayerWorldBounds, getMultiLayerWorldBounds, getTopLevelId, isAncestorOrSelf, isEffectivelyLocked, stepIntoOnClick } from "../state/sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
+import { resolvePushes } from "../geometry/pushResolution";
 import type { Layer, ShapeRegion } from "../types";
 import { InfoIcon } from "./icons";
 
@@ -403,8 +404,13 @@ export function Canvas2D({ resetSignal }: Props) {
       for (const [id, orig] of Object.entries(drag.originals)) {
         setLayerTransform(id, { x: orig.x + dx, y: orig.y + dy });
       }
+      const movedIds = Object.keys(drag.originals);
+      if (useSceneStore.getState().pushOnDrag) {
+        const pushes = resolvePushes(useSceneStore.getState().layers, rootIds, movedIds, dx, dy);
+        for (const p of pushes) setLayerTransform(p.id, { x: p.x, y: p.y });
+      }
       const liveLayers = useSceneStore.getState().layers;
-      setAlignGuides(computeAlignGuides(Object.keys(drag.originals), liveLayers));
+      setAlignGuides(computeAlignGuides(movedIds, liveLayers));
     } else if (drag.mode === "marquee") {
       const cur = clientToSvg(e.clientX, e.clientY);
       setMarqueeRect({

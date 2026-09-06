@@ -16,7 +16,22 @@ import { subtractHoles } from "./holeSubtraction";
  */
 function applyLayerTransform(object: THREE.Object3D, t: Transform2D): void {
   object.position.set(t.x, -t.y, t.z);
-  object.rotation.z = THREE.MathUtils.degToRad(-t.rotation);
+  // Full 3-axis orientation (roll = Z/t.rotation, pitch = X/t.rotationX, yaw =
+  // Y/t.rotationY), composed as Euler angles in the original SVG-space
+  // convention, then mirrored into this Y-flipped space. For the reflection
+  // M = diag(1,-1,1) used above, conjugating ANY rotation's quaternion
+  // (w,x,y,z) by M works out to simply negating x and z — this generalizes
+  // the old Z-only code's "negate the angle" rule (set rotationX/rotationY to
+  // 0 and this produces the exact same quaternion as the previous
+  // `rotation.z = -rotation` line did).
+  const euler = new THREE.Euler(
+    THREE.MathUtils.degToRad(t.rotationX),
+    THREE.MathUtils.degToRad(t.rotationY),
+    THREE.MathUtils.degToRad(t.rotation),
+    "XYZ",
+  );
+  const q = new THREE.Quaternion().setFromEuler(euler);
+  object.quaternion.set(-q.x, q.y, -q.z, q.w);
   // Scale never touches Z: a layer's thickness is always real, absolute
   // millimeters, unaffected by any XY scaling applied to it or a parent.
   object.scale.set(t.scaleX, t.scaleY, 1);
