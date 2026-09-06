@@ -169,6 +169,9 @@
 .toolbar-toggle-group button + button { border-left: 1px solid var(--border-strong); }
 .toolbar-toggle-group button.active { background: var(--accent); color: var(--accent-contrast); }
 
+.face-mode-toggle { flex: 0 0 auto; margin-left: auto; }
+.face-mode-toggle button { padding: 3px 8px; font-size: 12px; }
+
 /* ---------- Main layout ---------- */
 
 .main-body {
@@ -663,6 +666,92 @@
   width: 280px;
   line-height: 1.5;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+}
+
+/* ---------- 3D viewport right-edge axis bar ---------- */
+
+.axis-side-bar {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  background: var(--overlay-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+}
+
+.axis-side-bar-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.axis-side-bar-label {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.axis-side-bar-value {
+  font-size: 11px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  min-width: 44px;
+  text-align: center;
+}
+
+.z-slider-wrap {
+  position: relative;
+  width: 28px;
+  height: 130px;
+}
+
+.z-slider {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 130px;
+  height: 28px;
+  margin: 0;
+  transform: translate(-50%, -50%) rotate(-90deg);
+  accent-color: var(--accent);
+}
+
+.rotate-dial {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-input);
+  cursor: grab;
+  touch-action: none;
+}
+
+.rotate-dial:active { cursor: grabbing; }
+
+.rotate-dial-sweep {
+  position: absolute;
+  inset: 0;
+}
+
+.rotate-dial-handle {
+  position: absolute;
+  top: 5px;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: translateX(-50%);
 }
 
 .zoom-indicator {

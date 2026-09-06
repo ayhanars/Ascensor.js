@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type MutableRefObject } from "react";
 import {
   BED_PRESETS,
   beginGesture,
@@ -676,176 +676,202 @@ export function Inspector() {
               </CollapsibleSection>
 
               {(() => {
+                // Bevel (rounds the rim, silhouette tapers at the cap) and
+                // Indent (rim stays put, the face's *center* dents in or
+                // bulges out) are two different ways to shape the same
+                // face — geometrically incompatible on one face at once, so
+                // each face is either None, Bevel, or Indent, chosen with an
+                // explicit toggle rather than two separate sections that
+                // silently fight over the same face (indent used to win
+                // with no explanation whenever both had a nonzero value).
+                // Top and Bottom are independent, so e.g. a beveled bottom
+                // with an indented top is completely normal.
                 const bevelMax = Math.max(0.5, display.extrusionDepth / 2);
                 const bevelDefault = Math.min(0.3, bevelMax);
+                const indentMax = Math.max(0.5, display.extrusionDepth / 2);
+                const indentDefault = Math.min(indentMax, indentMax * 0.6);
+                // Older saved shapes predate the indent fields entirely.
+                const indentTop = display.indentTop ?? 0;
+                const indentBottom = display.indentBottom ?? 0;
+                const ids = targets.map((t) => t.id);
+
+                type FaceMode = "none" | "bevel" | "indent";
+                const modeOf = (bevel: number, indent: number): FaceMode =>
+                  indent !== 0 ? "indent" : bevel > 0 ? "bevel" : "none";
+                const topMode = modeOf(display.bevelTop, indentTop);
+                const bottomMode = modeOf(display.bevelBottom, indentBottom);
+
+                function FaceRow({
+                  label,
+                  mode,
+                  bevelValue,
+                  indentValue,
+                  setBevel,
+                  setIndent,
+                  bevelGestureRef,
+                  indentGestureRef,
+                }: {
+                  label: string;
+                  mode: FaceMode;
+                  bevelValue: number;
+                  indentValue: number;
+                  setBevel: (id: string, mm: number) => void;
+                  setIndent: (id: string, mm: number) => void;
+                  bevelGestureRef: MutableRefObject<TrackedSceneSlice | null>;
+                  indentGestureRef: MutableRefObject<TrackedSceneSlice | null>;
+                }) {
+                  return (
+                    <div style={{ marginBottom: 10 }}>
+                      <div className="field-row">
+                        <span className="field-label">{label}</span>
+                        <div className="toolbar-toggle-group face-mode-toggle">
+                          <button
+                            type="button"
+                            className={mode === "none" ? "active" : ""}
+                            onClick={() =>
+                              applyToAll(ids, (id) => {
+                                setBevel(id, 0);
+                                setIndent(id, 0);
+                              })
+                            }
+                          >
+                            None
+                          </button>
+                          <button
+                            type="button"
+                            className={mode === "bevel" ? "active" : ""}
+                            onClick={() =>
+                              applyToAll(ids, (id) => {
+                                setIndent(id, 0);
+                                setBevel(id, bevelValue > 0 ? bevelValue : bevelDefault);
+                              })
+                            }
+                          >
+                            Bevel
+                          </button>
+                          <button
+                            type="button"
+                            className={mode === "indent" ? "active" : ""}
+                            onClick={() =>
+                              applyToAll(ids, (id) => {
+                                setBevel(id, 0);
+                                setIndent(id, indentValue !== 0 ? indentValue : indentDefault);
+                              })
+                            }
+                          >
+                            Indent
+                          </button>
+                        </div>
+                      </div>
+                      {mode === "bevel" && (
+                        <div className="field-row">
+                          <input
+                            className="field-input"
+                            type="range"
+                            min={0}
+                            max={bevelMax}
+                            step={0.05}
+                            value={Math.min(bevelMax, bevelValue)}
+                            onPointerDown={() => {
+                              bevelGestureRef.current = beginGesture();
+                            }}
+                            onPointerUp={() => {
+                              if (bevelGestureRef.current) {
+                                endGesture(bevelGestureRef.current, true);
+                                bevelGestureRef.current = null;
+                              }
+                            }}
+                            onChange={(e) => targets.forEach((t) => setBevel(t.id, parseFloat(e.target.value)))}
+                            style={{ flex: "1 1 auto" }}
+                          />
+                          <NumberField
+                            value={bevelValue}
+                            min={0}
+                            step={0.05}
+                            unit={unit}
+                            style={{ flex: "0 0 60px" }}
+                            onChange={(v) => applyToAll(ids, (id) => setBevel(id, v))}
+                          />
+                        </div>
+                      )}
+                      {mode === "indent" && (
+                        <div className="field-row">
+                          <input
+                            className="field-input"
+                            type="range"
+                            min={-indentMax}
+                            max={indentMax}
+                            step={0.05}
+                            value={Math.max(-indentMax, Math.min(indentMax, indentValue))}
+                            onPointerDown={() => {
+                              indentGestureRef.current = beginGesture();
+                            }}
+                            onPointerUp={() => {
+                              if (indentGestureRef.current) {
+                                endGesture(indentGestureRef.current, true);
+                                indentGestureRef.current = null;
+                              }
+                            }}
+                            onChange={(e) => targets.forEach((t) => setIndent(t.id, parseFloat(e.target.value)))}
+                            style={{ flex: "1 1 auto" }}
+                          />
+                          <NumberField
+                            value={indentValue}
+                            step={0.05}
+                            unit={unit}
+                            style={{ flex: "0 0 60px" }}
+                            onChange={(v) => applyToAll(ids, (id) => setIndent(id, v))}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
                 return (
                   <CollapsibleSection
-                    title={`Edge bevel${isBatch ? " (all shapes in group)" : ""}`}
-                    active={display.bevelTop > 0 || display.bevelBottom > 0}
+                    title={`Edge shaping${isBatch ? " (all shapes in group)" : ""}`}
+                    active={display.bevelTop > 0 || display.bevelBottom > 0 || indentTop !== 0 || indentBottom !== 0}
                     onAdd={() =>
-                      applyToAll(targets.map((t) => t.id), (id) => {
+                      applyToAll(ids, (id) => {
                         setBevelTop(id, bevelDefault);
                         setBevelBottom(id, bevelDefault);
                       })
                     }
                     onRemove={() =>
-                      applyToAll(targets.map((t) => t.id), (id) => {
+                      applyToAll(ids, (id) => {
                         setBevelTop(id, 0);
                         setBevelBottom(id, 0);
-                      })
-                    }
-                  >
-                    <div className="field-row">
-                      <span className="field-label">Top ({unitLabel})</span>
-                      <input
-                        className="field-input"
-                        type="range"
-                        min={0}
-                        max={bevelMax}
-                        step={0.05}
-                        value={Math.min(bevelMax, display.bevelTop)}
-                        onPointerDown={() => {
-                          bevelTopGesture.current = beginGesture();
-                        }}
-                        onPointerUp={() => {
-                          if (bevelTopGesture.current) {
-                            endGesture(bevelTopGesture.current, true);
-                            bevelTopGesture.current = null;
-                          }
-                        }}
-                        onChange={(e) => targets.forEach((t) => setBevelTop(t.id, parseFloat(e.target.value)))}
-                        style={{ flex: "1 1 auto" }}
-                      />
-                      <NumberField
-                        value={display.bevelTop}
-                        min={0}
-                        step={0.05}
-                        unit={unit}
-                        style={{ flex: "0 0 60px" }}
-                        onChange={(v) => applyToAll(targets.map((t) => t.id), (id) => setBevelTop(id, v))}
-                      />
-                    </div>
-                    <div className="field-row">
-                      <span className="field-label">Bottom ({unitLabel})</span>
-                      <input
-                        className="field-input"
-                        type="range"
-                        min={0}
-                        max={bevelMax}
-                        step={0.05}
-                        value={Math.min(bevelMax, display.bevelBottom)}
-                        onPointerDown={() => {
-                          bevelBottomGesture.current = beginGesture();
-                        }}
-                        onPointerUp={() => {
-                          if (bevelBottomGesture.current) {
-                            endGesture(bevelBottomGesture.current, true);
-                            bevelBottomGesture.current = null;
-                          }
-                        }}
-                        onChange={(e) => targets.forEach((t) => setBevelBottom(t.id, parseFloat(e.target.value)))}
-                        style={{ flex: "1 1 auto" }}
-                      />
-                      <NumberField
-                        value={display.bevelBottom}
-                        min={0}
-                        step={0.05}
-                        unit={unit}
-                        style={{ flex: "0 0 60px" }}
-                        onChange={(v) => applyToAll(targets.map((t) => t.id), (id) => setBevelBottom(id, v))}
-                      />
-                    </div>
-                  </CollapsibleSection>
-                );
-              })()}
-
-              {(() => {
-                // A signed depth per face: positive presses the face's
-                // center inward (concave, like a thumb pressed into clay,
-                // or a spoon's bowl); negative pushes it outward instead
-                // (a convex bulge). Real geometry of this same shape — no
-                // second object, no cut, nothing excluded from the print.
-                const indentMax = Math.max(0.5, display.extrusionDepth / 2);
-                const indentDefault = Math.min(indentMax, indentMax * 0.6);
-                // Older saved shapes predate these fields entirely.
-                const indentTop = display.indentTop ?? 0;
-                const indentBottom = display.indentBottom ?? 0;
-                return (
-                  <CollapsibleSection
-                    title={`Indent${isBatch ? " (all shapes in group)" : ""}`}
-                    active={indentTop !== 0 || indentBottom !== 0}
-                    onAdd={() =>
-                      applyToAll(targets.map((t) => t.id), (id) => setIndentTop(id, indentDefault))
-                    }
-                    onRemove={() =>
-                      applyToAll(targets.map((t) => t.id), (id) => {
                         setIndentTop(id, 0);
                         setIndentBottom(id, 0);
                       })
                     }
                   >
                     <p className="hole-hint">
-                      Bows the whole top or bottom face into a smooth dent or bulge — positive presses it
-                      in, negative pushes it out. Different from Edge bevel, which only rounds the rim.
+                      Bevel rounds the rim; Indent instead bows the whole face into a smooth dent
+                      (positive) or bulge (negative), keeping the rim untouched. Each face — Top or
+                      Bottom — can only be one or the other at a time.
                     </p>
-                    <div className="field-row">
-                      <span className="field-label">Top ({unitLabel})</span>
-                      <input
-                        className="field-input"
-                        type="range"
-                        min={-indentMax}
-                        max={indentMax}
-                        step={0.05}
-                        value={Math.max(-indentMax, Math.min(indentMax, indentTop))}
-                        onPointerDown={() => {
-                          indentTopGesture.current = beginGesture();
-                        }}
-                        onPointerUp={() => {
-                          if (indentTopGesture.current) {
-                            endGesture(indentTopGesture.current, true);
-                            indentTopGesture.current = null;
-                          }
-                        }}
-                        onChange={(e) => targets.forEach((t) => setIndentTop(t.id, parseFloat(e.target.value)))}
-                        style={{ flex: "1 1 auto" }}
-                      />
-                      <NumberField
-                        value={indentTop}
-                        step={0.05}
-                        unit={unit}
-                        style={{ flex: "0 0 60px" }}
-                        onChange={(v) => applyToAll(targets.map((t) => t.id), (id) => setIndentTop(id, v))}
-                      />
-                    </div>
-                    <div className="field-row">
-                      <span className="field-label">Bottom ({unitLabel})</span>
-                      <input
-                        className="field-input"
-                        type="range"
-                        min={-indentMax}
-                        max={indentMax}
-                        step={0.05}
-                        value={Math.max(-indentMax, Math.min(indentMax, indentBottom))}
-                        onPointerDown={() => {
-                          indentBottomGesture.current = beginGesture();
-                        }}
-                        onPointerUp={() => {
-                          if (indentBottomGesture.current) {
-                            endGesture(indentBottomGesture.current, true);
-                            indentBottomGesture.current = null;
-                          }
-                        }}
-                        onChange={(e) => targets.forEach((t) => setIndentBottom(t.id, parseFloat(e.target.value)))}
-                        style={{ flex: "1 1 auto" }}
-                      />
-                      <NumberField
-                        value={indentBottom}
-                        step={0.05}
-                        unit={unit}
-                        style={{ flex: "0 0 60px" }}
-                        onChange={(v) => applyToAll(targets.map((t) => t.id), (id) => setIndentBottom(id, v))}
-                      />
-                    </div>
+                    <FaceRow
+                      label="Top"
+                      mode={topMode}
+                      bevelValue={display.bevelTop}
+                      indentValue={indentTop}
+                      setBevel={setBevelTop}
+                      setIndent={setIndentTop}
+                      bevelGestureRef={bevelTopGesture}
+                      indentGestureRef={indentTopGesture}
+                    />
+                    <FaceRow
+                      label="Bottom"
+                      mode={bottomMode}
+                      bevelValue={display.bevelBottom}
+                      indentValue={indentBottom}
+                      setBevel={setBevelBottom}
+                      setIndent={setIndentBottom}
+                      bevelGestureRef={bevelBottomGesture}
+                      indentGestureRef={indentBottomGesture}
+                    />
                   </CollapsibleSection>
                 );
               })()}
