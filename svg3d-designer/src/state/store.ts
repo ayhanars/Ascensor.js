@@ -267,6 +267,18 @@ interface SceneState {
    * punching through the top. No-op if the hole doesn't overlap a solid.
    */
   snapHoleToRecessedPocket: (id: string, floorThicknessMM: number) => void;
+  /**
+   * Given exactly two overlapping shapes, presses whichever currently sits
+   * higher down into the other as a smooth, rounded recess (a "dimple") —
+   * like pressing a stamp into clay, rather than punching a hole all the
+   * way through. Implemented by turning the higher shape into a hole (the
+   * same real 3D boolean-subtract machinery `isHole` already uses) sized
+   * and positioned so it only presses partway into the other shape's
+   * thickness, with its own bottom rounded off. No-op if the two don't
+   * overlap. Its roundedness stays adjustable afterward via the ordinary
+   * Bevel Bottom control, since that's exactly what this sets.
+   */
+  applyDimple: (ids: string[]) => void;
   setLayerZ: (id: string, z: number) => void;
   autoStackLayers: () => void;
   fixFloatingLayers: (ids: string[]) => void;
@@ -632,6 +644,74 @@ export const useSceneStore = create<SceneState>()(
         },
       };
     }),
+
+  applyDimple: (ids) => {
+    const state = get();
+    const unique = Array.from(new Set(ids)).filter((id) => state.layers[id]);
+    const layerA = unique.length === 2 ? state.layers[unique[0]] : undefined;
+    const layerB = unique.length === 2 ? state.layers[unique[1]] : undefined;
+    if (!layerA || !layerB || layerA.type !== "shape" || layerB.type !== "shape") {
+      showToast("Select exactly two shapes to create a dimple", { tone: "warning" });
+      return;
+    }
+    const [a, b] = unique;
+
+    const boundsA = getLayerWorldBounds(state.layers, a);
+    const boundsB = getLayerWorldBounds(state.layers, b);
+    if (!boundsA || !boundsB || !boundsOverlap(boundsA, boundsB)) {
+      showToast("Those two shapes don't overlap", { tone: "warning" });
+      return;
+    }
+
+    // Whichever of the two currently sits higher is the "stamp" being
+    // pressed down into the other — matches the physical intuition
+    // regardless of which one happened to be selected/clicked first.
+    const worldA = getWorldTransform(state.layers, a);
+    const worldB = getWorldTransform(state.layers, b);
+    const [stampId, baseId] = worldA.z >= worldB.z ? [a, b] : [b, a];
+    const stamp = state.layers[stampId] as ShapeLayer;
+    const base = state.layers[baseId] as ShapeLayer;
+    const baseWorld = getWorldTransform(state.layers, baseId);
+    const baseTopZ = baseWorld.z + base.extrusionDepth;
+
+    // Presses in a fraction of the base's own thickness, leaving the rest
+    // as solid floor underneath — never so deep it eats the whole thing,
+    // never shallower than a print can resolve.
+    const DEPTH_FRACTION = 0.4;
+    const MIN_DEPTH_MM = 0.2;
+    const OVERSHOOT_MM = 1;
+    const maxDepth = Math.max(0.05, base.extrusionDepth - 0.1);
+    const depth = Math.min(Math.max(MIN_DEPTH_MM, base.extrusionDepth * DEPTH_FRACTION), maxDepth);
+
+    // The stamp becomes a hole-like cutting tool (real 3D boolean subtract,
+    // same as `isHole`) — except sized to only reach `depth` into the base
+    // rather than punching all the way through, and with its own bottom
+    // rim rounded off (bevelBottom) so the cut it leaves behind is a
+    // smooth dish instead of a flat-bottomed, sharp-walled pocket. A small
+    // overshoot above the base's top surface guarantees a cleanly open
+    // mouth.
+    const parentWorldZ = stamp.parentId ? getWorldTransform(state.layers, stamp.parentId).z : 0;
+    const newWorldZ = baseTopZ - depth;
+
+    set((s) => {
+      const current = s.layers[stampId] as ShapeLayer | undefined;
+      if (!current) return {};
+      return {
+        layers: {
+          ...s.layers,
+          [stampId]: {
+            ...current,
+            isHole: true,
+            transform: { ...current.transform, z: Math.max(0, newWorldZ - parentWorldZ) },
+            extrusionDepth: depth + OVERSHOOT_MM,
+            bevelBottom: depth,
+            bevelTop: 0,
+          } as ShapeLayer,
+        },
+      };
+    });
+    showToast(`Pressed ${stamp.name} into ${base.name} as a dimple`);
+  },
 
   setLayerZ: (id, z) =>
     set((state) => {

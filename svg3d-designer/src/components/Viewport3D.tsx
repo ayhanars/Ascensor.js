@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { beginGesture, endGesture, useActivePlateRootIds, useSceneStore, type TrackedSceneSlice } from "../state/store";
 import type { ResolvedTheme } from "../state/theme";
 import { buildAssemblyGroup, computeVisibleBounds } from "../geometry/extrude";
-import { flattenForDisplay } from "../state/sceneUtils";
+import { flattenForDisplay, isEffectivelyLocked } from "../state/sceneUtils";
 
 /** Never participates in raycasting — used for the selection-decoration
  * handles/edges so they can't silently swallow a click meant for whatever
@@ -27,6 +27,17 @@ function isEditableTarget(el: EventTarget | null): boolean {
   if (el.isContentEditable) return true;
   return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT";
 }
+
+/** Whether Space is currently held to pan (see CameraRig's key listener,
+ * which is the sole writer). Read by Assembly's onPointerDown so that
+ * holding Space and dragging on top of an object pans the camera instead
+ * of moving the object — without this, a click starting on any mesh
+ * always fell through to Assembly's own drag-to-move handler, which
+ * disables OrbitControls outright for the gesture, no matter what mouse-
+ * button mode Space had just switched it into. Module-scoped rather than
+ * React state since it only needs to be read at the instant a drag starts,
+ * not reacted to. */
+let spacePanHeld = false;
 
 function CameraRig({ resetSignal }: { resetSignal: number }) {
   const { camera, gl } = useThree();
@@ -66,10 +77,12 @@ function CameraRig({ resetSignal }: { resetSignal: number }) {
     function onKeyDown(e: KeyboardEvent) {
       if (e.code !== "Space" || e.repeat || isEditableTarget(e.target)) return;
       e.preventDefault();
+      spacePanHeld = true;
       setPanMode(true);
     }
     function onKeyUp(e: KeyboardEvent) {
       if (e.code !== "Space") return;
+      spacePanHeld = false;
       setPanMode(false);
     }
 
@@ -297,6 +310,11 @@ function Assembly() {
       object={group}
       rotation={DISPLAY_ROTATION}
       onPointerDown={(e: ThreeEvent<PointerEvent>) => {
+        // Space+drag pans, exactly like the 2D canvas — let OrbitControls
+        // (already switched to pan mode by CameraRig's key listener) handle
+        // it instead of starting an object drag, even though the pointer
+        // came down right on top of a mesh.
+        if (spacePanHeld) return;
         // Resolve the *intended* target ourselves rather than trusting R3F's
         // default nearest-hit: among every mesh hit at this pointer position
         // within DEPTH_TIE_EPSILON of the closest one, prefer the one
@@ -322,6 +340,9 @@ function Assembly() {
           }
         }
         if (!layerId) return;
+        // Locked directly, or inherited from a locked ancestor group —
+        // entirely inert to a click here, matching the 2D canvas.
+        if (isEffectivelyLocked(layers, layerId)) return;
 
         const additive = e.nativeEvent.shiftKey || e.nativeEvent.metaKey || e.nativeEvent.ctrlKey;
         let dragIds: string[];
@@ -347,7 +368,7 @@ function Assembly() {
         const originals: Record<string, { x: number; y: number }> = {};
         for (const id of dragIds) {
           const layer = layers[id];
-          if (layer) originals[id] = { x: layer.transform.x, y: layer.transform.y };
+          if (layer && !isEffectivelyLocked(layers, id)) originals[id] = { x: layer.transform.x, y: layer.transform.y };
         }
         dragRef.current = {
           ids: dragIds,
