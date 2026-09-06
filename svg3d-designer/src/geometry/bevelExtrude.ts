@@ -256,17 +256,7 @@ export function buildBeveledExtrudeGeometry(
 
   const positions: number[] = [];
   const uvs: number[] = [];
-
-  function pushVertex(p: THREE.Vector2, z: number) {
-    positions.push(p.x, p.y, z);
-    uvs.push(p.x, p.y);
-  }
-
-  function pushTri(a: THREE.Vector2, az: number, b: THREE.Vector2, bz: number, c: THREE.Vector2, cz: number) {
-    pushVertex(a, az);
-    pushVertex(b, bz);
-    pushVertex(c, cz);
-  }
+  const indices: number[] = [];
 
   const rings: Ring[] = [];
   function pushRing(z: number, offset: number) {
@@ -294,22 +284,30 @@ export function buildBeveledExtrudeGeometry(
   // center - amount| < 1e-6 across the sweep.
   if (bottomIsIndent) {
     // Indent, unlike a bevel, keeps the *rim* exactly where an untouched
-    // face would be (offset=0, z=0) — matching the plain wall it continues
-    // from with no discontinuity — and moves the *center* instead, sweeping
-    // the same quarter-circle arc as the bevel curves above, just paired
-    // with z the other way round. Positive indentBottom presses the center
-    // up into the material (concave, so z rises as the ring insets);
-    // negative pushes it down and out instead (a convex bulge, z falls).
-    // Always pushed rim-first: buildWalls handles a wall segment whose z
-    // falls just as correctly as one whose z rises (see its own comment),
-    // so there's no need to reorder the sweep to force ascending z the way
-    // an earlier, wrong version of this did — that "fix" itself broke the
-    // shape, by making the wall taper in and back out around a phantom
-    // extra ring instead of staying straight up to the real rim.
+    // face would be (offset=0, z=0) — matching the plain wall above it
+    // with no discontinuity — and moves the *center* instead, sweeping the
+    // same quarter-circle arc as the bevel curves above, just paired with
+    // z the other way round. Positive indentBottom presses the center up
+    // into the material (concave, so z rises as the ring insets); negative
+    // pushes it down and out instead (a convex bulge, z falls).
+    //
+    // Pushed CENTER-first here (i=0 is the center, i=curveSegments is the
+    // rim) — the mirror image of the sweep direction below, and for a real
+    // reason, not just symmetry: whatever ring comes right after this
+    // block (the plain wall, or the start of a top treatment) always sits
+    // at the untouched offset=0 radius, so this block's *last* ring needs
+    // to be the one that already matches that — the rim — for buildWalls'
+    // one linear ring chain to connect them with an actual wall instead of
+    // a stray cone. bevelBottom's own block below already satisfies this
+    // (it ends at the rim too); a rim-first sweep here would instead end
+    // at the inset center, leaving the very next ring — full radius — to
+    // wall directly onto that tiny center circle. Top's Indent block does
+    // NOT need this: its cap already falls on the chain's other, genuinely
+    // final ring, so rim-first there is already correct (see its comment).
     const sign = Math.sign(indentBottom);
     for (let i = 0; i <= curveSegments; i++) {
       const t = i / curveSegments;
-      const angle = (t * Math.PI) / 2;
+      const angle = (Math.PI / 2) * (1 - t);
       pushRing(sign * bottom * Math.sin(angle), -bottom * (1 - Math.cos(angle)));
     }
   } else if (bottom > 0) {
@@ -370,56 +368,100 @@ export function buildBeveledExtrudeGeometry(
     const contourRings = rings.map((r) => offsetRing(contour, contourMovements, r.offset));
     const holeRings = holes.map((h, hi) => rings.map((r) => offsetRing(h, holesMovements[hi], r.offset)));
 
+    // Every (outline point, ring) pair gets exactly ONE vertex, shared by
+    // whatever triangles touch it — the wall quad above it, the wall quad
+    // below it, and (at the bottom/top ring only) the cap. Sharing a vertex
+    // is what lets computeVertexNormals() below actually average normals
+    // across it instead of leaving every triangle with its own flat facet
+    // normal, which is what made a bevel/indent curve look faceted no
+    // matter how many segments approximated it. This only shares vertices
+    // going UP the curve (same outline point, increasing ring) and into
+    // its cap — never sideways between two different outline points — so a
+    // real sharp corner in the shape's own 2D outline (a rectangle's
+    // corners, say) still gets its own separate vertices there and stays a
+    // crisp edge instead of being smoothed away.
+    function buildIndexedColumns(ringsXY: THREE.Vector2[][]): number[][] {
+      const columns: number[][] = [];
+      for (let r = 0; r < ringsXY.length; r++) {
+        const row: number[] = [];
+        for (const p of ringsXY[r]) {
+          row.push(positions.length / 3);
+          positions.push(p.x, p.y, rings[r].z);
+          uvs.push(p.x, p.y);
+        }
+        columns.push(row);
+      }
+      return columns;
+    }
+
+    const contourIdx = buildIndexedColumns(contourRings);
+    const holeIdx = holeRings.map(buildIndexedColumns);
+
     // ---- Side walls: ruled quads between every pair of consecutive rings ----
-    function buildWalls(ringsXY: THREE.Vector2[][]) {
-      const n = ringsXY[0].length;
+    function buildWalls(idxRings: number[][]) {
+      const n = idxRings[0].length;
       let i = n;
       while (--i >= 0) {
         const j = i;
         let k = i - 1;
         if (k < 0) k = n - 1;
         for (let r = 0; r < rings.length - 1; r++) {
-          const a = ringsXY[r][j];
-          const b = ringsXY[r][k];
-          const c = ringsXY[r + 1][k];
-          const d = ringsXY[r + 1][j];
-          const az = rings[r].z;
-          const bz = rings[r].z;
-          const cz = rings[r + 1].z;
-          const dz = rings[r + 1].z;
-          pushTri(a, az, b, bz, d, dz);
-          pushTri(b, bz, c, cz, d, dz);
+          const a = idxRings[r][j];
+          const b = idxRings[r][k];
+          const c = idxRings[r + 1][k];
+          const d = idxRings[r + 1][j];
+          // This formula's winding is only correct for a ring pair whose Z
+          // ascends from r to r+1 (a plain wall, and both bevel curves,
+          // always do). Indent's rim-first sweep needs the opposite: the
+          // *concave* case on top and the *convex* case on bottom both
+          // have Z descend instead (the curve runs from the rim at full
+          // height down toward the pressed-in or bulged-out center), which
+          // silently mirrors every triangle here into facing inward
+          // instead of outward. Only the direction differs — the ring
+          // order itself (rim-first) stays right for both, per the note
+          // on the Indent blocks below — so swap two vertices in each
+          // triangle for a descending pair to flip its normal back
+          // outward, rather than reordering the rings themselves.
+          if (rings[r + 1].z >= rings[r].z) {
+            indices.push(a, b, d);
+            indices.push(b, c, d);
+          } else {
+            indices.push(a, d, b);
+            indices.push(b, d, c);
+          }
         }
       }
     }
 
-    buildWalls(contourRings);
-    holeRings.forEach(buildWalls);
+    buildWalls(contourIdx);
+    holeIdx.forEach(buildWalls);
 
-    // ---- Caps: ear-clip triangulate the bottom-most and top-most rings ----
+    // ---- Caps: ear-clip triangulate the bottom-most and top-most rings,
+    // reusing the SAME vertex indices those rings' walls already created
+    // (rather than pushing fresh ones) so the cap is properly stitched
+    // into the same smoothing group as the curve it caps off. ----
     const bottomRingXY = contourRings[0];
     const bottomHolesXY = holeRings.map((hr) => hr[0]);
     const bottomFaces = THREE.ShapeUtils.triangulateShape(bottomRingXY, bottomHolesXY);
-    const bottomFlat = [bottomRingXY, ...bottomHolesXY].flat();
-    const bottomZ = rings[0].z;
+    const bottomFlatIdx = [contourIdx[0], ...holeIdx.map((hi) => hi[0])].flat();
     for (const face of bottomFaces) {
-      pushTri(bottomFlat[face[2]], bottomZ, bottomFlat[face[1]], bottomZ, bottomFlat[face[0]], bottomZ);
+      indices.push(bottomFlatIdx[face[2]], bottomFlatIdx[face[1]], bottomFlatIdx[face[0]]);
     }
 
     const topIdx = rings.length - 1;
     const topRingXY = contourRings[topIdx];
     const topHolesXY = holeRings.map((hr) => hr[topIdx]);
     const topFaces = THREE.ShapeUtils.triangulateShape(topRingXY, topHolesXY);
-    const topFlat = [topRingXY, ...topHolesXY].flat();
-    const topZ = rings[topIdx].z;
+    const topFlatIdx = [contourIdx[topIdx], ...holeIdx.map((hi) => hi[topIdx])].flat();
     for (const face of topFaces) {
-      pushTri(topFlat[face[0]], topZ, topFlat[face[1]], topZ, topFlat[face[2]], topZ);
+      indices.push(topFlatIdx[face[0]], topFlatIdx[face[1]], topFlatIdx[face[2]]);
     }
   }
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
   geometry.computeVertexNormals();
   return geometry;
 }

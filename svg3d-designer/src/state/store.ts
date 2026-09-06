@@ -23,7 +23,9 @@ import {
   boundsOverlap,
   type Bounds,
   getLayerWorldBounds,
+  getLocalShapeZRange,
   getMultiLayerWorldBounds,
+  getShapeWorldZRange,
   getTopLevelId,
   getWorldRegions,
   getWorldTransform,
@@ -66,6 +68,10 @@ function rebaseWorldToParent(world: Transform2D, newParentWorld: Transform2D): T
     y: (-dx * sin + dy * cos) / newParentWorld.scaleY,
     z: world.z - newParentWorld.z,
     rotation: world.rotation - newParentWorld.rotation,
+    // Best-effort carry-through, mirroring getWorldTransform's own additive
+    // approximation for these two 3D-only tilt axes — see its comment.
+    rotationX: world.rotationX - newParentWorld.rotationX,
+    rotationY: world.rotationY - newParentWorld.rotationY,
     scaleX: world.scaleX / newParentWorld.scaleX,
     scaleY: world.scaleY / newParentWorld.scaleY,
   };
@@ -224,6 +230,11 @@ interface SceneState {
   viewMode: ViewMode2D3D;
   showGrid: boolean;
   wireframe: boolean;
+  /** Whether dragging a shape into another pushes the other one out of the
+   * way (based on their real overlapping geometry, not just bounding
+   * boxes) instead of letting them overlap freely. On by default; a view
+   * preference like showGrid/wireframe, not undo-tracked document content. */
+  pushOnDrag: boolean;
 
   addPlate: () => void;
   renamePlate: (id: string, name: string) => void;
@@ -296,6 +307,7 @@ interface SceneState {
   setViewMode: (mode: ViewMode2D3D) => void;
   toggleGrid: () => void;
   toggleWireframe: () => void;
+  togglePushOnDrag: () => void;
   setBed: (bed: Partial<PrintBed>) => void;
   setDocumentName: (name: string) => void;
   setUnits: (units: Units) => void;
@@ -348,6 +360,7 @@ export const useSceneStore = create<SceneState>()(
   viewMode: "2d",
   showGrid: true,
   wireframe: false,
+  pushOnDrag: true,
 
   addPlate: () =>
     set((state) => {
@@ -710,6 +723,7 @@ export const useSceneStore = create<SceneState>()(
 
       for (const { id, regions } of withRegions) {
         const layer = layers[id] as ShapeLayer;
+        const localZRange = getLocalShapeZRange(layer);
 
         // baseZ is the tallest already-placed shape this one's real
         // outline genuinely overlaps — not merely bbox-adjacent to. A
@@ -723,12 +737,14 @@ export const useSceneStore = create<SceneState>()(
         }
 
         // baseZ is a world-space height; convert it back to this layer's
-        // own local Z, relative to whatever group it's nested in.
+        // own local Z, relative to whatever group it's nested in — and
+        // relative to its own real geometric bottom (localZRange.min),
+        // which is below local z=0 for a shape with a convex Indent bulge.
         const parentWorldZ = layer.parentId ? getWorldTransform(layers, layer.parentId).z : 0;
-        const localZ = Math.max(0, baseZ - parentWorldZ);
+        const localZ = Math.max(0, baseZ - parentWorldZ - localZRange.min);
         layers[id] = { ...layer, transform: { ...layer.transform, z: localZ } };
 
-        placed.push({ regions, topZ: baseZ + layer.extrusionDepth });
+        placed.push({ regions, topZ: localZ + parentWorldZ + localZRange.max });
       }
       return { layers };
     });
@@ -749,13 +765,11 @@ export const useSceneStore = create<SceneState>()(
       const info = allIds.map((id) => {
         const layer = state.layers[id] as ShapeLayer;
         const regions = getWorldRegions(state.layers, id);
-        return {
-          id,
-          layer,
-          regions,
-          area: regionsArea(regions),
-          z: getWorldTransform(state.layers, id).z,
-        };
+        // The shape's REAL world Z extent, not its nominal transform.z /
+        // transform.z+extrusionDepth — a bevel/indent can make either end
+        // depart from that naive box (see getShapeWorldZRange).
+        const zRange = getShapeWorldZRange(state.layers, id) ?? { min: 0, max: layer.extrusionDepth };
+        return { id, layer, regions, area: regionsArea(regions), zRange };
       });
       for (const id of ids) {
         const item = info.find((i) => i.id === id);
@@ -778,12 +792,20 @@ export const useSceneStore = create<SceneState>()(
         const others = info.filter((o) => o.id !== id && o.area >= item.area - AREA_SLACK);
         let baseZ = 0;
         for (const o of others) {
-          const topZ = o.z + o.layer.extrusionDepth;
+          const topZ = o.zRange.max;
           if (topZ <= baseZ) continue;
           if (regionsIntersectionArea(item.regions, o.regions) > 1e-6) baseZ = topZ;
         }
+        // Land the shape's ACTUAL geometry — not its transform origin or
+        // its selection-outline bounding box, which is only a visual
+        // decoration — exactly on baseZ. For a plain shape (local Z range
+        // starting at 0) this is the same as before; for one with a convex
+        // (bulging) Indent, whose true low point sits below its own local
+        // origin, the origin now lands *above* baseZ by exactly that much
+        // so the bulge itself is what touches down.
+        const localZRange = getLocalShapeZRange(item.layer);
         const parentWorldZ = item.layer.parentId ? getWorldTransform(layers, item.layer.parentId).z : 0;
-        const localZ = Math.max(0, baseZ - parentWorldZ);
+        const localZ = Math.max(0, baseZ - parentWorldZ - localZRange.min);
         layers[id] = { ...layers[id], transform: { ...layers[id].transform, z: localZ } } as ShapeLayer;
         fixedCount++;
       }
@@ -1664,6 +1686,7 @@ export const useSceneStore = create<SceneState>()(
   setViewMode: (mode) => set({ viewMode: mode }),
   toggleGrid: () => set((state) => ({ showGrid: !state.showGrid })),
   toggleWireframe: () => set((state) => ({ wireframe: !state.wireframe })),
+  togglePushOnDrag: () => set((state) => ({ pushOnDrag: !state.pushOnDrag })),
   setBed: (bed) =>
     set((state) => ({ document: { ...state.document, bed: { ...state.document.bed, ...bed } } })),
   setDocumentName: (name) =>

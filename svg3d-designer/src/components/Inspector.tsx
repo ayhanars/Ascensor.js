@@ -185,6 +185,7 @@ function NumberField({
   min,
   style,
   unit,
+  title,
 }: {
   label?: string;
   /** Always mm when `unit` is set — the field itself does the mm <-> display
@@ -197,13 +198,14 @@ function NumberField({
   /** When set, `value`/`onChange` are treated as mm and shown/typed in this
    * unit instead — for physical lengths only, never Scale or Rotation. */
   unit?: Units;
+  title?: string;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const displayValue = unit ? mmToDisplay(value, unit) : value;
   const displayMin = unit && min !== undefined ? mmToDisplay(min, unit) : min;
 
   return (
-    <div className="field-grid-item" style={style}>
+    <div className="field-grid-item" style={style} title={title}>
       {label && <span className="field-caption">{label}</span>}
       <input
         className="field-input"
@@ -559,24 +561,41 @@ export function Inspector() {
               onChange={(v) => setLayerTransform(layer.id, { scaleY: v })}
             />
           </div>
-          <NumberField
-            label="Rotation (deg)"
-            value={layer.transform.rotation}
-            step={1}
-            onChange={(v) => setLayerTransform(layer.id, { rotation: v })}
-          />
+          <div className="field-grid-3">
+            <NumberField
+              label="Roll (Z°)"
+              value={layer.transform.rotation}
+              step={1}
+              onChange={(v) => setLayerTransform(layer.id, { rotation: v })}
+              title="Spin around Z — the print bed's own 'flat' rotation axis"
+            />
+            <NumberField
+              label="Pitch (X°)"
+              value={layer.transform.rotationX}
+              step={1}
+              onChange={(v) => setLayerTransform(layer.id, { rotationX: v })}
+              title="Tilt forward/back around X — 3D preview/export only"
+            />
+            <NumberField
+              label="Yaw (Y°)"
+              value={layer.transform.rotationY}
+              step={1}
+              onChange={(v) => setLayerTransform(layer.id, { rotationY: v })}
+              title="Tilt left/right around Y — 3D preview/export only"
+            />
+          </div>
           <div className="field-grid-2" style={{ marginTop: 6 }}>
             <button
               className="btn"
               onClick={() => setLayerTransform(layer.id, { rotation: layer.transform.rotation - 45 })}
-              title="Rotate 45° counterclockwise"
+              title="Rotate 45° counterclockwise (Z/roll)"
             >
               ⟲ 45°
             </button>
             <button
               className="btn"
               onClick={() => setLayerTransform(layer.id, { rotation: layer.transform.rotation + 45 })}
-              title="Rotate 45° clockwise"
+              title="Rotate 45° clockwise (Z/roll)"
             >
               ⟳ 45°
             </button>

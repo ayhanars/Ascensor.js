@@ -38,6 +38,8 @@ export function TopToolbar({
   const toggleWireframe = useSceneStore((s) => s.toggleWireframe);
   const newProject = useSceneStore((s) => s.newProject);
   const autoStackLayers = useSceneStore((s) => s.autoStackLayers);
+  const pushOnDrag = useSceneStore((s) => s.pushOnDrag);
+  const togglePushOnDrag = useSceneStore((s) => s.togglePushOnDrag);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canUndo = useStore(useSceneStore.temporal, (s) => s.pastStates.length > 0);
   const canRedo = useStore(useSceneStore.temporal, (s) => s.futureStates.length > 0);
@@ -186,6 +188,13 @@ export function TopToolbar({
       >
         Auto-Stack
       </button>
+
+      <ToggleSwitch
+        label="Push"
+        checked={pushOnDrag}
+        onChange={togglePushOnDrag}
+        title="When dragging a shape into another, push the other one out of the way based on their real overlapping geometry — turn off to let them overlap freely"
+      />
 
       <ToggleSwitch label="Grid" checked={showGrid} onChange={toggleGrid} />
 

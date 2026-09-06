@@ -1,11 +1,14 @@
 import type { Layer, Point2, ShapeLayer, ShapeRegion, Transform2D } from "../types";
 import { regionsArea, regionsIntersectionArea, unionRegions } from "../geometry/booleanOps";
+import { buildExtrudeGeometry } from "../geometry/extrude";
 
 export const IDENTITY_TRANSFORM: Transform2D = {
   x: 0,
   y: 0,
   z: 0,
   rotation: 0,
+  rotationX: 0,
+  rotationY: 0,
   scaleX: 1,
   scaleY: 1,
 };
@@ -85,6 +88,8 @@ export function getWorldTransform(
   let y = 0;
   let z = 0;
   let rotation = 0;
+  let rotationX = 0;
+  let rotationY = 0;
   let scaleX = 1;
   let scaleY = 1;
 
@@ -104,11 +109,20 @@ export function getWorldTransform(
     // that only ever happens around/within the print bed's XY plane.
     z += t.z;
     rotation += t.rotation;
+    // The 3D-only tilt axes (see Transform2D) aren't meaningful composed
+    // into a single flattened world value the way x/y/z/rotation are —
+    // every caller of getWorldTransform is a 2D-canvas/alignment/drag
+    // concern that only ever reasons about the print bed's XY plane and
+    // the Z-axis "spin" — so this is a best-effort additive carry-through
+    // (matching how rotation itself accumulates), not a true composed
+    // orientation; nothing here currently reads it.
+    rotationX += t.rotationX;
+    rotationY += t.rotationY;
     scaleX *= t.scaleX;
     scaleY *= t.scaleY;
   }
 
-  return { x, y, z, rotation, scaleX, scaleY };
+  return { x, y, z, rotation, rotationX, rotationY, scaleX, scaleY };
 }
 
 export function isEffectivelyVisible(
@@ -292,6 +306,42 @@ export function getLocalShapeBounds(shape: ShapeLayer): Bounds | null {
   return bounds;
 }
 
+/**
+ * A shape's real LOCAL Z extent — [0, extrusionDepth] for a plain box, but
+ * not always: Edge bevel only ever rounds the rim (its curve is clamped to
+ * stay within [0, extrusionDepth], never past it), while Indent's *convex*
+ * case (a negative indentBottom/indentTop) genuinely bulges past that
+ * range — a convex bottom bulge dips below local z=0, a convex top bulge
+ * rises above local z=extrusionDepth. Reuses the real extrude geometry
+ * (rather than re-deriving the ring math and its own width/depth safety
+ * clamps here) so this can never drift out of sync with what actually gets
+ * built and printed.
+ */
+export function getLocalShapeZRange(shape: ShapeLayer): { min: number; max: number } {
+  const geometry = buildExtrudeGeometry(shape);
+  geometry.computeBoundingBox();
+  const box = geometry.boundingBox;
+  return box ? { min: box.min.z, max: box.max.z } : { min: 0, max: shape.extrusionDepth };
+}
+
+/**
+ * A shape's real WORLD-space Z extent — where its actual geometry (not its
+ * nominal transform.z / extrusionDepth) truly begins and ends once dressed
+ * up with bevel/indent. `transform.rotation` is always around Z alone (see
+ * Transform2D), so it never tilts a shape's Z bounds — only the shape's own
+ * local vertical shaping and its world Z translation matter here.
+ */
+export function getShapeWorldZRange(
+  layers: Record<string, Layer>,
+  id: string,
+): { min: number; max: number } | null {
+  const layer = layers[id];
+  if (!isShapeLayer(layer)) return null;
+  const worldZ = getWorldTransform(layers, id).z;
+  const local = getLocalShapeZRange(layer);
+  return { min: worldZ + local.min, max: worldZ + local.max };
+}
+
 /** A shape's own regions (including its holes), with the layer's full
  * world transform baked into every point — its real printed footprint in
  * document space, not just its bounding box. Used wherever an actual
@@ -352,8 +402,12 @@ export function computeFloatingLayerSeverities(
     .map((id) => {
       const layer = layers[id] as ShapeLayer;
       const regions = getWorldRegions(layers, id);
-      const z = getWorldTransform(layers, id).z;
-      return { id, layer, regions, area: regionsArea(regions), z, topZ: z + layer.extrusionDepth };
+      // The real geometric bottom/top, not the nominal transform.z /
+      // transform.z+extrusionDepth — a shape with a convex (bulging)
+      // Indent can genuinely touch, or clear, a surface at a Z the naive
+      // box-based math would miss entirely.
+      const zRange = getShapeWorldZRange(layers, id) ?? { min: 0, max: layer.extrusionDepth };
+      return { id, layer, regions, area: regionsArea(regions), z: zRange.min, topZ: zRange.max };
     })
     .filter((item) => !item.layer.isHole && item.area > 1e-6);
 
