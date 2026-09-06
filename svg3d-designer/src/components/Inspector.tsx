@@ -279,6 +279,8 @@ export function Inspector() {
   const setCornerRadius = useSceneStore((s) => s.setCornerRadius);
   const setBevelBottom = useSceneStore((s) => s.setBevelBottom);
   const setBevelTop = useSceneStore((s) => s.setBevelTop);
+  const setIndentBottom = useSceneStore((s) => s.setIndentBottom);
+  const setIndentTop = useSceneStore((s) => s.setIndentTop);
   const setIsHole = useSceneStore((s) => s.setIsHole);
   const setLayerZ = useSceneStore((s) => s.setLayerZ);
   const snapHoleToRecessedPocket = useSceneStore((s) => s.snapHoleToRecessedPocket);
@@ -289,11 +291,12 @@ export function Inspector() {
   const radiusGesture = useRef<TrackedSceneSlice | null>(null);
   const bevelBottomGesture = useRef<TrackedSceneSlice | null>(null);
   const bevelTopGesture = useRef<TrackedSceneSlice | null>(null);
+  const indentBottomGesture = useRef<TrackedSceneSlice | null>(null);
+  const indentTopGesture = useRef<TrackedSceneSlice | null>(null);
   const matchDocumentToBed = useSceneStore((s) => s.matchDocumentToBed);
   const mergeLayers = useSceneStore((s) => s.mergeLayers);
   const groupSelection = useSceneStore((s) => s.groupSelection);
   const ungroupSelection = useSceneStore((s) => s.ungroupSelection);
-  const applyDimple = useSceneStore((s) => s.applyDimple);
 
   if (selection.length === 0) {
     // Several Bambu beds share identical dimensions (X1 Carbon/X1/X1E/P1S/
@@ -460,17 +463,6 @@ export function Inspector() {
             <div className="inspector-section-title">Boolean</div>
             <BooleanOpsRow selection={selection} />
           </div>
-
-          {allShapes && selection.length === 2 && (
-            <button
-              className="btn"
-              style={{ width: "100%", marginTop: 4 }}
-              onClick={() => applyDimple(selection)}
-              title="Presses whichever of these two overlapping shapes sits higher down into the other as a smooth, rounded recess — like pressing a stamp into clay. Adjust Bevel Bottom on the result afterward to change how rounded it is."
-            >
-              Create dimple
-            </button>
-          )}
         </div>
       </div>
     );
@@ -761,6 +753,97 @@ export function Inspector() {
                         unit={unit}
                         style={{ flex: "0 0 60px" }}
                         onChange={(v) => applyToAll(targets.map((t) => t.id), (id) => setBevelBottom(id, v))}
+                      />
+                    </div>
+                  </CollapsibleSection>
+                );
+              })()}
+
+              {(() => {
+                // A signed depth per face: positive presses the face's
+                // center inward (concave, like a thumb pressed into clay,
+                // or a spoon's bowl); negative pushes it outward instead
+                // (a convex bulge). Real geometry of this same shape — no
+                // second object, no cut, nothing excluded from the print.
+                const indentMax = Math.max(0.5, display.extrusionDepth / 2);
+                const indentDefault = Math.min(indentMax, indentMax * 0.6);
+                // Older saved shapes predate these fields entirely.
+                const indentTop = display.indentTop ?? 0;
+                const indentBottom = display.indentBottom ?? 0;
+                return (
+                  <CollapsibleSection
+                    title={`Indent${isBatch ? " (all shapes in group)" : ""}`}
+                    active={indentTop !== 0 || indentBottom !== 0}
+                    onAdd={() =>
+                      applyToAll(targets.map((t) => t.id), (id) => setIndentTop(id, indentDefault))
+                    }
+                    onRemove={() =>
+                      applyToAll(targets.map((t) => t.id), (id) => {
+                        setIndentTop(id, 0);
+                        setIndentBottom(id, 0);
+                      })
+                    }
+                  >
+                    <p className="hole-hint">
+                      Bows the whole top or bottom face into a smooth dent or bulge — positive presses it
+                      in, negative pushes it out. Different from Edge bevel, which only rounds the rim.
+                    </p>
+                    <div className="field-row">
+                      <span className="field-label">Top ({unitLabel})</span>
+                      <input
+                        className="field-input"
+                        type="range"
+                        min={-indentMax}
+                        max={indentMax}
+                        step={0.05}
+                        value={Math.max(-indentMax, Math.min(indentMax, indentTop))}
+                        onPointerDown={() => {
+                          indentTopGesture.current = beginGesture();
+                        }}
+                        onPointerUp={() => {
+                          if (indentTopGesture.current) {
+                            endGesture(indentTopGesture.current, true);
+                            indentTopGesture.current = null;
+                          }
+                        }}
+                        onChange={(e) => targets.forEach((t) => setIndentTop(t.id, parseFloat(e.target.value)))}
+                        style={{ flex: "1 1 auto" }}
+                      />
+                      <NumberField
+                        value={indentTop}
+                        step={0.05}
+                        unit={unit}
+                        style={{ flex: "0 0 60px" }}
+                        onChange={(v) => applyToAll(targets.map((t) => t.id), (id) => setIndentTop(id, v))}
+                      />
+                    </div>
+                    <div className="field-row">
+                      <span className="field-label">Bottom ({unitLabel})</span>
+                      <input
+                        className="field-input"
+                        type="range"
+                        min={-indentMax}
+                        max={indentMax}
+                        step={0.05}
+                        value={Math.max(-indentMax, Math.min(indentMax, indentBottom))}
+                        onPointerDown={() => {
+                          indentBottomGesture.current = beginGesture();
+                        }}
+                        onPointerUp={() => {
+                          if (indentBottomGesture.current) {
+                            endGesture(indentBottomGesture.current, true);
+                            indentBottomGesture.current = null;
+                          }
+                        }}
+                        onChange={(e) => targets.forEach((t) => setIndentBottom(t.id, parseFloat(e.target.value)))}
+                        style={{ flex: "1 1 auto" }}
+                      />
+                      <NumberField
+                        value={indentBottom}
+                        step={0.05}
+                        unit={unit}
+                        style={{ flex: "0 0 60px" }}
+                        onChange={(v) => applyToAll(targets.map((t) => t.id), (id) => setIndentBottom(id, v))}
                       />
                     </div>
                   </CollapsibleSection>

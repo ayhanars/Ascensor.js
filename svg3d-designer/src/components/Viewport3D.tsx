@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { beginGesture, endGesture, useActivePlateRootIds, useSceneStore, type TrackedSceneSlice } from "../state/store";
 import type { ResolvedTheme } from "../state/theme";
 import { buildAssemblyGroup, computeVisibleBounds } from "../geometry/extrude";
-import { flattenForDisplay, isEffectivelyLocked } from "../state/sceneUtils";
+import { flattenForDisplay, getLayerWorldBounds, isEffectivelyLocked } from "../state/sceneUtils";
 
 /** Never participates in raycasting — used for the selection-decoration
  * handles/edges so they can't silently swallow a click meant for whatever
@@ -121,6 +121,23 @@ function PrintBed() {
 const SELECTION_LINE_MATERIAL = new THREE.LineBasicMaterial({ color: 0x4f46e5, toneMapped: false });
 const SELECTION_HANDLE_MATERIAL = new THREE.MeshBasicMaterial({ color: 0x4f46e5, toneMapped: false });
 
+/** A simple free-spin handle: a flat ring floating just above whatever's
+ * selected, draggable all the way around to set its rotation continuously
+ * rather than typing a number or clicking fixed steps. Kept to the same
+ * single Z/"up" axis the rest of the app already rotates around (how the
+ * object sits on the bed) rather than a full 3-axis gizmo — this app's
+ * whole data model is a flat 2D outline extruded upward, so there's no
+ * "tilt" for an arbitrary-axis rotation to mean in the first place. */
+const ROTATE_RING_MATERIAL = new THREE.MeshBasicMaterial({
+  color: 0xf59e0b,
+  toneMapped: false,
+  side: THREE.DoubleSide,
+  transparent: true,
+  opacity: 0.85,
+});
+const ROTATE_RING_MARGIN_MM = 6;
+const ROTATE_RING_THICKNESS_MM = 2.5;
+
 // Two mesh surfaces this close together (in mm along the ray) count as a
 // depth tie rather than "genuinely closer" — big enough to absorb float
 // error on exactly-coplanar geometry, small enough to never mask a real,
@@ -150,6 +167,23 @@ function Assembly() {
     () => buildAssemblyGroup(layers, rootIds, { respectVisibility: true, showHoleOverlays: true }),
     [layers, rootIds],
   );
+
+  // The rotate ring only makes sense for a single selected layer (shape or
+  // group) — its rotation is one number on that one layer, same as the
+  // Inspector's own Rotation field.
+  const rotateHandle = useMemo(() => {
+    if (selection.length !== 1) return null;
+    const id = selection[0];
+    const layer = layers[id];
+    if (!layer || isEffectivelyLocked(layers, id)) return null;
+    const bounds = getLayerWorldBounds(layers, id);
+    if (!bounds) return null;
+    const centerX = (bounds.minX + bounds.maxX) / 2;
+    const centerY = (bounds.minY + bounds.maxY) / 2;
+    const halfDiagonal = Math.hypot(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY) / 2;
+    const outerRadius = Math.max(6, halfDiagonal + ROTATE_RING_MARGIN_MM);
+    return { id, centerX, centerY, outerRadius };
+  }, [layers, selection]);
 
   // Paint order — later index = added/painted later = "in front" for two
   // otherwise-tied (coplanar, unstacked) shapes, matching how the 2D canvas
@@ -305,7 +339,54 @@ function Assembly() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const rotateDragRef = useRef<{
+    id: string;
+    centerX: number;
+    centerY: number;
+    startAngle: number;
+    startRotation: number;
+    moved: boolean;
+    snapshot: TrackedSceneSlice;
+  } | null>(null);
+
+  useEffect(() => {
+    function angleAt(clientX: number, clientY: number, centerX: number, centerY: number): number | null {
+      const point = raycastToPlane(clientX, clientY);
+      if (!point) return null;
+      // Same world-axis -> data-axis mapping the move-drag above uses
+      // (world X -> data x, world Z -> data y).
+      return Math.atan2(point.z - centerY, point.x - centerX);
+    }
+
+    function onWindowPointerMove(e: PointerEvent) {
+      const drag = rotateDragRef.current;
+      if (!drag) return;
+      const angle = angleAt(e.clientX, e.clientY, drag.centerX, drag.centerY);
+      if (angle === null) return;
+      drag.moved = true;
+      const deltaDeg = ((angle - drag.startAngle) * 180) / Math.PI;
+      setLayerTransform(drag.id, { rotation: drag.startRotation + deltaDeg });
+    }
+
+    function onWindowPointerUp() {
+      const drag = rotateDragRef.current;
+      rotateDragRef.current = null;
+      if (!drag) return;
+      if (controlsRef.current) controlsRef.current.enabled = true;
+      endGesture(drag.snapshot, drag.moved);
+    }
+
+    window.addEventListener("pointermove", onWindowPointerMove);
+    window.addEventListener("pointerup", onWindowPointerUp);
+    return () => {
+      window.removeEventListener("pointermove", onWindowPointerMove);
+      window.removeEventListener("pointerup", onWindowPointerUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
+    <>
     <primitive
       object={group}
       rotation={DISPLAY_ROTATION}
@@ -386,6 +467,31 @@ function Assembly() {
         };
       }}
     />
+    {rotateHandle && (
+      <mesh
+        rotation={DISPLAY_ROTATION}
+        position={[rotateHandle.centerX, 0.05, rotateHandle.centerY]}
+        material={ROTATE_RING_MATERIAL}
+        onPointerDown={(e: ThreeEvent<PointerEvent>) => {
+          if (spacePanHeld) return;
+          e.stopPropagation();
+          if (controlsRef.current) controlsRef.current.enabled = false;
+          const startAngle = Math.atan2(e.point.z - rotateHandle.centerY, e.point.x - rotateHandle.centerX);
+          rotateDragRef.current = {
+            id: rotateHandle.id,
+            centerX: rotateHandle.centerX,
+            centerY: rotateHandle.centerY,
+            startAngle,
+            startRotation: layers[rotateHandle.id]?.transform.rotation ?? 0,
+            moved: false,
+            snapshot: beginGesture(),
+          };
+        }}
+      >
+        <ringGeometry args={[Math.max(0.1, rotateHandle.outerRadius - ROTATE_RING_THICKNESS_MM), rotateHandle.outerRadius, 64]} />
+      </mesh>
+    )}
+    </>
   );
 }
 

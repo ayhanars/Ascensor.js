@@ -23,7 +23,6 @@ import {
   boundsOverlap,
   type Bounds,
   getLayerWorldBounds,
-  getLocalShapeBounds,
   getMultiLayerWorldBounds,
   getTopLevelId,
   getWorldRegions,
@@ -32,7 +31,6 @@ import {
   invertTransform2D,
 } from "./sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
-import { BEVEL_SELF_INTERSECTION_SAFETY } from "../geometry/bevelExtrude";
 import {
   differenceRegions,
   intersectionRegions,
@@ -260,6 +258,14 @@ interface SceneState {
   setCornerRadius: (id: string, radius: number) => void;
   setBevelBottom: (id: string, mm: number) => void;
   setBevelTop: (id: string, mm: number) => void;
+  /**
+   * Bows the shape's own bottom face into a smooth dent (positive) or
+   * bulge (negative), in mm — real, printable geometry of this shape, not
+   * a cut against another one. See `ShapeLayer.indentBottom`.
+   */
+  setIndentBottom: (id: string, mm: number) => void;
+  /** Same as setIndentBottom, for the top face. */
+  setIndentTop: (id: string, mm: number) => void;
   setIsHole: (id: string, value: boolean) => void;
   /**
    * Repositions a hole shape into a recessed pocket instead of a full
@@ -269,18 +275,6 @@ interface SceneState {
    * punching through the top. No-op if the hole doesn't overlap a solid.
    */
   snapHoleToRecessedPocket: (id: string, floorThicknessMM: number) => void;
-  /**
-   * Given exactly two overlapping shapes, presses whichever currently sits
-   * higher down into the other as a smooth, rounded recess (a "dimple") —
-   * like pressing a stamp into clay, rather than punching a hole all the
-   * way through. Implemented by turning the higher shape into a hole (the
-   * same real 3D boolean-subtract machinery `isHole` already uses) sized
-   * and positioned so it only presses partway into the other shape's
-   * thickness, with its own bottom rounded off. No-op if the two don't
-   * overlap. Its roundedness stays adjustable afterward via the ordinary
-   * Bevel Bottom control, since that's exactly what this sets.
-   */
-  applyDimple: (ids: string[]) => void;
   setLayerZ: (id: string, z: number) => void;
   autoStackLayers: () => void;
   fixFloatingLayers: (ids: string[]) => void;
@@ -593,6 +587,30 @@ export const useSceneStore = create<SceneState>()(
       };
     }),
 
+  setIndentBottom: (id, mm) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape") return {};
+      return {
+        layers: {
+          ...state.layers,
+          [id]: { ...layer, indentBottom: Number.isFinite(mm) ? mm : 0 } as ShapeLayer,
+        },
+      };
+    }),
+
+  setIndentTop: (id, mm) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape") return {};
+      return {
+        layers: {
+          ...state.layers,
+          [id]: { ...layer, indentTop: Number.isFinite(mm) ? mm : 0 } as ShapeLayer,
+        },
+      };
+    }),
+
   setIsHole: (id, value) =>
     set((state) => {
       const layer = state.layers[id];
@@ -646,91 +664,6 @@ export const useSceneStore = create<SceneState>()(
         },
       };
     }),
-
-  applyDimple: (ids) => {
-    const state = get();
-    const unique = Array.from(new Set(ids)).filter((id) => state.layers[id]);
-    const layerA = unique.length === 2 ? state.layers[unique[0]] : undefined;
-    const layerB = unique.length === 2 ? state.layers[unique[1]] : undefined;
-    if (!layerA || !layerB || layerA.type !== "shape" || layerB.type !== "shape") {
-      showToast("Select exactly two shapes to create a dimple", { tone: "warning" });
-      return;
-    }
-    const [a, b] = unique;
-
-    const boundsA = getLayerWorldBounds(state.layers, a);
-    const boundsB = getLayerWorldBounds(state.layers, b);
-    if (!boundsA || !boundsB || !boundsOverlap(boundsA, boundsB)) {
-      showToast("Those two shapes don't overlap", { tone: "warning" });
-      return;
-    }
-
-    // Whichever of the two currently sits higher is the "stamp" being
-    // pressed down into the other — matches the physical intuition
-    // regardless of which one happened to be selected/clicked first.
-    const worldA = getWorldTransform(state.layers, a);
-    const worldB = getWorldTransform(state.layers, b);
-    const [stampId, baseId] = worldA.z >= worldB.z ? [a, b] : [b, a];
-    const stamp = state.layers[stampId] as ShapeLayer;
-    const base = state.layers[baseId] as ShapeLayer;
-    const baseWorld = getWorldTransform(state.layers, baseId);
-    const baseTopZ = baseWorld.z + base.extrusionDepth;
-
-    // This isn't a hole — it presses the stamp's own shape into the base
-    // as a smooth, continuous dent, the way a thumb presses into clay or a
-    // bowl is formed into a spoon. That means the recess has to actually
-    // curve, all the way from the base's flat surface at the stamp's
-    // outline down to its deepest point, rather than dropping straight in
-    // with mostly-vertical walls and only a thin rounded lip at the very
-    // bottom (which is what a small bevel on a much taller cut looks like
-    // — still recognizably a hole). A bevel whose amount equals the
-    // stamp's own narrowest half-width bows the *entire* footprint into
-    // one continuous curve down to a single ridge/point at its deepest —
-    // a true dome — instead of just rounding a rim.
-    const stampBounds = getLocalShapeBounds(stamp);
-    const stampHalfWidth = stampBounds
-      ? Math.min(stampBounds.maxX - stampBounds.minX, stampBounds.maxY - stampBounds.minY) / 2
-      : 0;
-    // Same fraction buildBeveledExtrudeGeometry's own safety clamp already
-    // caps a bevel at, so this lands exactly on the safe maximum instead
-    // of being silently re-clamped a second time to a different value.
-    const domeDepth = stampHalfWidth * BEVEL_SELF_INTERSECTION_SAFETY;
-
-    const MIN_DEPTH_MM = 0.15;
-    const MIN_FLOOR_MM = 0.1;
-    const OVERSHOOT_MM = 1;
-    const maxDepthForFloor = Math.max(MIN_DEPTH_MM, base.extrusionDepth - MIN_FLOOR_MM);
-    const depth = Math.max(MIN_DEPTH_MM, Math.min(domeDepth, maxDepthForFloor));
-
-    // The stamp becomes a hole-like cutting tool under the hood (real 3D
-    // boolean subtract, same machinery `isHole` already uses) — but with
-    // its bevel set to the full dome depth above rather than a token rim
-    // rounding, and positioned so that dome's equator (where it's back to
-    // the stamp's full outline width) lands exactly at the base's surface
-    // and its apex sits `depth` below it. A small overshoot above the
-    // surface guarantees a cleanly open mouth.
-    const parentWorldZ = stamp.parentId ? getWorldTransform(state.layers, stamp.parentId).z : 0;
-    const newWorldZ = baseTopZ - depth;
-
-    set((s) => {
-      const current = s.layers[stampId] as ShapeLayer | undefined;
-      if (!current) return {};
-      return {
-        layers: {
-          ...s.layers,
-          [stampId]: {
-            ...current,
-            isHole: true,
-            transform: { ...current.transform, z: Math.max(0, newWorldZ - parentWorldZ) },
-            extrusionDepth: depth + OVERSHOOT_MM,
-            bevelBottom: depth,
-            bevelTop: 0,
-          } as ShapeLayer,
-        },
-      };
-    });
-    showToast(`Pressed ${stamp.name} into ${base.name} as a dimple`);
-  },
 
   setLayerZ: (id, z) =>
     set((state) => {
@@ -1372,6 +1305,8 @@ export const useSceneStore = create<SceneState>()(
         cornerRadius: 0,
         bevelBottom: 0,
         bevelTop: 0,
+        indentBottom: 0,
+        indentTop: 0,
         isHole: false,
       };
 
@@ -1519,6 +1454,8 @@ export const useSceneStore = create<SceneState>()(
         cornerRadius: 0,
         bevelBottom: 0,
         bevelTop: 0,
+        indentBottom: 0,
+        indentTop: 0,
         isHole: false,
       };
 
@@ -1809,6 +1746,8 @@ export const useSceneStore = create<SceneState>()(
         cornerRadius: 0,
         bevelBottom: 0,
         bevelTop: 0,
+        indentBottom: 0,
+        indentTop: 0,
         isHole: kind === "hole",
       };
 
