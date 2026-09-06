@@ -244,6 +244,16 @@ export function buildBeveledExtrudeGeometry(
   const bottom = bottomMag;
   const top = topMag;
 
+  // This geometry is built as flat-shaded triangles (no shared/indexed
+  // vertices, so computeVertexNormals can't smooth across facet
+  // boundaries) — a fixed segment count that reads as smooth for a small
+  // rim bevel (a fraction of a mm) turns into visibly faceted banding once
+  // the curve's own radius grows to Indent-sized amounts (several mm),
+  // since each facet's real-world size scales with the radius it's
+  // approximating. Scaling the segment count with the actual magnitude
+  // keeps facets small in absolute terms regardless of how big the curve is.
+  const curveSegments = Math.min(48, Math.max(BEVEL_CURVE_SEGMENTS, Math.round(Math.max(bottom, top) * 3)));
+
   const positions: number[] = [];
   const uvs: number[] = [];
 
@@ -284,21 +294,27 @@ export function buildBeveledExtrudeGeometry(
   // center - amount| < 1e-6 across the sweep.
   if (bottomIsIndent) {
     // Indent, unlike a bevel, keeps the *rim* exactly where an untouched
-    // face would be (offset=0, z=0) and moves the *center* instead —
-    // sweeping the same quarter-circle arc as the bevel curves above, just
-    // paired with z the other way round. Positive indentBottom presses the
-    // center up into the material (concave); negative pushes it down and
-    // out instead (a convex bulge) — the sign of the original value (not
-    // just its clamped magnitude) decides which.
+    // face would be (offset=0, z=0) — matching the plain wall it continues
+    // from with no discontinuity — and moves the *center* instead, sweeping
+    // the same quarter-circle arc as the bevel curves above, just paired
+    // with z the other way round. Positive indentBottom presses the center
+    // up into the material (concave, so z rises as the ring insets);
+    // negative pushes it down and out instead (a convex bulge, z falls).
+    // Always pushed rim-first: buildWalls handles a wall segment whose z
+    // falls just as correctly as one whose z rises (see its own comment),
+    // so there's no need to reorder the sweep to force ascending z the way
+    // an earlier, wrong version of this did — that "fix" itself broke the
+    // shape, by making the wall taper in and back out around a phantom
+    // extra ring instead of staying straight up to the real rim.
     const sign = Math.sign(indentBottom);
-    for (let i = 0; i <= BEVEL_CURVE_SEGMENTS; i++) {
-      const t = i / BEVEL_CURVE_SEGMENTS;
+    for (let i = 0; i <= curveSegments; i++) {
+      const t = i / curveSegments;
       const angle = (t * Math.PI) / 2;
       pushRing(sign * bottom * Math.sin(angle), -bottom * (1 - Math.cos(angle)));
     }
   } else if (bottom > 0) {
-    for (let i = 0; i <= BEVEL_CURVE_SEGMENTS; i++) {
-      const t = i / BEVEL_CURVE_SEGMENTS;
+    for (let i = 0; i <= curveSegments; i++) {
+      const t = i / curveSegments;
       const angle = (t * Math.PI) / 2;
       pushRing(bottom * (1 - Math.cos(angle)), bottom * (Math.sin(angle) - 1));
     }
@@ -308,18 +324,20 @@ export function buildBeveledExtrudeGeometry(
 
   if (topIsIndent) {
     // Mirror of the bottom Indent case: the rim stays at the face's
-    // untouched height (offset=0, z=depth) and the center moves instead —
-    // down into the material for a positive indentTop (concave), or up
-    // and out for negative (a convex bulge).
+    // untouched height (offset=0, z=depth) — matching the plain wall
+    // below it with no discontinuity — and the center moves instead, down
+    // into the material for a positive indentTop (concave) or up and out
+    // for negative (a convex bulge). Always pushed rim-first, same
+    // reasoning as bottom's Indent block above.
     const sign = Math.sign(indentTop);
-    for (let i = 0; i <= BEVEL_CURVE_SEGMENTS; i++) {
-      const t = i / BEVEL_CURVE_SEGMENTS;
+    for (let i = 0; i <= curveSegments; i++) {
+      const t = i / curveSegments;
       const angle = (t * Math.PI) / 2;
       pushRing(depth - sign * top * Math.sin(angle), -top * (1 - Math.cos(angle)));
     }
   } else if (top > 0) {
-    for (let i = 0; i <= BEVEL_CURVE_SEGMENTS; i++) {
-      const t = i / BEVEL_CURVE_SEGMENTS;
+    for (let i = 0; i <= curveSegments; i++) {
+      const t = i / curveSegments;
       const angle = (t * Math.PI) / 2;
       pushRing(depth - top + top * Math.sin(angle), -top * (1 - Math.cos(angle)));
     }
