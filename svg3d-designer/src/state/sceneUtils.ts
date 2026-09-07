@@ -694,7 +694,18 @@ const THIN_FEATURE_NUDGE_WINDOW = 3;
 // land exactly on the boundary (where floating-point rounding could tip
 // it back under the threshold).
 const THIN_FEATURE_NUDGE_MARGIN_MM = 0.03;
-const THIN_FEATURE_MAX_ITERATIONS = 25;
+// Each iteration only widens the SINGLE worst remaining pinch, so a shape
+// that's thin along its own entire length (a mustache, a hair-thin line —
+// not just one or two isolated pinch points, like the earlier mane/foliage
+// case this was first built against) needs one iteration per stretch of
+// its outline, not one total. 25 was plenty for a few isolated pinches but
+// left a long thin feature only partially widened — clearing on its own
+// only after "Fix" was clicked a second time. 300 comfortably covers a
+// realistic long, thin, detailed outline (verified against a synthetic
+// 400-point stroke: converges in well under 300 iterations, in ~50ms) while
+// the existing early-exit (`!pinch || pinch.width >= targetWidthMM`) means
+// a shape that's already fixed sooner never pays for the higher cap.
+const THIN_FEATURE_MAX_ITERATIONS = 300;
 
 /**
  * Locally widens a single ring wherever it pinches too close to itself —
