@@ -583,6 +583,14 @@ function pointSegmentDistance(p: Point2, a: Point2, b: Point2): number {
   return Math.hypot(p.x - cx, p.y - cy);
 }
 
+interface LocalPinch {
+  width: number;
+  /** Index of the boundary point found too close to a non-adjacent segment. */
+  i: number;
+  /** Index of that segment's first point (the segment runs j to j+1). */
+  j: number;
+}
+
 /**
  * The narrowest local gap anywhere within one ring's own outline — how
  * close two genuinely separate stretches of the boundary (not neighboring
@@ -591,9 +599,9 @@ function pointSegmentDistance(p: Point2, a: Point2, b: Point2): number {
  * searched for) so this stays fast for a dense, thousand-point imported
  * path rather than checking every pair of points.
  */
-function minLocalRingWidth(points: Point2[]): number {
+function findWorstLocalPinch(points: Point2[]): LocalPinch | null {
   const n = points.length;
-  if (n < 2 * THIN_FEATURE_INDEX_WINDOW + 1) return Infinity;
+  if (n < 2 * THIN_FEATURE_INDEX_WINDOW + 1) return null;
 
   const cellSize = MIN_SAFE_LOCAL_WIDTH_MM * 2;
   const cellKey = (x: number, y: number) => `${Math.floor(x / cellSize)},${Math.floor(y / cellSize)}`;
@@ -605,7 +613,7 @@ function minLocalRingWidth(points: Point2[]): number {
     else grid.set(key, [j]);
   }
 
-  let minWidth = Infinity;
+  let best: LocalPinch | null = null;
   for (let i = 0; i < n; i++) {
     const p = points[i];
     const cx = Math.floor(p.x / cellSize);
@@ -620,12 +628,89 @@ function minLocalRingWidth(points: Point2[]): number {
           const a = points[j];
           const b = points[(j + 1) % n];
           const d = pointSegmentDistance(p, a, b);
-          if (d < minWidth) minWidth = d;
+          if (!best || d < best.width) best = { width: d, i, j };
         }
       }
     }
   }
-  return minWidth;
+  return best;
+}
+
+function minLocalRingWidth(points: Point2[]): number {
+  return findWorstLocalPinch(points)?.width ?? Infinity;
+}
+
+// How many points on each side of a pinch point also move (with a
+// falloff), rather than moving that one point alone — a single point
+// yanked away from its neighbors would leave a sharp kink that's itself
+// liable to self-intersect with whatever's nearby; nudging a small window
+// with the displacement tapering to zero at its edges instead produces a
+// smooth local bulge, the same idea a vector editor's "push" tool uses.
+const THIN_FEATURE_NUDGE_WINDOW = 3;
+// Extra clearance beyond the literal safe minimum, so a fixed spot doesn't
+// land exactly on the boundary (where floating-point rounding could tip
+// it back under the threshold).
+const THIN_FEATURE_NUDGE_MARGIN_MM = 0.03;
+const THIN_FEATURE_MAX_ITERATIONS = 25;
+
+/**
+ * Locally widens a single ring wherever it pinches too close to itself —
+ * repeatedly finds the worst remaining pinch (see findWorstLocalPinch) and
+ * pushes a small window of points around it directly away from whatever
+ * non-adjacent segment it's closest to, until the whole ring clears
+ * `targetWidthMM` or a small iteration cap is hit (covers an outline with
+ * more than one separate pinch, not just its single worst spot).
+ *
+ * Deliberately a small, local, surgical edit rather than a global
+ * reshaping operation (e.g. a morphological closing/buffer round-trip) —
+ * tried that first, and on a real, highly detailed imported outline (400+
+ * points, many tight concave turns) a general offset shatters the ring
+ * into dozens of stray fragments instead of cleanly widening one spot, a
+ * far worse outcome than the original warning. Moving only the points
+ * actually involved in each specific pinch keeps the rest of a detailed
+ * outline completely untouched.
+ */
+function widenThinRing(points: Point2[], targetWidthMM: number): Point2[] {
+  let current = points.map((p) => ({ ...p }));
+  for (let iter = 0; iter < THIN_FEATURE_MAX_ITERATIONS; iter++) {
+    const pinch = findWorstLocalPinch(current);
+    if (!pinch || pinch.width >= targetWidthMM) break;
+
+    const n = current.length;
+    const { i, j } = pinch;
+    const a = current[j];
+    const b = current[(j + 1) % n];
+    const p = current[i];
+    const abx = b.x - a.x;
+    const aby = b.y - a.y;
+    const len2 = abx * abx + aby * aby;
+    let t = len2 > 0 ? ((p.x - a.x) * abx + (p.y - a.y) * aby) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const cx = a.x + abx * t;
+    const cy = a.y + aby * t;
+    let dx = p.x - cx;
+    let dy = p.y - cy;
+    let dist = Math.hypot(dx, dy);
+    if (dist < 1e-9) {
+      // p sits essentially ON the segment — push along its normal instead,
+      // since (p - closestPoint) has no meaningful direction here.
+      dx = -aby;
+      dy = abx;
+      dist = Math.hypot(dx, dy) || 1;
+    }
+    const deficit = targetWidthMM - dist + THIN_FEATURE_NUDGE_MARGIN_MM;
+    const ux = dx / dist;
+    const uy = dy / dist;
+
+    const next = current.map((pt) => ({ ...pt }));
+    for (let k = -THIN_FEATURE_NUDGE_WINDOW; k <= THIN_FEATURE_NUDGE_WINDOW; k++) {
+      const idx = (i + k + n) % n;
+      const weight = 1 - Math.abs(k) / (THIN_FEATURE_NUDGE_WINDOW + 1);
+      next[idx] = { x: current[idx].x + ux * deficit * weight, y: current[idx].y + uy * deficit * weight };
+    }
+    current = next;
+  }
+  return current;
 }
 
 export interface ThinFeatureWarning {
@@ -666,4 +751,33 @@ export function computeThinFeatureWarnings(
     if (minWidth < minSafeWidthMM) warnings.push({ id, minWidthMM: minWidth });
   }
   return warnings;
+}
+
+/**
+ * Widens every locally-too-thin spot on one shape (see
+ * computeThinFeatureWarnings/widenThinRing), returning new LOCAL-space
+ * regions ready to store directly on that layer. Runs the actual widening
+ * in world space (matching the space computeThinFeatureWarnings measures
+ * in, so a scaled shape's target width isn't silently wrong) and converts
+ * the result back through the shape's own inverse world transform.
+ */
+export function widenThinFeatures(
+  layers: Record<string, Layer>,
+  id: string,
+  minSafeWidthMM: number = MIN_SAFE_LOCAL_WIDTH_MM,
+): ShapeRegion[] {
+  const layer = layers[id];
+  if (!isShapeLayer(layer)) return [];
+  const world = getWorldTransform(layers, id);
+  const worldRegions = getWorldRegions(layers, id);
+
+  const fixedWorld = worldRegions.map((region) => ({
+    outer: { points: widenThinRing(region.outer.points, minSafeWidthMM) },
+    holes: region.holes.map((hole) => ({ points: widenThinRing(hole.points, minSafeWidthMM) })),
+  }));
+
+  return fixedWorld.map((region) => ({
+    outer: { points: region.outer.points.map((p) => invertTransform2D(p, world)) },
+    holes: region.holes.map((hole) => ({ points: hole.points.map((p) => invertTransform2D(p, world)) })),
+  }));
 }
