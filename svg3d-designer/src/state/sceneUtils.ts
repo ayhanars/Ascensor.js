@@ -355,11 +355,11 @@ export function getWorldRegions(layers: Record<string, Layer>, id: string): Shap
   }));
 }
 
-// How close two Z heights (mm) need to be to count as "the same surface" —
-// loose enough to absorb the rounding a display-unit round-trip (mm<->in)
-// can introduce, tight enough to never treat two genuinely different
-// stacking heights as the same one.
-const Z_ALIGN_EPSILON_MM = 0.01;
+// How close two Z heights (mm) need to be to count as touching — loose
+// enough to absorb the rounding a display-unit round-trip (mm<->cm<->in,
+// or just typing a value) can introduce, tight enough to never treat two
+// genuinely different stacking heights as the same one.
+const Z_ALIGN_EPSILON_MM = 0.05;
 
 // Above this fraction of a shape's own footprint being supported, it's
 // considered fully attached (not worth flagging at all). Below
@@ -413,7 +413,22 @@ export function computeFloatingLayerSeverities(
   const partial: string[] = [];
   for (const item of info) {
     if (item.z <= Z_ALIGN_EPSILON_MM) continue;
-    const supporters = info.filter((o) => o.id !== item.id && Math.abs(o.topZ - item.z) < Z_ALIGN_EPSILON_MM);
+    // A shape "supports" item's bottom whenever the supporter's own
+    // material actually spans item's bottom Z — not just when the two
+    // happen to line up EXACTLY. That single test covers every physical
+    // arrangement that should count as real contact: sitting flush on
+    // the surface below (supporter's top ≈ item's bottom), embedded some
+    // distance into it (supporter's top is genuinely ABOVE item's bottom,
+    // because item's bottom is buried inside it), or resting on a
+    // shape several layers down after skipping over one that never
+    // actually touched it (that skipped shape simply fails this same
+    // test and is correctly not counted). Only a supporter that starts
+    // ABOVE item's own bottom (o.z > item.z), or whose top ends BELOW
+    // it with a real gap (o.topZ < item.z), fails to make contact —
+    // exactly the "floating" case this function exists to catch.
+    const supporters = info.filter(
+      (o) => o.id !== item.id && o.z <= item.z + Z_ALIGN_EPSILON_MM && o.topZ >= item.z - Z_ALIGN_EPSILON_MM,
+    );
     if (supporters.length === 0) {
       critical.push(item.id);
       continue;
