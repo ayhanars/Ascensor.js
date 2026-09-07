@@ -735,32 +735,13 @@ export const useSceneStore = create<SceneState>()(
       let layers = state.layers;
       for (let pass = 0; pass < MAX_STACK_PASSES; pass++) {
         const nextLayers = { ...layers };
-        const placed: { regions: ReturnType<typeof getWorldRegions>; topZ: number }[] = [];
+        const placed: { parentId: string | null; regions: ReturnType<typeof getWorldRegions>; topZ: number }[] = [];
         let anyChanged = false;
 
         for (const { id, regions, area } of withRegions) {
           const layer = layers[id] as ShapeLayer;
           const localZRange = getLocalShapeZRange(layer);
-
-          // A shape nested inside a group is part of a deliberately
-          // assembled sub-structure — grouping it in the first place was
-          // the user locking its position relative to its siblings, not
-          // an accident of drag order. Auto-Stack still treats it as
-          // real, solid support that an ungrouped shape can land on top
-          // of, but never repositions it itself: otherwise clicking
-          // Auto-Stack silently dropped any deliberately-elevated part
-          // of a group straight to the bed the instant it didn't happen
-          // to overlap something else, which read as "Auto-Stack resets
-          // my groups".
-          if (layer.parentId !== null) {
-            const parentWorldZ = getWorldTransform(layers, layer.parentId).z;
-            const topZ = layer.transform.z + parentWorldZ + localZRange.max;
-            // A hole cut into it removes it from what's usable as landing
-            // surface for anything else, the same as for a top-level shape
-            // below — see getWorldSupportRegions.
-            placed.push({ regions: getWorldSupportRegions(layers, id, topZ), topZ });
-            continue;
-          }
+          const parentWorldZ = layer.parentId !== null ? getWorldTransform(layers, layer.parentId).z : 0;
 
           // baseZ is the tallest already-placed shape this one's real
           // outline genuinely, MEANINGFULLY overlaps — not merely
@@ -782,26 +763,48 @@ export const useSceneStore = create<SceneState>()(
           // A shape only partially covered by real support (part of it
           // hanging over empty space) is left for the persistent
           // floating-shape banner to catch and offer a targeted fix for.
+          //
+          // A shape nested in a group only ever rests on a SIBLING under
+          // that same immediate parent — grouping shapes together is the
+          // user deliberately assembling them relative to EACH OTHER, so
+          // members of one group settle against their own group siblings
+          // the same way top-level shapes settle against each other (this
+          // is what makes Auto-Stack actually do something for, say, a
+          // face group's eyes/nose/mustache), but never against some
+          // unrelated top-level shape or another group's members, which
+          // would blow apart a deliberately assembled sub-structure. A
+          // TOP-LEVEL shape has no such restriction — it can still land on
+          // top of a group's tallest member (or any other top-level
+          // shape), which is the one-directional half of this that keeps
+          // "rest a decorative piece on top of an assembled group" working.
           const MEANINGFUL_OVERLAP_FRACTION = 0.05;
           let baseZ = 0;
           for (const p of placed) {
+            if (layer.parentId !== null && p.parentId !== layer.parentId) continue;
             if (p.topZ <= baseZ) continue; // can't raise baseZ any further
             if (regionsIntersectionArea(regions, p.regions) > area * MEANINGFUL_OVERLAP_FRACTION) baseZ = p.topZ;
           }
 
-          // This shape is always top-level here (nested ones already
-          // continued above), so there's no parent offset to subtract —
-          // baseZ converts straight to local Z, just relative to this
-          // shape's own real geometric bottom (localZRange.min).
-          const localZ = Math.max(0, baseZ - localZRange.min);
+          // baseZ and topZ are always WORLD Z (parentWorldZ cancels out
+          // when comparing two shapes under the same parent, so this holds
+          // regardless of nesting depth) — converting to this shape's own
+          // LOCAL z means removing both the parent's world offset and this
+          // shape's own geometric bottom (localZRange.min). Clamping at 0
+          // is the right default for an unsupported shape either way: for
+          // a top-level shape that's the actual bed; for a group member
+          // with nothing to rest on, that's the group's own local floor —
+          // wherever the group itself was already positioned.
+          const localZ = Math.max(0, baseZ - localZRange.min - parentWorldZ);
           if (Math.abs(localZ - layer.transform.z) > 1e-6) {
             nextLayers[id] = { ...layer, transform: { ...layer.transform, z: localZ } };
             anyChanged = true;
           }
 
           {
-            const topZ = localZ + localZRange.max;
-            placed.push({ regions: getWorldSupportRegions(layers, id, topZ), topZ });
+            const topZ = parentWorldZ + localZ + localZRange.max;
+            // A hole cut into it removes it from what's usable as landing
+            // surface for anything else — see getWorldSupportRegions.
+            placed.push({ parentId: layer.parentId, regions: getWorldSupportRegions(layers, id, topZ), topZ });
           }
         }
 
