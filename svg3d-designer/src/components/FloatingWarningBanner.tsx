@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { computeFloatingLayerSeverities } from "../state/sceneUtils";
+import { computeFloatingLayerSeverities, computeThinFeatureWarnings, type ThinFeatureWarning } from "../state/sceneUtils";
 import { useActivePlateRootIds, useSceneStore } from "../state/store";
 
 const CHECK_DEBOUNCE_MS = 450;
@@ -15,18 +15,26 @@ export function FloatingWarningBanner() {
     critical: [],
     partial: [],
   });
+  const [thinFeatures, setThinFeatures] = useState<ThinFeatureWarning[]>([]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
       setSeverities(computeFloatingLayerSeverities(layers, rootIds));
+      setThinFeatures(computeThinFeatureWarnings(layers, rootIds));
     }, CHECK_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [layers, rootIds]);
 
   const criticalIds = severities.critical.filter((id) => layers[id]);
   const partialIds = severities.partial.filter((id) => layers[id] && !dismissedFloatingIds.includes(id));
+  const thinFeatureWarnings = thinFeatures.filter((w) => layers[w.id]);
+  const thinFeatureIds = thinFeatureWarnings.map((w) => w.id);
+  const narrowestThinFeatureMM = thinFeatureWarnings.reduce(
+    (min, w) => Math.min(min, w.minWidthMM),
+    Infinity,
+  );
 
-  if (criticalIds.length === 0 && partialIds.length === 0) return null;
+  if (criticalIds.length === 0 && partialIds.length === 0 && thinFeatureIds.length === 0) return null;
 
   return (
     <div className="floating-warning-stack">
@@ -79,6 +87,24 @@ export function FloatingWarningBanner() {
             title="This is fine — dismiss this warning for these shape(s)"
           >
             Dismiss
+          </button>
+        </div>
+      )}
+      {thinFeatureIds.length > 0 && (
+        <div className="floating-warning-banner floating-warning-banner--critical">
+          <span className="floating-warning-icon">⚠</span>
+          <span className="floating-warning-text">
+            {thinFeatureIds.length === 1
+              ? `1 shape has a feature as thin as ${narrowestThinFeatureMM.toFixed(2)}mm — likely too narrow for a standard nozzle`
+              : `${thinFeatureIds.length} shapes have a feature as thin as ${narrowestThinFeatureMM.toFixed(2)}mm — likely too narrow for a standard nozzle`}
+          </span>
+          <button
+            type="button"
+            className="floating-warning-select-btn"
+            onClick={() => setSelection(thinFeatureIds)}
+            title="Select the shape(s) with a too-thin feature"
+          >
+            Select
           </button>
         </div>
       )}

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import * as polygonClipping from "polygon-clipping";
 import { roundContour } from "./roundCorners";
 
 /**
@@ -167,6 +168,65 @@ function offsetRing(points: THREE.Vector2[], movements: THREE.Vector2[], amount:
   return points.map((p, i) => new THREE.Vector2(p.x + movements[i].x * amount, p.y + movements[i].y * amount));
 }
 
+function shoelaceArea(points: THREE.Vector2[]): number {
+  let sum = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    sum += a.x * b.y - b.x * a.y;
+  }
+  return Math.abs(sum) / 2;
+}
+
+/**
+ * A per-vertex offset (see offsetRing) is a simple, cheap approximation of
+ * a true polygon inset — correct as long as the requested amount never
+ * pushes two non-adjacent parts of the outline past each other. Detecting
+ * that directly (rather than trying to bound it analytically, which is
+ * exactly what the bounding-box width cap above already attempts and can
+ * still miss for an irregular outline) means actually re-deriving what the
+ * offset ring's TRUE area is: `polygon-clipping`'s boolean-op sweep line
+ * resolves self-intersections as part of its normal algorithm regardless
+ * of whether the input was a valid simple polygon to begin with, so
+ * running the naive offset ring through a self-union and comparing its
+ * area to the naive ring's own raw shoelace area is a reliable signal —
+ * they match for a clean offset, and diverge once folding has happened
+ * (the folded-over region's signed area cancels against itself in the raw
+ * sum but not in the unioned result).
+ */
+function isRingSimple(points: THREE.Vector2[]): boolean {
+  if (points.length < 3) return true;
+  const raw = shoelaceArea(points);
+  if (raw < 1e-9) return true; // already collapsed either way — nothing further to protect here
+  const ring = points.map((p): [number, number] => [p.x, p.y]);
+  let repaired: polygonClipping.MultiPolygon;
+  try {
+    repaired = polygonClipping.union([ring]);
+  } catch {
+    return false; // couldn't even evaluate it — treat as unsafe rather than risk exporting it
+  }
+  let repairedArea = 0;
+  for (const polygon of repaired) repairedArea += shoelaceArea(polygon[0].map(([x, y]) => new THREE.Vector2(x, y)));
+  return Math.abs(repairedArea - raw) < raw * 0.01;
+}
+
+/** Binary-searches the largest inset in [0, candidateMax] that still keeps
+ * `contour` offset by that amount a simple, non-self-intersecting ring —
+ * see isRingSimple. Monotonic: a smaller inset is never less safe than a
+ * larger one, so a plain binary search converges directly on the boundary. */
+function maxSafeInset(contour: THREE.Vector2[], movements: THREE.Vector2[], candidateMax: number): number {
+  if (candidateMax <= 0) return candidateMax;
+  if (isRingSimple(offsetRing(contour, movements, candidateMax))) return candidateMax;
+  let lo = 0;
+  let hi = candidateMax;
+  for (let i = 0; i < 16; i++) {
+    const mid = (lo + hi) / 2;
+    if (isRingSimple(offsetRing(contour, movements, mid))) lo = mid;
+    else hi = mid;
+  }
+  return lo;
+}
+
 interface Ring {
   z: number;
   /** Signed inset passed to `offsetRing` — negative shrinks the outer
@@ -228,6 +288,32 @@ export function buildBeveledExtrudeGeometry(
     bottomMag = Math.min(bottomMag, widthCap);
     topMag = Math.min(topMag, widthCap);
   }
+
+  // The bbox check above only protects against a shape that's thin
+  // EVERYWHERE (a slim rectangle, a font stroke) — it says nothing about a
+  // shape with a large overall bounding box but a much thinner LOCAL
+  // feature somewhere on its outline (a mane's individual pointed lock, a
+  // flower's individual petal tip). Insetting the whole contour by more
+  // than such a feature's own local width folds that one spot past itself
+  // — its offset ring self-intersects right there — which is exactly what
+  // silently deletes real material from just that feature's bottom or top
+  // cap: a degenerate/negative-area triangle at the tip that later gets
+  // filtered out as junk (see MIN_TRIANGLE_AREA_MM2 in the 3MF exporter),
+  // leaving that one bottom-most layer with nothing printable there even
+  // though the rest of the shape is fine. Checking every actual region's
+  // own contour against the exact offset math used below (rather than
+  // trying to estimate local thickness analytically) catches this
+  // regardless of how irregular the outline is.
+  for (const shape of shapes) {
+    const extracted = shape.extractPoints(1);
+    const contour = forceWinding(extracted.shape, true);
+    mergeOverlappingPoints(contour);
+    if (contour.length < 3) continue;
+    const movements = computeMovements(contour);
+    bottomMag = Math.min(bottomMag, maxSafeInset(contour, movements, bottomMag));
+    topMag = Math.min(topMag, maxSafeInset(contour, movements, topMag));
+  }
+
   const bottom = bottomMag;
   const top = topMag;
 
