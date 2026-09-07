@@ -27,6 +27,62 @@ import {
   BookmarkIcon,
 } from "./icons";
 
+/**
+ * Coalesces a burst of rapid slider updates (a native `<input type="range">`
+ * drag can fire `onChange` far faster than the browser can actually paint)
+ * down to at most one committed value per animation frame. Without this, a
+ * shape whose geometry is expensive to rebuild — a beveled outline with
+ * many points, say — queues up a full rebuild for every single pointermove
+ * event faster than they can complete, and the backlog snowballs into
+ * seconds of frozen unresponsiveness rather than a merely-choppy drag: each
+ * queued update is stale by the time its turn comes anyway, so only ever
+ * running the LATEST one is strictly better, not a lossy compromise. The
+ * ref lives in the caller (the stable outer Inspector component) rather
+ * than as local state inside a nested per-render closure component (like
+ * `FaceRow` below), so it survives across those closures being redefined
+ * every render.
+ */
+interface RafThrottleState {
+  scheduled: boolean;
+  value: number | null;
+  handle: number | null;
+}
+function scheduleRafUpdate(ref: MutableRefObject<RafThrottleState>, value: number, apply: (v: number) => void): void {
+  ref.current.value = value;
+  if (ref.current.scheduled) return;
+  ref.current.scheduled = true;
+  ref.current.handle = requestAnimationFrame(() => {
+    ref.current.scheduled = false;
+    ref.current.handle = null;
+    const pending = ref.current.value;
+    if (pending !== null) {
+      ref.current.value = null;
+      apply(pending);
+    }
+  });
+}
+
+/**
+ * Applies a still-pending throttled value immediately instead of waiting
+ * for its animation frame — called on pointer-up, BEFORE `endGesture`
+ * collapses the drag into one undo step. Without this, the very last
+ * queued value could apply on the frame right AFTER `endGesture` already
+ * resumed normal undo tracking, landing as its own stray one-value undo
+ * step tacked onto the end of the drag instead of being absorbed into it
+ * (Ctrl+Z would undo only that last increment, needing a second Ctrl+Z to
+ * undo the rest of the drag).
+ */
+function flushRafUpdate(ref: MutableRefObject<RafThrottleState>, apply: (v: number) => void): void {
+  if (ref.current.handle !== null) cancelAnimationFrame(ref.current.handle);
+  ref.current.scheduled = false;
+  ref.current.handle = null;
+  const pending = ref.current.value;
+  if (pending !== null) {
+    ref.current.value = null;
+    apply(pending);
+  }
+}
+
 /** Figma-style boolean operations — Union (an alias for the existing Merge/
  * Flatten action, which already does a real polygon union), Subtract,
  * Intersect, and Exclude — always shown as a row of four buttons rather
@@ -329,6 +385,8 @@ export function Inspector() {
   const radiusGesture = useRef<TrackedSceneSlice | null>(null);
   const bevelBottomGesture = useRef<TrackedSceneSlice | null>(null);
   const bevelTopGesture = useRef<TrackedSceneSlice | null>(null);
+  const bevelBottomRaf = useRef<RafThrottleState>({ scheduled: false, value: null, handle: null });
+  const bevelTopRaf = useRef<RafThrottleState>({ scheduled: false, value: null, handle: null });
   const matchDocumentToBed = useSceneStore((s) => s.matchDocumentToBed);
   const mergeLayers = useSceneStore((s) => s.mergeLayers);
   const groupSelection = useSceneStore((s) => s.groupSelection);
@@ -469,15 +527,17 @@ export function Inspector() {
         <div className="inspector">
           <div className="inspector-section-title">{selection.length} objects selected</div>
           {allShapes && (
-            <div className="field-row" style={{ marginTop: 8 }}>
-              <span className="field-label">Color</span>
-              <div className="color-field field-input" style={{ height: 26 }}>
-                <ColorPickerButton
-                  className="color-swatch-input"
-                  value={firstShape?.color ?? "#000000"}
-                  onChange={(color) => selection.forEach((id) => setLayerColor(id, color))}
-                />
-                <span style={{ color: "var(--text-faint)" }}>Apply to all</span>
+            <div style={{ marginTop: 8 }}>
+              <div className="field-row">
+                <span className="field-label">Color</span>
+                <div className="color-field field-input" style={{ height: 26 }}>
+                  <ColorPickerButton
+                    className="color-swatch-input"
+                    value={firstShape?.color ?? "#000000"}
+                    onChange={(color) => selection.forEach((id) => setLayerColor(id, color))}
+                  />
+                  <span style={{ color: "var(--text-faint)" }}>Apply to all</span>
+                </div>
               </div>
               <ColorPaletteRow
                 colors={usedColors}
@@ -797,11 +857,13 @@ export function Inspector() {
                   bevelValue,
                   setBevel,
                   bevelGestureRef,
+                  rafRef,
                 }: {
                   label: string;
                   bevelValue: number;
                   setBevel: (id: string, mm: number) => void;
                   bevelGestureRef: MutableRefObject<TrackedSceneSlice | null>;
+                  rafRef: MutableRefObject<RafThrottleState>;
                 }) {
                   return (
                     <div className="field-row" style={{ marginBottom: 10 }}>
@@ -817,12 +879,16 @@ export function Inspector() {
                           bevelGestureRef.current = beginGesture();
                         }}
                         onPointerUp={() => {
+                          flushRafUpdate(rafRef, (value) => targets.forEach((t) => setBevel(t.id, value)));
                           if (bevelGestureRef.current) {
                             endGesture(bevelGestureRef.current, true);
                             bevelGestureRef.current = null;
                           }
                         }}
-                        onChange={(e) => targets.forEach((t) => setBevel(t.id, parseFloat(e.target.value)))}
+                        onChange={(e) => {
+                          const v = parseFloat(e.target.value);
+                          scheduleRafUpdate(rafRef, v, (value) => targets.forEach((t) => setBevel(t.id, value)));
+                        }}
                         style={{ flex: "1 1 auto" }}
                       />
                       <NumberField
@@ -855,8 +921,8 @@ export function Inspector() {
                     }
                   >
                     <p className="hole-hint">Rounds the rim of the top and/or bottom face.</p>
-                    <FaceRow label="Top" bevelValue={display.bevelTop} setBevel={setBevelTop} bevelGestureRef={bevelTopGesture} />
-                    <FaceRow label="Bottom" bevelValue={display.bevelBottom} setBevel={setBevelBottom} bevelGestureRef={bevelBottomGesture} />
+                    <FaceRow label="Top" bevelValue={display.bevelTop} setBevel={setBevelTop} bevelGestureRef={bevelTopGesture} rafRef={bevelTopRaf} />
+                    <FaceRow label="Bottom" bevelValue={display.bevelBottom} setBevel={setBevelBottom} bevelGestureRef={bevelBottomGesture} rafRef={bevelBottomRaf} />
                   </CollapsibleSection>
                 );
               })()}
