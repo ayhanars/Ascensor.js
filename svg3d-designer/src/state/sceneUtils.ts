@@ -553,3 +553,117 @@ export function computeConnectedClusters(layers: Record<string, Layer>, rootIds:
   }
   return Array.from(clusters.values());
 }
+
+// Below this local width (mm), two genuinely separate stretches of a
+// shape's own outline are close enough that a standard nozzle can't
+// reliably lay down two distinct walls between them — the bridge either
+// merges into a near-zero-width sliver or gets dropped outright at slice
+// time, most visibly at the first layer (which commonly prints with a
+// WIDER line than the rest, for bed adhesion, so a connection that
+// survives everywhere else can vanish there specifically). A modest safety
+// margin above a typical 0.4mm nozzle's own minimum.
+const MIN_SAFE_LOCAL_WIDTH_MM = 0.5;
+
+// Two points this close together along the SAME ring's index order are
+// just neighboring samples on one local curve, not two separate parts of
+// the shape coming near each other — skipped so a tightly-curved (but
+// perfectly printable) stretch of outline doesn't flag itself.
+const THIN_FEATURE_INDEX_WINDOW = 5;
+
+function pointSegmentDistance(p: Point2, a: Point2, b: Point2): number {
+  const abx = b.x - a.x;
+  const aby = b.y - a.y;
+  const apx = p.x - a.x;
+  const apy = p.y - a.y;
+  const len2 = abx * abx + aby * aby;
+  let t = len2 > 0 ? (apx * abx + apy * aby) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const cx = a.x + abx * t;
+  const cy = a.y + aby * t;
+  return Math.hypot(p.x - cx, p.y - cy);
+}
+
+/**
+ * The narrowest local gap anywhere within one ring's own outline — how
+ * close two genuinely separate stretches of the boundary (not neighboring
+ * points on the same local curve) come to touching each other. Uses a
+ * uniform spatial grid (cell size matched to the distance actually being
+ * searched for) so this stays fast for a dense, thousand-point imported
+ * path rather than checking every pair of points.
+ */
+function minLocalRingWidth(points: Point2[]): number {
+  const n = points.length;
+  if (n < 2 * THIN_FEATURE_INDEX_WINDOW + 1) return Infinity;
+
+  const cellSize = MIN_SAFE_LOCAL_WIDTH_MM * 2;
+  const cellKey = (x: number, y: number) => `${Math.floor(x / cellSize)},${Math.floor(y / cellSize)}`;
+  const grid = new Map<string, number[]>();
+  for (let j = 0; j < n; j++) {
+    const key = cellKey(points[j].x, points[j].y);
+    const list = grid.get(key);
+    if (list) list.push(j);
+    else grid.set(key, [j]);
+  }
+
+  let minWidth = Infinity;
+  for (let i = 0; i < n; i++) {
+    const p = points[i];
+    const cx = Math.floor(p.x / cellSize);
+    const cy = Math.floor(p.y / cellSize);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const list = grid.get(`${cx + dx},${cy + dy}`);
+        if (!list) continue;
+        for (const j of list) {
+          const dIndex = Math.min((j - i + n) % n, (i - j + n) % n);
+          if (dIndex < THIN_FEATURE_INDEX_WINDOW) continue;
+          const a = points[j];
+          const b = points[(j + 1) % n];
+          const d = pointSegmentDistance(p, a, b);
+          if (d < minWidth) minWidth = d;
+        }
+      }
+    }
+  }
+  return minWidth;
+}
+
+export interface ThinFeatureWarning {
+  id: string;
+  minWidthMM: number;
+}
+
+/**
+ * Which shapes have a local feature narrower than a safe printable width
+ * somewhere in their own outline — see minLocalRingWidth. Checked in world
+ * space (so a shape's own scale is accounted for), across every ring
+ * (a region's outer contour and each of its holes) a shape has.
+ *
+ * Scoped to within a single ring at a time — two DIFFERENT rings on the
+ * same shape (say, a hole passing close to the outer edge) can still form
+ * a real thin wall this doesn't catch; the far more common case, and the
+ * one this was built directly against, is two stretches of one and the
+ * same outer contour pinching close together (an intricate outline —
+ * a mane, foliage, lettering — folding back near itself).
+ */
+export function computeThinFeatureWarnings(
+  layers: Record<string, Layer>,
+  rootIds: string[],
+  minSafeWidthMM: number = MIN_SAFE_LOCAL_WIDTH_MM,
+): ThinFeatureWarning[] {
+  const ids = flattenForDisplay(layers, rootIds)
+    .map((r) => r.id)
+    .filter((id) => isShapeLayer(layers[id]) && !(layers[id] as ShapeLayer).isHole);
+
+  const warnings: ThinFeatureWarning[] = [];
+  for (const id of ids) {
+    const regions = getWorldRegions(layers, id);
+    let minWidth = Infinity;
+    for (const region of regions) {
+      minWidth = Math.min(minWidth, minLocalRingWidth(region.outer.points));
+      for (const hole of region.holes) minWidth = Math.min(minWidth, minLocalRingWidth(hole.points));
+    }
+    if (minWidth < minSafeWidthMM) warnings.push({ id, minWidthMM: minWidth });
+  }
+  return warnings;
+}
