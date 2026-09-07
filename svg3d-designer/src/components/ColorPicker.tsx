@@ -148,6 +148,37 @@ export function normalizeHexColor(raw: string): string | null {
   return s.toLowerCase();
 }
 
+let canonicalizeCtx: CanvasRenderingContext2D | null = null;
+
+/**
+ * Resolves ANY valid CSS color string — a named color ("black"), a short
+ * or long hex, `rgb()`/`hsl()`, whatever an imported SVG's `fill` happened
+ * to use — to the same canonical `#rrggbb` form `normalizeHexColor` alone
+ * can't reach (it only understands hex already). Used to dedupe the used-
+ * colors palette: without this, an SVG-imported shape filled with the
+ * literal string "black" and one filled with "#000000" compared unequal
+ * as raw strings and showed up as two identical-looking black swatches.
+ * Delegates the actual parsing to the browser's own CSS color engine
+ * (`ctx.fillStyle = raw`) rather than hand-rolling a CSS color-name
+ * table. A genuinely unparseable string leaves `fillStyle` at black —
+ * the same fallback a browser gives an invalid SVG `fill` in the first
+ * place, so this never disagrees with what was actually rendered.
+ */
+export function canonicalizeColor(raw: string): string {
+  const hex = normalizeHexColor(raw);
+  if (hex) return hex;
+  if (!canonicalizeCtx) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1;
+    canvas.height = 1;
+    canonicalizeCtx = canvas.getContext("2d");
+  }
+  const ctx = canonicalizeCtx;
+  if (!ctx) return raw;
+  ctx.fillStyle = raw;
+  return ctx.fillStyle;
+}
+
 /**
  * A Figma-style color picker: click the swatch to open a popover with a
  * saturation/value square, a hue strip, and a format-switchable value field

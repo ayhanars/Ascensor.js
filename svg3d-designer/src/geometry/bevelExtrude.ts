@@ -1,7 +1,5 @@
 import * as THREE from "three";
 import { roundContour } from "./roundCorners";
-import { heightMapDisplacement } from "./heightMap";
-import type { HeightMapSettings } from "../types";
 
 /**
  * Independent top/bottom edge bevels for an extruded shape — distinct from
@@ -63,120 +61,6 @@ const BEVEL_CORNER_SEGMENTS = 6;
  * the Dimple tool pressing a smooth recess into another shape) can ask for
  * that same safe maximum directly instead of guessing at a value. */
 export const BEVEL_SELF_INTERSECTION_SAFETY = 0.85;
-
-/** How many recursive 4-way splits each ear-clipped cap triangle gets when
- * a height map is applied — 4 levels turns one triangle into 4^4 = 256
- * smaller ones, fine enough to carry real image detail. Capped down per
- * shape (see HEIGHT_MAP_MAX_TRIANGLES) for outlines that already have
- * many ears of their own (an imported SVG glyph, say). */
-const HEIGHT_MAP_SUBDIVISION_DEPTH = 4;
-/** Hard ceiling on how many triangles a single height-mapped cap may
- * produce — without this, an outline with hundreds of its own ears times
- * 256 would turn one shape into a multi-million-triangle mesh. */
-const HEIGHT_MAP_MAX_TRIANGLES = 40000;
-
-/**
- * Replaces a flat, ear-clipped cap with one displaced by a height map:
- * every ear-clip triangle is recursively split into 4 sub-triangles
- * (each new vertex placed at its parent edge's midpoint, in 2D, then
- * given its own sampled Z), which — unlike generating an independent grid
- * and clipping it to the polygon — exactly conforms to the shape's real
- * outline (including holes and concave corners) with no separate
- * boundary-stitching step, since subdivision only ever adds points
- * strictly on existing edges or inside existing triangles.
- *
- * The outline's own corner vertices are shared with the wall built
- * earlier (same indices), so their Z is displaced *in place* in
- * `positions` rather than pushed fresh — the wall already reads from
- * those same buffer slots, so this is what keeps the wall meeting a
- * height-mapped cap without a seam, the same way a flat cap's corners are
- * shared rather than duplicated.
- */
-function buildHeightMappedCap(
-  ringXY: THREE.Vector2[],
-  holesXY: THREE.Vector2[][],
-  flatIdx: number[],
-  baseZ: number,
-  positions: number[],
-  uvs: number[],
-  indices: number[],
-  bbox: { minX: number; maxX: number; minY: number; maxY: number },
-  heightMap: HeightMapSettings,
-  reversed: boolean,
-  sign: 1 | -1,
-): void {
-  const faces = THREE.ShapeUtils.triangulateShape(ringXY, holesXY);
-  if (faces.length === 0) return;
-  const flatPts = [ringXY, ...holesXY].flat();
-
-  const spanX = bbox.maxX - bbox.minX || 1;
-  const spanY = bbox.maxY - bbox.minY || 1;
-  function offsetAt(x: number, y: number): number {
-    const u = (x - bbox.minX) / spanX;
-    const v = (y - bbox.minY) / spanY;
-    return sign * heightMapDisplacement(heightMap, u, v);
-  }
-
-  const subdivisionDepth = Math.max(
-    0,
-    Math.min(HEIGHT_MAP_SUBDIVISION_DEPTH, Math.floor(Math.log(Math.max(1, HEIGHT_MAP_MAX_TRIANGLES / faces.length)) / Math.log(4))),
-  );
-
-  interface Vert {
-    idx: number;
-    x: number;
-    y: number;
-  }
-
-  const displacedCorners = new Set<number>();
-  function cornerVertex(faceIdx: number): Vert {
-    const idx = flatIdx[faceIdx];
-    const p = flatPts[faceIdx];
-    if (!displacedCorners.has(idx)) {
-      displacedCorners.add(idx);
-      positions[idx * 3 + 2] += offsetAt(p.x, p.y);
-    }
-    return { idx, x: p.x, y: p.y };
-  }
-
-  const midpointCache = new Map<string, Vert>();
-  function midpoint(p: Vert, q: Vert): Vert {
-    const key = p.idx < q.idx ? `${p.idx}_${q.idx}` : `${q.idx}_${p.idx}`;
-    const cached = midpointCache.get(key);
-    if (cached) return cached;
-    const mx = (p.x + q.x) / 2;
-    const my = (p.y + q.y) / 2;
-    const idx = positions.length / 3;
-    positions.push(mx, my, baseZ + offsetAt(mx, my));
-    uvs.push(mx, my);
-    const result: Vert = { idx, x: mx, y: my };
-    midpointCache.set(key, result);
-    return result;
-  }
-
-  function emit(a: Vert, b: Vert, c: Vert): void {
-    if (reversed) indices.push(c.idx, b.idx, a.idx);
-    else indices.push(a.idx, b.idx, c.idx);
-  }
-
-  function subdivide(a: Vert, b: Vert, c: Vert, depthLeft: number): void {
-    if (depthLeft <= 0) {
-      emit(a, b, c);
-      return;
-    }
-    const ab = midpoint(a, b);
-    const bc = midpoint(b, c);
-    const ca = midpoint(c, a);
-    subdivide(a, ab, ca, depthLeft - 1);
-    subdivide(ab, b, bc, depthLeft - 1);
-    subdivide(ca, bc, c, depthLeft - 1);
-    subdivide(ab, bc, ca, depthLeft - 1);
-  }
-
-  for (const face of faces) {
-    subdivide(cornerVertex(face[0]), cornerVertex(face[1]), cornerVertex(face[2]), subdivisionDepth);
-  }
-}
 
 function getBevelVec(inPt: THREE.Vector2, inPrev: THREE.Vector2, inNext: THREE.Vector2): THREE.Vector2 {
   let v_trans_x: number, v_trans_y: number, shrink_by: number;
@@ -293,34 +177,19 @@ interface Ring {
 
 /**
  * Builds an extruded, capped solid from `shapes`, with an optional rounded
- * bevel at the bottom (`z=0`) and/or top (`z=depth`) rim, and/or an Indent
- * — a whole-face concave dent or convex bulge, real printable geometry of
- * this same solid rather than a rim treatment or a cut against another
- * shape. A 0 amount on a given side/feature degenerates to a plain
- * (untouched) cap for that side. Indent and bevel don't compose on the
- * same face (both start from that face's rim) — indent wins whenever it's
- * nonzero, per the field's own doc comment on `ShapeLayer`.
+ * bevel at the bottom (`z=0`) and/or top (`z=depth`) rim. A 0 amount on a
+ * given side degenerates to a plain (untouched) cap for that side.
  */
 export function buildBeveledExtrudeGeometry(
   shapes: THREE.Shape[],
   depth: number,
   bevelBottom: number,
   bevelTop: number,
-  indentBottom = 0,
-  indentTop = 0,
-  heightMapBottom?: HeightMapSettings,
-  heightMapTop?: HeightMapSettings,
 ): THREE.BufferGeometry {
-  const bottomIsIndent = indentBottom !== 0;
-  const topIsIndent = indentTop !== 0;
-
-  let bottomMag = bottomIsIndent ? Math.abs(indentBottom) : Math.max(0, bevelBottom);
-  let topMag = topIsIndent ? Math.abs(indentTop) : Math.max(0, bevelTop);
-  // The two caps' treatments eat into the same depth budget from either
-  // end — never let them overlap past the middle. (A convex Indent that
-  // bulges outward doesn't actually need this shape's own depth at all,
-  // but sizing it the same way regardless of direction is simplest and
-  // always safe.)
+  let bottomMag = Math.max(0, bevelBottom);
+  let topMag = Math.max(0, bevelTop);
+  // The two caps' bevels eat into the same depth budget from either end —
+  // never let them overlap past the middle.
   const maxTotal = depth * 0.98;
   if (bottomMag + topMag > maxTotal) {
     const scale = maxTotal / (bottomMag + topMag);
@@ -329,7 +198,7 @@ export function buildBeveledExtrudeGeometry(
   }
 
   // A thin shape (a slim rectangle, a single stroke of an imported font
-  // glyph) can only safely take a bevel/indent up to about half its own
+  // glyph) can only safely take a bevel up to about half its own
   // narrowest local dimension — insetting the contour further folds it
   // past the opposite wall and flips it inside out, which is what "the
   // shape changes" looks like: a warped or spiky mesh instead of a
@@ -366,10 +235,10 @@ export function buildBeveledExtrudeGeometry(
   // vertices, so computeVertexNormals can't smooth across facet
   // boundaries) — a fixed segment count that reads as smooth for a small
   // rim bevel (a fraction of a mm) turns into visibly faceted banding once
-  // the curve's own radius grows to Indent-sized amounts (several mm),
-  // since each facet's real-world size scales with the radius it's
-  // approximating. Scaling the segment count with the actual magnitude
-  // keeps facets small in absolute terms regardless of how big the curve is.
+  // the curve's own radius grows to several mm, since each facet's
+  // real-world size scales with the radius it's approximating. Scaling the
+  // segment count with the actual magnitude keeps facets small in
+  // absolute terms regardless of how big the curve is.
   const curveSegments = Math.min(48, Math.max(BEVEL_CURVE_SEGMENTS, Math.round(Math.max(bottom, top) * 3)));
 
   const positions: number[] = [];
@@ -400,35 +269,7 @@ export function buildBeveledExtrudeGeometry(
   // (concave — a cove/inner-bevel look, not a round-over). Verified
   // numerically, not just by eye: both formulas below hold |distance to
   // center - amount| < 1e-6 across the sweep.
-  if (bottomIsIndent) {
-    // Indent, unlike a bevel, keeps the *rim* exactly where an untouched
-    // face would be (offset=0, z=0) — matching the plain wall above it
-    // with no discontinuity — and moves the *center* instead, sweeping the
-    // same quarter-circle arc as the bevel curves above, just paired with
-    // z the other way round. Positive indentBottom presses the center up
-    // into the material (concave, so z rises as the ring insets); negative
-    // pushes it down and out instead (a convex bulge, z falls).
-    //
-    // Pushed CENTER-first here (i=0 is the center, i=curveSegments is the
-    // rim) — the mirror image of the sweep direction below, and for a real
-    // reason, not just symmetry: whatever ring comes right after this
-    // block (the plain wall, or the start of a top treatment) always sits
-    // at the untouched offset=0 radius, so this block's *last* ring needs
-    // to be the one that already matches that — the rim — for buildWalls'
-    // one linear ring chain to connect them with an actual wall instead of
-    // a stray cone. bevelBottom's own block below already satisfies this
-    // (it ends at the rim too); a rim-first sweep here would instead end
-    // at the inset center, leaving the very next ring — full radius — to
-    // wall directly onto that tiny center circle. Top's Indent block does
-    // NOT need this: its cap already falls on the chain's other, genuinely
-    // final ring, so rim-first there is already correct (see its comment).
-    const sign = Math.sign(indentBottom);
-    for (let i = 0; i <= curveSegments; i++) {
-      const t = i / curveSegments;
-      const angle = (Math.PI / 2) * (1 - t);
-      pushRing(sign * bottom * Math.sin(angle), -bottom * (1 - Math.cos(angle)));
-    }
-  } else if (bottom > 0) {
+  if (bottom > 0) {
     for (let i = 0; i <= curveSegments; i++) {
       const t = i / curveSegments;
       const angle = (t * Math.PI) / 2;
@@ -438,20 +279,7 @@ export function buildBeveledExtrudeGeometry(
     pushRing(0, 0);
   }
 
-  if (topIsIndent) {
-    // Mirror of the bottom Indent case: the rim stays at the face's
-    // untouched height (offset=0, z=depth) — matching the plain wall
-    // below it with no discontinuity — and the center moves instead, down
-    // into the material for a positive indentTop (concave) or up and out
-    // for negative (a convex bulge). Always pushed rim-first, same
-    // reasoning as bottom's Indent block above.
-    const sign = Math.sign(indentTop);
-    for (let i = 0; i <= curveSegments; i++) {
-      const t = i / curveSegments;
-      const angle = (t * Math.PI) / 2;
-      pushRing(depth - sign * top * Math.sin(angle), -top * (1 - Math.cos(angle)));
-    }
-  } else if (top > 0) {
+  if (top > 0) {
     for (let i = 0; i <= curveSegments; i++) {
       const t = i / curveSegments;
       const angle = (t * Math.PI) / 2;
@@ -491,8 +319,8 @@ export function buildBeveledExtrudeGeometry(
     // below it, and (at the bottom/top ring only) the cap. Sharing a vertex
     // is what lets computeVertexNormals() below actually average normals
     // across it instead of leaving every triangle with its own flat facet
-    // normal, which is what made a bevel/indent curve look faceted no
-    // matter how many segments approximated it. This only shares vertices
+    // normal, which is what made a bevel curve look faceted no matter how
+    // many segments approximated it. This only shares vertices
     // going UP the curve (same outline point, increasing ring) and into
     // its cap — never sideways between two different outline points — so a
     // real sharp corner in the shape's own 2D outline (a rectangle's
@@ -520,13 +348,11 @@ export function buildBeveledExtrudeGeometry(
     // from both caps toward the middle, rather than any single global
     // test. Earlier attempts at a global test all failed once actually
     // checked: reasoning from the ring pair's Z direction alone broke down
-    // for Indent (whose curve changes the radial inset at the same time
-    // as Z, which a Z-only check can't tell apart); a per-quad reference
-    // vector built from that same quad's own four points turned out to be
-    // tautological (not actually independent of the thing it was
-    // checking); and a fixed global interior point doesn't work either,
-    // since a concave Indent's recess isn't star-shaped from any single
-    // point in the material.
+    // for a curved bevel (whose curve changes the radial inset at the
+    // same time as Z, which a Z-only check can't tell apart); a per-quad
+    // reference vector built from that same quad's own four points turned
+    // out to be tautological (not actually independent of the thing it
+    // was checking).
     //
     // A single anchor-and-walk pass (from the bottom cap, say) turned out
     // to only be reliable once it had a few steps of easy wall to settle
@@ -536,24 +362,20 @@ export function buildBeveledExtrudeGeometry(
     // first. Running both directions and, for each ring pair, trusting
     // whichever pass has had more steps to settle (i.e. is currently
     // closer to its own anchor) gets a warm-up on every stretch of curve
-    // regardless of which end it's nearest to — this still isn't perfect
-    // for the rarer case of BOTH ends being their own Indent curve at
-    // once (nothing easy borders either cap then), but it's a strict
-    // improvement over a single-direction anchor for every other case,
-    // and doesn't regress any of them the way anchoring from the single
-    // least-inset ring transition instead (tried and reverted) did — that
-    // transition's own normal has essentially no Z component by
-    // construction (it's the straightest, most vertical wall around), so
-    // it can't actually discriminate which way nearby curved segments
-    // should tilt, unlike a cap's normal which always has a strong,
-    // unambiguous vertical component to anchor against.
+    // regardless of which end it's nearest to — a strict improvement over
+    // a single-direction anchor, and doesn't regress the way anchoring
+    // from the single least-inset ring transition instead (tried and
+    // reverted) did — that transition's own normal has essentially no Z
+    // component by construction (it's the straightest, most vertical wall
+    // around), so it can't actually discriminate which way nearby curved
+    // segments should tilt, unlike a cap's normal which always has a
+    // strong, unambiguous vertical component to anchor against.
     //
     // The anchor itself has to be each cap's own ACTUAL computed normal
     // (from the exact same triangulation + winding its real cap triangles
     // use) rather than an assumed "always (0,0,±1)" constant: that
-    // assumption holds for a lightly-inset cap, but once Indent's cap ring
-    // is inset heavily enough toward the center (which it always is, by
-    // exactly `bottom`/`top`), nothing guarantees
+    // assumption holds for a lightly-inset cap, but once a bevel's cap
+    // ring is inset heavily enough toward the center, nothing guarantees
     // `THREE.ShapeUtils.triangulateShape` still winds it the same
     // rotational sense the un-inset outer contour does.
     function computeCapNormalRef(ringXY: THREE.Vector2[], holesXY: THREE.Vector2[][], z: number, reversed: boolean): THREE.Vector3 {
@@ -663,47 +485,22 @@ export function buildBeveledExtrudeGeometry(
     // ---- Caps: ear-clip triangulate the bottom-most and top-most rings,
     // reusing the SAME vertex indices those rings' walls already created
     // (rather than pushing fresh ones) so the cap is properly stitched
-    // into the same smoothing group as the curve it caps off — unless a
-    // height map applies to that face, in which case the ear-clip result
-    // is subdivided and displaced instead of triangulated flat. ----
-    let bbox: { minX: number; maxX: number; minY: number; maxY: number } | null = null;
-    if (heightMapBottom || heightMapTop) {
-      let minX = Infinity;
-      let maxX = -Infinity;
-      let minY = Infinity;
-      let maxY = -Infinity;
-      for (const p of contour) {
-        minX = Math.min(minX, p.x);
-        maxX = Math.max(maxX, p.x);
-        minY = Math.min(minY, p.y);
-        maxY = Math.max(maxY, p.y);
-      }
-      bbox = { minX, maxX, minY, maxY };
-    }
-
+    // into the same smoothing group as the curve it caps off. ----
     const bottomRingXY = contourRings[0];
     const bottomHolesXY = holeRings.map((hr) => hr[0]);
     const bottomFlatIdx = [contourIdx[0], ...holeIdx.map((hi) => hi[0])].flat();
-    if (heightMapBottom && bbox) {
-      buildHeightMappedCap(bottomRingXY, bottomHolesXY, bottomFlatIdx, rings[0].z, positions, uvs, indices, bbox, heightMapBottom, true, -1);
-    } else {
-      const bottomFaces = THREE.ShapeUtils.triangulateShape(bottomRingXY, bottomHolesXY);
-      for (const face of bottomFaces) {
-        indices.push(bottomFlatIdx[face[2]], bottomFlatIdx[face[1]], bottomFlatIdx[face[0]]);
-      }
+    const bottomFaces = THREE.ShapeUtils.triangulateShape(bottomRingXY, bottomHolesXY);
+    for (const face of bottomFaces) {
+      indices.push(bottomFlatIdx[face[2]], bottomFlatIdx[face[1]], bottomFlatIdx[face[0]]);
     }
 
     const topIdx = rings.length - 1;
     const topRingXY = contourRings[topIdx];
     const topHolesXY = holeRings.map((hr) => hr[topIdx]);
     const topFlatIdx = [contourIdx[topIdx], ...holeIdx.map((hi) => hi[topIdx])].flat();
-    if (heightMapTop && bbox) {
-      buildHeightMappedCap(topRingXY, topHolesXY, topFlatIdx, rings[topIdx].z, positions, uvs, indices, bbox, heightMapTop, false, 1);
-    } else {
-      const topFaces = THREE.ShapeUtils.triangulateShape(topRingXY, topHolesXY);
-      for (const face of topFaces) {
-        indices.push(topFlatIdx[face[0]], topFlatIdx[face[1]], topFlatIdx[face[2]]);
-      }
+    const topFaces = THREE.ShapeUtils.triangulateShape(topRingXY, topHolesXY);
+    for (const face of topFaces) {
+      indices.push(topFlatIdx[face[0]], topFlatIdx[face[1]], topFlatIdx[face[2]]);
     }
   }
 

@@ -64,10 +64,6 @@ interface CachedGeometryEntry {
   extrusionDepth: number;
   bevelBottom: number;
   bevelTop: number;
-  indentBottom: number;
-  indentTop: number;
-  heightMapBottom: ShapeLayer["heightMapBottom"];
-  heightMapTop: ShapeLayer["heightMapTop"];
   geometry: THREE.BufferGeometry;
 }
 
@@ -78,7 +74,7 @@ interface CachedGeometryEntry {
  * every single edit. Only the handful of fields that actually feed
  * geometry construction are compared; regions is checked by reference
  * (it's only ever replaced wholesale — a corner-radius/import edit — not
- * mutated in place), so dragging one shape's bevel/indent slider no
+ * mutated in place), so dragging one shape's bevel slider no
  * longer silently rebuilds every OTHER shape's geometry too on each
  * pointer-move event, which is what made those sliders feel laggy: this
  * function is what both the 3D viewport and the floating-shape/auto-stack
@@ -89,11 +85,6 @@ const geometryCache = new Map<string, CachedGeometryEntry>();
 export function buildExtrudeGeometry(layer: ShapeLayer): THREE.BufferGeometry {
   const bevelBottom = layer.bevelBottom ?? 0;
   const bevelTop = layer.bevelTop ?? 0;
-  const indentBottom = layer.indentBottom ?? 0;
-  const indentTop = layer.indentTop ?? 0;
-
-  const heightMapBottom = layer.heightMapBottom;
-  const heightMapTop = layer.heightMapTop;
 
   const cached = geometryCache.get(layer.id);
   if (
@@ -102,11 +93,7 @@ export function buildExtrudeGeometry(layer: ShapeLayer): THREE.BufferGeometry {
     cached.cornerRadius === layer.cornerRadius &&
     cached.extrusionDepth === layer.extrusionDepth &&
     cached.bevelBottom === bevelBottom &&
-    cached.bevelTop === bevelTop &&
-    cached.indentBottom === indentBottom &&
-    cached.indentTop === indentTop &&
-    cached.heightMapBottom === heightMapBottom &&
-    cached.heightMapTop === heightMapTop
+    cached.bevelTop === bevelTop
   ) {
     return cached.geometry;
   }
@@ -115,8 +102,8 @@ export function buildExtrudeGeometry(layer: ShapeLayer): THREE.BufferGeometry {
   const depth = Math.max(0.05, layer.extrusionDepth);
 
   const geometry =
-    bevelBottom > 0 || bevelTop > 0 || indentBottom !== 0 || indentTop !== 0 || heightMapBottom || heightMapTop
-      ? buildBeveledExtrudeGeometry(shapes, depth, bevelBottom, bevelTop, indentBottom, indentTop, heightMapBottom, heightMapTop)
+    bevelBottom > 0 || bevelTop > 0
+      ? buildBeveledExtrudeGeometry(shapes, depth, bevelBottom, bevelTop)
       : (() => {
           const g = new THREE.ExtrudeGeometry(shapes, { depth, bevelEnabled: false, curveSegments: 1 });
           g.computeVertexNormals();
@@ -129,10 +116,6 @@ export function buildExtrudeGeometry(layer: ShapeLayer): THREE.BufferGeometry {
     extrusionDepth: layer.extrusionDepth,
     bevelBottom,
     bevelTop,
-    indentBottom,
-    indentTop,
-    heightMapBottom,
-    heightMapTop,
     geometry,
   });
   return geometry;

@@ -2,11 +2,10 @@ import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
 import { OrbitControls, GizmoHelper, GizmoViewport } from "@react-three/drei";
 import * as THREE from "three";
-import { beginGesture, endGesture, getRootIdsForPlate, useActivePlateRootIds, useSceneStore, type TrackedSceneSlice } from "../state/store";
+import { beginGesture, endGesture, useActivePlateRootIds, useSceneStore, type TrackedSceneSlice } from "../state/store";
 import type { ResolvedTheme } from "../state/theme";
 import { buildAssemblyGroup, computeVisibleBounds } from "../geometry/extrude";
 import { flattenForDisplay, isEffectivelyLocked } from "../state/sceneUtils";
-import { resolvePushes } from "../geometry/pushResolution";
 import { AxisSideBar } from "./AxisSideBar";
 
 /** Never participates in raycasting — used for the selection-decoration
@@ -283,13 +282,6 @@ function Assembly() {
       const deltaY = point.z - drag.startPoint.z;
       for (const [id, orig] of Object.entries(drag.originals)) {
         setLayerTransform(id, { x: orig.x + deltaX, y: orig.y + deltaY });
-      }
-      const freshState = useSceneStore.getState();
-      if (freshState.pushOnDrag) {
-        const movedIds = Object.keys(drag.originals);
-        const activeRootIds = getRootIdsForPlate(freshState, freshState.activePlateId);
-        const pushes = resolvePushes(freshState.layers, activeRootIds, movedIds, deltaX, deltaY);
-        for (const p of pushes) setLayerTransform(p.id, { x: p.x, y: p.y });
       }
     }
 

@@ -6,7 +6,6 @@ import type {
   AlignMode,
   DocumentSettings,
   GroupLayer,
-  HeightMapSettings,
   Layer,
   Plate,
   PrintBed,
@@ -254,11 +253,6 @@ interface SceneState {
   viewMode: ViewMode2D3D;
   showGrid: boolean;
   wireframe: boolean;
-  /** Whether dragging a shape into another pushes the other one out of the
-   * way (based on their real overlapping geometry, not just bounding
-   * boxes) instead of letting them overlap freely. On by default; a view
-   * preference like showGrid/wireframe, not undo-tracked document content. */
-  pushOnDrag: boolean;
 
   addPlate: () => void;
   renamePlate: (id: string, name: string) => void;
@@ -293,22 +287,6 @@ interface SceneState {
   setCornerRadius: (id: string, radius: number) => void;
   setBevelBottom: (id: string, mm: number) => void;
   setBevelTop: (id: string, mm: number) => void;
-  /**
-   * Bows the shape's own bottom face into a smooth dent (positive) or
-   * bulge (negative), in mm — real, printable geometry of this shape, not
-   * a cut against another one. See `ShapeLayer.indentBottom`.
-   */
-  setIndentBottom: (id: string, mm: number) => void;
-  /** Same as setIndentBottom, for the top face. */
-  setIndentTop: (id: string, mm: number) => void;
-  /** Sets or clears (`null`) a face's height-map displacement — see
-   * `ShapeLayer.heightMapBottom`/`heightMapTop`. Whole-object replace,
-   * used for uploading a new image or removing one entirely; see
-   * `updateHeightMapSettings` for tweaking strength/invert in place. */
-  setHeightMap: (id: string, face: "bottom" | "top", settings: HeightMapSettings | null) => void;
-  /** Adjusts strength/invert on a face's already-set height map without
-   * touching its sampled image data. */
-  updateHeightMapSettings: (id: string, face: "bottom" | "top", patch: Partial<Pick<HeightMapSettings, "strength" | "invert">>) => void;
   setIsHole: (id: string, value: boolean) => void;
   /**
    * Repositions a hole shape into a recessed pocket instead of a full
@@ -339,7 +317,6 @@ interface SceneState {
   setViewMode: (mode: ViewMode2D3D) => void;
   toggleGrid: () => void;
   toggleWireframe: () => void;
-  togglePushOnDrag: () => void;
   setBed: (bed: Partial<PrintBed>) => void;
   setDocumentName: (name: string) => void;
   setUnits: (units: Units) => void;
@@ -392,7 +369,6 @@ export const useSceneStore = create<SceneState>()(
   viewMode: "2d",
   showGrid: true,
   wireframe: false,
-  pushOnDrag: true,
 
   addPlate: () =>
     set((state) => {
@@ -633,58 +609,6 @@ export const useSceneStore = create<SceneState>()(
       };
     }),
 
-  setIndentBottom: (id, mm) =>
-    set((state) => {
-      const layer = state.layers[id];
-      if (!layer || layer.type !== "shape") return {};
-      return {
-        layers: {
-          ...state.layers,
-          [id]: { ...layer, indentBottom: Number.isFinite(mm) ? mm : 0 } as ShapeLayer,
-        },
-      };
-    }),
-
-  setIndentTop: (id, mm) =>
-    set((state) => {
-      const layer = state.layers[id];
-      if (!layer || layer.type !== "shape") return {};
-      return {
-        layers: {
-          ...state.layers,
-          [id]: { ...layer, indentTop: Number.isFinite(mm) ? mm : 0 } as ShapeLayer,
-        },
-      };
-    }),
-
-  setHeightMap: (id, face, settings) =>
-    set((state) => {
-      const layer = state.layers[id];
-      if (!layer || layer.type !== "shape") return {};
-      const field = face === "bottom" ? "heightMapBottom" : "heightMapTop";
-      return {
-        layers: {
-          ...state.layers,
-          [id]: { ...layer, [field]: settings ?? undefined } as ShapeLayer,
-        },
-      };
-    }),
-
-  updateHeightMapSettings: (id, face, patch) =>
-    set((state) => {
-      const layer = state.layers[id];
-      if (!layer || layer.type !== "shape") return {};
-      const field = face === "bottom" ? "heightMapBottom" : "heightMapTop";
-      const current = layer[field];
-      if (!current) return {};
-      return {
-        layers: {
-          ...state.layers,
-          [id]: { ...layer, [field]: { ...current, ...patch } } as ShapeLayer,
-        },
-      };
-    }),
-
   setIsHole: (id, value) =>
     set((state) => {
       const layer = state.layers[id];
@@ -801,7 +725,7 @@ export const useSceneStore = create<SceneState>()(
         const placed: { regions: ReturnType<typeof getWorldRegions>; topZ: number }[] = [];
         let anyChanged = false;
 
-        for (const { id, regions } of withRegions) {
+        for (const { id, regions, area } of withRegions) {
           const layer = layers[id] as ShapeLayer;
           const localZRange = getLocalShapeZRange(layer);
 
@@ -822,21 +746,36 @@ export const useSceneStore = create<SceneState>()(
           }
 
           // baseZ is the tallest already-placed shape this one's real
-          // outline genuinely overlaps — not merely bbox-adjacent to. A
-          // shape only partially covered by that support (part of it
+          // outline genuinely, MEANINGFULLY overlaps — not merely
+          // bbox-adjacent to, and not just brushing edges with. A flat,
+          // multi-color SVG (a badge's background + logo + text, each its
+          // own path) very often has paths that share an exact boundary
+          // edge or clip a hairline sliver of each other — real geometry,
+          // but not "one shape resting on another," just adjacent colors
+          // on the same plane. Requiring the overlap to cover a real
+          // fraction of THIS shape's own footprint (not just be
+          // nonzero) is what tells "B rests on A" apart from "B and A
+          // happen to touch at a shared edge" — the same relative-area
+          // idea `computeFloatingLayerSeverities` already uses to tell a
+          // genuinely floating shape from one with real support. Without
+          // this, a design with several touching-but-not-overlapping
+          // regions cascaded into an unwanted tower on every click,
+          // instead of staying flush at the same height the way it
+          // should for shapes that don't actually rest on each other.
+          // A shape only partially covered by real support (part of it
           // hanging over empty space) is left for the persistent
           // floating-shape banner to catch and offer a targeted fix for.
+          const MEANINGFUL_OVERLAP_FRACTION = 0.05;
           let baseZ = 0;
           for (const p of placed) {
             if (p.topZ <= baseZ) continue; // can't raise baseZ any further
-            if (regionsIntersectionArea(regions, p.regions) > 1e-6) baseZ = p.topZ;
+            if (regionsIntersectionArea(regions, p.regions) > area * MEANINGFUL_OVERLAP_FRACTION) baseZ = p.topZ;
           }
 
           // This shape is always top-level here (nested ones already
           // continued above), so there's no parent offset to subtract —
           // baseZ converts straight to local Z, just relative to this
-          // shape's own real geometric bottom (localZRange.min), which is
-          // below local z=0 for a shape with a convex Indent bulge.
+          // shape's own real geometric bottom (localZRange.min).
           const localZ = Math.max(0, baseZ - localZRange.min);
           if (Math.abs(localZ - layer.transform.z) > 1e-6) {
             nextLayers[id] = { ...layer, transform: { ...layer.transform, z: localZ } };
@@ -869,8 +808,8 @@ export const useSceneStore = create<SceneState>()(
         const layer = state.layers[id] as ShapeLayer;
         const regions = getWorldRegions(state.layers, id);
         // The shape's REAL world Z extent, not its nominal transform.z /
-        // transform.z+extrusionDepth — a bevel/indent can make either end
-        // depart from that naive box (see getShapeWorldZRange).
+        // transform.z+extrusionDepth — a bevel can make either end depart
+        // from that naive box (see getShapeWorldZRange).
         const zRange = getShapeWorldZRange(state.layers, id) ?? { min: 0, max: layer.extrusionDepth };
         return { id, layer, regions, area: regionsArea(regions), zRange };
       });
@@ -901,11 +840,7 @@ export const useSceneStore = create<SceneState>()(
         }
         // Land the shape's ACTUAL geometry — not its transform origin or
         // its selection-outline bounding box, which is only a visual
-        // decoration — exactly on baseZ. For a plain shape (local Z range
-        // starting at 0) this is the same as before; for one with a convex
-        // (bulging) Indent, whose true low point sits below its own local
-        // origin, the origin now lands *above* baseZ by exactly that much
-        // so the bulge itself is what touches down.
+        // decoration — exactly on baseZ.
         const localZRange = getLocalShapeZRange(item.layer);
         const parentWorldZ = item.layer.parentId ? getWorldTransform(layers, item.layer.parentId).z : 0;
         const localZ = Math.max(0, baseZ - parentWorldZ - localZRange.min);
@@ -1430,8 +1365,6 @@ export const useSceneStore = create<SceneState>()(
         cornerRadius: 0,
         bevelBottom: 0,
         bevelTop: 0,
-        indentBottom: 0,
-        indentTop: 0,
         isHole: false,
       };
 
@@ -1579,8 +1512,6 @@ export const useSceneStore = create<SceneState>()(
         cornerRadius: 0,
         bevelBottom: 0,
         bevelTop: 0,
-        indentBottom: 0,
-        indentTop: 0,
         isHole: false,
       };
 
@@ -1789,7 +1720,6 @@ export const useSceneStore = create<SceneState>()(
   setViewMode: (mode) => set({ viewMode: mode }),
   toggleGrid: () => set((state) => ({ showGrid: !state.showGrid })),
   toggleWireframe: () => set((state) => ({ wireframe: !state.wireframe })),
-  togglePushOnDrag: () => set((state) => ({ pushOnDrag: !state.pushOnDrag })),
   setBed: (bed) =>
     set((state) => ({ document: { ...state.document, bed: { ...state.document.bed, ...bed } } })),
   setDocumentName: (name) =>
@@ -1872,8 +1802,6 @@ export const useSceneStore = create<SceneState>()(
         cornerRadius: 0,
         bevelBottom: 0,
         bevelTop: 0,
-        indentBottom: 0,
-        indentTop: 0,
         isHole: kind === "hole",
       };
 
