@@ -1344,12 +1344,18 @@ export const useSceneStore = create<SceneState>()(
 
       const frontMost = shapeLayers[shapeLayers.length - 1];
       const mergedId = nanoid(8);
-      // Keep the merged shape sitting at the same physical height the
-      // front-most source was at, expressed relative to its new parent.
-      const frontMostWorldZ = getWorldTransform(state.layers, frontMost.id).z;
-      const mergedParentWorldZ = topLayer.parentId
-        ? getWorldTransform(state.layers, topLayer.parentId).z
-        : 0;
+      // Keep the merged shape sitting at the same physical height AND the
+      // same 3D tilt (pitch/yaw) the front-most source had, both expressed
+      // relative to its new parent. Roll (Z-rotation) is the one axis that
+      // gets baked directly into the merged region points above (2D outlines
+      // can only represent a flat rotation), so the merged shape's own
+      // `rotation` is correctly identity — but pitch/yaw is a purely visual
+      // 3D tilt with no 2D representation at all, so unless it's carried
+      // over here explicitly, it silently resets to flat on every merge.
+      const frontMostWorld = getWorldTransform(state.layers, frontMost.id);
+      const mergedParentWorld = topLayer.parentId
+        ? getWorldTransform(state.layers, topLayer.parentId)
+        : { z: 0, rotationX: 0, rotationY: 0 };
 
       const merged: ShapeLayer = {
         id: mergedId,
@@ -1358,7 +1364,12 @@ export const useSceneStore = create<SceneState>()(
         visible: true,
         locked: false,
         color: frontMost.color,
-        transform: { ...IDENTITY_TRANSFORM, z: Math.max(0, frontMostWorldZ - mergedParentWorldZ) },
+        transform: {
+          ...IDENTITY_TRANSFORM,
+          z: Math.max(0, frontMostWorld.z - mergedParentWorld.z),
+          rotationX: frontMostWorld.rotationX - mergedParentWorld.rotationX,
+          rotationY: frontMostWorld.rotationY - mergedParentWorld.rotationY,
+        },
         parentId: topLayer.parentId,
         regions,
         extrusionDepth: frontMost.extrusionDepth,

@@ -40,6 +40,11 @@ function isEditableTarget(el: EventTarget | null): boolean {
  * not reacted to. */
 let spacePanHeld = false;
 
+// Matches the 2D canvas's own ZOOM_KEY_FACTOR: one +/- keypress should
+// read as one clear zoom step, the same as a zoom button, not a barely
+// perceptible nudge.
+const ZOOM_KEY_FACTOR_3D = 1.4;
+
 function CameraRig({ resetSignal }: { resetSignal: number }) {
   const { camera, gl } = useThree();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- drei's
@@ -49,7 +54,7 @@ function CameraRig({ resetSignal }: { resetSignal: number }) {
   const controlsRef = useRef<any>(null);
   const bed = useSceneStore((s) => s.document.bed);
 
-  useEffect(() => {
+  function resetView() {
     const target = new THREE.Vector3(bed.width / 2, 0, bed.depth / 2);
     const dist = Math.max(bed.width, bed.depth, 60) * 1.4;
     camera.position.set(target.x + dist * 0.7, dist * 0.65, target.z + dist * 0.9);
@@ -60,11 +65,20 @@ function CameraRig({ resetSignal }: { resetSignal: number }) {
       controls.target.copy(target);
       controls.update();
     }
+  }
+
+  useEffect(() => {
+    resetView();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetSignal]);
 
   // Space+drag pans, matching the 2D canvas and Figma's own convention —
   // left-drag alone still orbits, since that's OrbitControls' own default.
+  // Cmd/Ctrl+0 and +/- mirror the SAME shortcuts Canvas2D already has —
+  // those are wired up entirely inside that component's own keydown
+  // listener, which only exists (and only ever fires) while the 2D canvas
+  // is mounted, so switching to 3D silently dropped them instead of doing
+  // nothing/erroring, which is what made them look 2D-only.
   useEffect(() => {
     const canvas = gl.domElement;
 
@@ -75,11 +89,34 @@ function CameraRig({ resetSignal }: { resetSignal: number }) {
       canvas.style.cursor = on ? "grab" : "";
     }
 
+    function dolly(factor: number) {
+      const controls = controlsRef.current;
+      const target = controls ? controls.target : new THREE.Vector3(bed.width / 2, 0, bed.depth / 2);
+      camera.position.sub(target).multiplyScalar(factor).add(target);
+      if (controls) controls.update();
+    }
+
     function onKeyDown(e: KeyboardEvent) {
-      if (e.code !== "Space" || e.repeat || isEditableTarget(e.target)) return;
-      e.preventDefault();
-      spacePanHeld = true;
-      setPanMode(true);
+      if (isEditableTarget(e.target)) return;
+      if (e.code === "Space" && !e.repeat) {
+        e.preventDefault();
+        spacePanHeld = true;
+        setPanMode(true);
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "0") {
+        e.preventDefault();
+        resetView();
+        return;
+      }
+      if (e.metaKey || e.ctrlKey) return;
+      if (e.key === "+" || e.key === "=") {
+        e.preventDefault();
+        dolly(1 / ZOOM_KEY_FACTOR_3D);
+      } else if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        dolly(ZOOM_KEY_FACTOR_3D);
+      }
     }
     function onKeyUp(e: KeyboardEvent) {
       if (e.code !== "Space") return;
@@ -93,7 +130,12 @@ function CameraRig({ resetSignal }: { resetSignal: number }) {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [gl]);
+    // resetView/dolly close over `bed` (for its Cmd+0 reset target and
+    // dolly fallback target) — re-attaching whenever the bed's own size
+    // changes is what keeps that reset target current instead of frozen
+    // at whatever it was on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gl, bed.width, bed.depth]);
 
   return <OrbitControls ref={controlsRef} makeDefault />;
 }
