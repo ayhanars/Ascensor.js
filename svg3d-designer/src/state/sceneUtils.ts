@@ -1,6 +1,7 @@
+import * as THREE from "three";
 import type { Layer, Point2, ShapeLayer, ShapeRegion, Transform2D } from "../types";
 import { differenceRegions, regionsArea, regionsIntersectionArea, unionRegions } from "../geometry/booleanOps";
-import { buildExtrudeGeometry } from "../geometry/extrude";
+import { applyLayerTransform, buildExtrudeGeometry } from "../geometry/extrude";
 
 export const IDENTITY_TRANSFORM: Transform2D = {
   x: 0,
@@ -325,9 +326,10 @@ export function getLocalShapeZRange(shape: ShapeLayer): { min: number; max: numb
 /**
  * A shape's real WORLD-space Z extent — where its actual geometry (not its
  * nominal transform.z / extrusionDepth) truly begins and ends once dressed
- * up with bevel. `transform.rotation` is always around Z alone (see
- * Transform2D), so it never tilts a shape's Z bounds — only the shape's own
- * local vertical shaping and its world Z translation matter here.
+ * up with bevel. `transform.rotation` (Z-roll) never tilts a shape's Z
+ * bounds, but `rotationX`/`rotationY` (pitch/yaw) — on this shape or any
+ * ancestor group — absolutely can: a tilted shape's lowest/highest point is
+ * no longer just its untilted local range shifted by transform.z.
  */
 export function getShapeWorldZRange(
   layers: Record<string, Layer>,
@@ -335,9 +337,50 @@ export function getShapeWorldZRange(
 ): { min: number; max: number } | null {
   const layer = layers[id];
   if (!isShapeLayer(layer)) return null;
-  const worldZ = getWorldTransform(layers, id).z;
-  const local = getLocalShapeZRange(layer);
-  return { min: worldZ + local.min, max: worldZ + local.max };
+
+  const chain: Layer[] = [];
+  let cur: Layer | undefined = layer;
+  while (cur) {
+    chain.unshift(cur);
+    cur = cur.parentId ? layers[cur.parentId] : undefined;
+  }
+
+  const hasTilt = chain.some((l) => l.transform.rotationX !== 0 || l.transform.rotationY !== 0);
+  if (!hasTilt) {
+    // Fast path for the overwhelmingly common case: with no pitch/yaw
+    // anywhere in the chain, Z is a simple additive stack (see
+    // getWorldTransform) and this shape's own local range just slides
+    // up/down by that amount — no need to touch its geometry at all.
+    const worldZ = getWorldTransform(layers, id).z;
+    const local = getLocalShapeZRange(layer);
+    return { min: worldZ + local.min, max: worldZ + local.max };
+  }
+
+  // Walk the real nested transform chain — exactly like buildAssemblyGroup
+  // does for rendering/export — so a pitch/yaw tilt anywhere in it lands
+  // this shape's geometry in the same place it would in the printed mesh,
+  // then read off the true min/max Z from the actual (tilted) vertices.
+  let parent: THREE.Object3D = new THREE.Group();
+  for (const l of chain) {
+    const node = new THREE.Group();
+    applyLayerTransform(node, l.transform);
+    parent.add(node);
+    parent = node;
+  }
+  parent.updateMatrixWorld(true);
+
+  const geometry = buildExtrudeGeometry(layer);
+  const position = geometry.getAttribute("position");
+  const v = new THREE.Vector3();
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < position.count; i++) {
+    v.set(position.getX(i), position.getY(i), position.getZ(i));
+    v.applyMatrix4(parent.matrixWorld);
+    if (v.z < min) min = v.z;
+    if (v.z > max) max = v.z;
+  }
+  return { min, max };
 }
 
 /** A shape's own regions (including its holes), with the layer's full
