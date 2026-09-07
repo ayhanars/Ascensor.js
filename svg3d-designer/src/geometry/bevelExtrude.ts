@@ -1,5 +1,7 @@
 import * as THREE from "three";
 import { roundContour } from "./roundCorners";
+import { heightMapDisplacement } from "./heightMap";
+import type { HeightMapSettings } from "../types";
 
 /**
  * Independent top/bottom edge bevels for an extruded shape — distinct from
@@ -61,6 +63,120 @@ const BEVEL_CORNER_SEGMENTS = 6;
  * the Dimple tool pressing a smooth recess into another shape) can ask for
  * that same safe maximum directly instead of guessing at a value. */
 export const BEVEL_SELF_INTERSECTION_SAFETY = 0.85;
+
+/** How many recursive 4-way splits each ear-clipped cap triangle gets when
+ * a height map is applied — 4 levels turns one triangle into 4^4 = 256
+ * smaller ones, fine enough to carry real image detail. Capped down per
+ * shape (see HEIGHT_MAP_MAX_TRIANGLES) for outlines that already have
+ * many ears of their own (an imported SVG glyph, say). */
+const HEIGHT_MAP_SUBDIVISION_DEPTH = 4;
+/** Hard ceiling on how many triangles a single height-mapped cap may
+ * produce — without this, an outline with hundreds of its own ears times
+ * 256 would turn one shape into a multi-million-triangle mesh. */
+const HEIGHT_MAP_MAX_TRIANGLES = 40000;
+
+/**
+ * Replaces a flat, ear-clipped cap with one displaced by a height map:
+ * every ear-clip triangle is recursively split into 4 sub-triangles
+ * (each new vertex placed at its parent edge's midpoint, in 2D, then
+ * given its own sampled Z), which — unlike generating an independent grid
+ * and clipping it to the polygon — exactly conforms to the shape's real
+ * outline (including holes and concave corners) with no separate
+ * boundary-stitching step, since subdivision only ever adds points
+ * strictly on existing edges or inside existing triangles.
+ *
+ * The outline's own corner vertices are shared with the wall built
+ * earlier (same indices), so their Z is displaced *in place* in
+ * `positions` rather than pushed fresh — the wall already reads from
+ * those same buffer slots, so this is what keeps the wall meeting a
+ * height-mapped cap without a seam, the same way a flat cap's corners are
+ * shared rather than duplicated.
+ */
+function buildHeightMappedCap(
+  ringXY: THREE.Vector2[],
+  holesXY: THREE.Vector2[][],
+  flatIdx: number[],
+  baseZ: number,
+  positions: number[],
+  uvs: number[],
+  indices: number[],
+  bbox: { minX: number; maxX: number; minY: number; maxY: number },
+  heightMap: HeightMapSettings,
+  reversed: boolean,
+  sign: 1 | -1,
+): void {
+  const faces = THREE.ShapeUtils.triangulateShape(ringXY, holesXY);
+  if (faces.length === 0) return;
+  const flatPts = [ringXY, ...holesXY].flat();
+
+  const spanX = bbox.maxX - bbox.minX || 1;
+  const spanY = bbox.maxY - bbox.minY || 1;
+  function offsetAt(x: number, y: number): number {
+    const u = (x - bbox.minX) / spanX;
+    const v = (y - bbox.minY) / spanY;
+    return sign * heightMapDisplacement(heightMap, u, v);
+  }
+
+  const subdivisionDepth = Math.max(
+    0,
+    Math.min(HEIGHT_MAP_SUBDIVISION_DEPTH, Math.floor(Math.log(Math.max(1, HEIGHT_MAP_MAX_TRIANGLES / faces.length)) / Math.log(4))),
+  );
+
+  interface Vert {
+    idx: number;
+    x: number;
+    y: number;
+  }
+
+  const displacedCorners = new Set<number>();
+  function cornerVertex(faceIdx: number): Vert {
+    const idx = flatIdx[faceIdx];
+    const p = flatPts[faceIdx];
+    if (!displacedCorners.has(idx)) {
+      displacedCorners.add(idx);
+      positions[idx * 3 + 2] += offsetAt(p.x, p.y);
+    }
+    return { idx, x: p.x, y: p.y };
+  }
+
+  const midpointCache = new Map<string, Vert>();
+  function midpoint(p: Vert, q: Vert): Vert {
+    const key = p.idx < q.idx ? `${p.idx}_${q.idx}` : `${q.idx}_${p.idx}`;
+    const cached = midpointCache.get(key);
+    if (cached) return cached;
+    const mx = (p.x + q.x) / 2;
+    const my = (p.y + q.y) / 2;
+    const idx = positions.length / 3;
+    positions.push(mx, my, baseZ + offsetAt(mx, my));
+    uvs.push(mx, my);
+    const result: Vert = { idx, x: mx, y: my };
+    midpointCache.set(key, result);
+    return result;
+  }
+
+  function emit(a: Vert, b: Vert, c: Vert): void {
+    if (reversed) indices.push(c.idx, b.idx, a.idx);
+    else indices.push(a.idx, b.idx, c.idx);
+  }
+
+  function subdivide(a: Vert, b: Vert, c: Vert, depthLeft: number): void {
+    if (depthLeft <= 0) {
+      emit(a, b, c);
+      return;
+    }
+    const ab = midpoint(a, b);
+    const bc = midpoint(b, c);
+    const ca = midpoint(c, a);
+    subdivide(a, ab, ca, depthLeft - 1);
+    subdivide(ab, b, bc, depthLeft - 1);
+    subdivide(ca, bc, c, depthLeft - 1);
+    subdivide(ab, bc, ca, depthLeft - 1);
+  }
+
+  for (const face of faces) {
+    subdivide(cornerVertex(face[0]), cornerVertex(face[1]), cornerVertex(face[2]), subdivisionDepth);
+  }
+}
 
 function getBevelVec(inPt: THREE.Vector2, inPrev: THREE.Vector2, inNext: THREE.Vector2): THREE.Vector2 {
   let v_trans_x: number, v_trans_y: number, shrink_by: number;
@@ -192,6 +308,8 @@ export function buildBeveledExtrudeGeometry(
   bevelTop: number,
   indentBottom = 0,
   indentTop = 0,
+  heightMapBottom?: HeightMapSettings,
+  heightMapTop?: HeightMapSettings,
 ): THREE.BufferGeometry {
   const bottomIsIndent = indentBottom !== 0;
   const topIsIndent = indentTop !== 0;
@@ -398,63 +516,194 @@ export function buildBeveledExtrudeGeometry(
     const holeIdx = holeRings.map(buildIndexedColumns);
 
     // ---- Side walls: ruled quads between every pair of consecutive rings ----
-    function buildWalls(idxRings: number[][]) {
+    // Decides each quad's winding by propagating outward-facing continuity
+    // from both caps toward the middle, rather than any single global
+    // test. Earlier attempts at a global test all failed once actually
+    // checked: reasoning from the ring pair's Z direction alone broke down
+    // for Indent (whose curve changes the radial inset at the same time
+    // as Z, which a Z-only check can't tell apart); a per-quad reference
+    // vector built from that same quad's own four points turned out to be
+    // tautological (not actually independent of the thing it was
+    // checking); and a fixed global interior point doesn't work either,
+    // since a concave Indent's recess isn't star-shaped from any single
+    // point in the material.
+    //
+    // A single anchor-and-walk pass (from the bottom cap, say) turned out
+    // to only be reliable once it had a few steps of easy wall to settle
+    // into before hitting a genuinely tricky stretch of curve — anchored
+    // from the OTHER end instead, that same curve stayed correct
+    // throughout, simply because that direction warmed up on easy wall
+    // first. Running both directions and, for each ring pair, trusting
+    // whichever pass has had more steps to settle (i.e. is currently
+    // closer to its own anchor) gets a warm-up on every stretch of curve
+    // regardless of which end it's nearest to — this still isn't perfect
+    // for the rarer case of BOTH ends being their own Indent curve at
+    // once (nothing easy borders either cap then), but it's a strict
+    // improvement over a single-direction anchor for every other case,
+    // and doesn't regress any of them the way anchoring from the single
+    // least-inset ring transition instead (tried and reverted) did — that
+    // transition's own normal has essentially no Z component by
+    // construction (it's the straightest, most vertical wall around), so
+    // it can't actually discriminate which way nearby curved segments
+    // should tilt, unlike a cap's normal which always has a strong,
+    // unambiguous vertical component to anchor against.
+    //
+    // The anchor itself has to be each cap's own ACTUAL computed normal
+    // (from the exact same triangulation + winding its real cap triangles
+    // use) rather than an assumed "always (0,0,±1)" constant: that
+    // assumption holds for a lightly-inset cap, but once Indent's cap ring
+    // is inset heavily enough toward the center (which it always is, by
+    // exactly `bottom`/`top`), nothing guarantees
+    // `THREE.ShapeUtils.triangulateShape` still winds it the same
+    // rotational sense the un-inset outer contour does.
+    function computeCapNormalRef(ringXY: THREE.Vector2[], holesXY: THREE.Vector2[][], z: number, reversed: boolean): THREE.Vector3 {
+      const faces = THREE.ShapeUtils.triangulateShape(ringXY, holesXY);
+      if (faces.length === 0) return new THREE.Vector3(0, 0, reversed ? -1 : 1);
+      const flat = [ringXY, ...holesXY].flat();
+      const [fi0, fi1, fi2] = faces[0];
+      const order = reversed ? [fi2, fi1, fi0] : [fi0, fi1, fi2];
+      const [p0, p1, p2] = order.map((idx) => flat[idx]);
+      const v0 = new THREE.Vector3(p0.x, p0.y, z);
+      const v1 = new THREE.Vector3(p1.x, p1.y, z);
+      const v2 = new THREE.Vector3(p2.x, p2.y, z);
+      return new THREE.Vector3().subVectors(v1, v0).cross(new THREE.Vector3().subVectors(v2, v0));
+    }
+    const bottomCapNormalRef = computeCapNormalRef(
+      contourRings[0],
+      holeRings.map((hr) => hr[0]),
+      rings[0].z,
+      true,
+    );
+    const topCapNormalRef = computeCapNormalRef(
+      contourRings[rings.length - 1],
+      holeRings.map((hr) => hr[rings.length - 1]),
+      rings[rings.length - 1].z,
+      false,
+    );
+
+    function buildWalls(idxRings: number[][], points: THREE.Vector2[], movements: THREE.Vector2[]) {
+      function ringPos(pointIdx: number, ringIdx: number): THREE.Vector3 {
+        const p = points[pointIdx];
+        const m = movements[pointIdx];
+        const rg = rings[ringIdx];
+        return new THREE.Vector3(p.x + m.x * rg.offset, p.y + m.y * rg.offset, rg.z);
+      }
+
       const n = idxRings[0].length;
+      const numTransitions = rings.length - 1;
       let i = n;
       while (--i >= 0) {
         const j = i;
         let k = i - 1;
         if (k < 0) k = n - 1;
-        for (let r = 0; r < rings.length - 1; r++) {
+
+        // A curved quad isn't necessarily planar, so its two triangles can
+        // end up tilted enough relative to each other that they need
+        // OPPOSITE vertex-swap decisions — deciding both from just one
+        // triangle's normal left the other one silently flipped wherever
+        // the quad twisted enough for that to matter, so each gets its
+        // own independent decision against whatever's trusted.
+        function decide(pA: THREE.Vector3, pB: THREE.Vector3, pD: THREE.Vector3, trusted: THREE.Vector3): { flipped: boolean; normal: THREE.Vector3 } {
+          const normal = new THREE.Vector3().subVectors(pB, pA).cross(new THREE.Vector3().subVectors(pD, pA));
+          if (normal.dot(trusted) >= 0) return { flipped: false, normal };
+          normal.negate();
+          return { flipped: true, normal };
+        }
+
+        const fwd: { flip1: boolean; flip2: boolean }[] = [];
+        let trustedFwd = bottomCapNormalRef;
+        for (let r = 0; r < numTransitions; r++) {
+          const pA = ringPos(j, r);
+          const pB = ringPos(k, r);
+          const pC = ringPos(k, r + 1);
+          const pD = ringPos(j, r + 1);
+          const d1 = decide(pA, pB, pD, trustedFwd);
+          const d2 = decide(pB, pC, pD, trustedFwd);
+          fwd.push({ flip1: d1.flipped, flip2: d2.flipped });
+          trustedFwd = d2.normal;
+        }
+
+        const bwd: { flip1: boolean; flip2: boolean }[] = new Array(numTransitions);
+        let trustedBwd = topCapNormalRef;
+        for (let r = numTransitions - 1; r >= 0; r--) {
+          const pA = ringPos(j, r);
+          const pB = ringPos(k, r);
+          const pC = ringPos(k, r + 1);
+          const pD = ringPos(j, r + 1);
+          // Walking downward, triangle (b,c,d) borders the already-settled
+          // ring r+1 side, so it's decided (and trusted) first this time.
+          const d2 = decide(pB, pC, pD, trustedBwd);
+          const d1 = decide(pA, pB, pD, trustedBwd);
+          bwd[r] = { flip1: d1.flipped, flip2: d2.flipped };
+          trustedBwd = d1.normal;
+        }
+
+        for (let r = 0; r < numTransitions; r++) {
+          const stepsFromBottom = r;
+          const stepsFromTop = numTransitions - 1 - r;
+          const choice = stepsFromBottom <= stepsFromTop ? fwd[r] : bwd[r];
+
           const a = idxRings[r][j];
           const b = idxRings[r][k];
           const c = idxRings[r + 1][k];
           const d = idxRings[r + 1][j];
-          // This formula's winding is only correct for a ring pair whose Z
-          // ascends from r to r+1 (a plain wall, and both bevel curves,
-          // always do). Indent's rim-first sweep needs the opposite: the
-          // *concave* case on top and the *convex* case on bottom both
-          // have Z descend instead (the curve runs from the rim at full
-          // height down toward the pressed-in or bulged-out center), which
-          // silently mirrors every triangle here into facing inward
-          // instead of outward. Only the direction differs — the ring
-          // order itself (rim-first) stays right for both, per the note
-          // on the Indent blocks below — so swap two vertices in each
-          // triangle for a descending pair to flip its normal back
-          // outward, rather than reordering the rings themselves.
-          if (rings[r + 1].z >= rings[r].z) {
-            indices.push(a, b, d);
-            indices.push(b, c, d);
-          } else {
-            indices.push(a, d, b);
-            indices.push(b, d, c);
-          }
+
+          if (choice.flip1) indices.push(a, d, b);
+          else indices.push(a, b, d);
+
+          if (choice.flip2) indices.push(b, d, c);
+          else indices.push(b, c, d);
         }
       }
     }
 
-    buildWalls(contourIdx);
-    holeIdx.forEach(buildWalls);
+    buildWalls(contourIdx, contour, contourMovements);
+    holeIdx.forEach((hi, hIdx) => buildWalls(hi, holes[hIdx], holesMovements[hIdx]));
 
     // ---- Caps: ear-clip triangulate the bottom-most and top-most rings,
     // reusing the SAME vertex indices those rings' walls already created
     // (rather than pushing fresh ones) so the cap is properly stitched
-    // into the same smoothing group as the curve it caps off. ----
+    // into the same smoothing group as the curve it caps off — unless a
+    // height map applies to that face, in which case the ear-clip result
+    // is subdivided and displaced instead of triangulated flat. ----
+    let bbox: { minX: number; maxX: number; minY: number; maxY: number } | null = null;
+    if (heightMapBottom || heightMapTop) {
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      for (const p of contour) {
+        minX = Math.min(minX, p.x);
+        maxX = Math.max(maxX, p.x);
+        minY = Math.min(minY, p.y);
+        maxY = Math.max(maxY, p.y);
+      }
+      bbox = { minX, maxX, minY, maxY };
+    }
+
     const bottomRingXY = contourRings[0];
     const bottomHolesXY = holeRings.map((hr) => hr[0]);
-    const bottomFaces = THREE.ShapeUtils.triangulateShape(bottomRingXY, bottomHolesXY);
     const bottomFlatIdx = [contourIdx[0], ...holeIdx.map((hi) => hi[0])].flat();
-    for (const face of bottomFaces) {
-      indices.push(bottomFlatIdx[face[2]], bottomFlatIdx[face[1]], bottomFlatIdx[face[0]]);
+    if (heightMapBottom && bbox) {
+      buildHeightMappedCap(bottomRingXY, bottomHolesXY, bottomFlatIdx, rings[0].z, positions, uvs, indices, bbox, heightMapBottom, true, -1);
+    } else {
+      const bottomFaces = THREE.ShapeUtils.triangulateShape(bottomRingXY, bottomHolesXY);
+      for (const face of bottomFaces) {
+        indices.push(bottomFlatIdx[face[2]], bottomFlatIdx[face[1]], bottomFlatIdx[face[0]]);
+      }
     }
 
     const topIdx = rings.length - 1;
     const topRingXY = contourRings[topIdx];
     const topHolesXY = holeRings.map((hr) => hr[topIdx]);
-    const topFaces = THREE.ShapeUtils.triangulateShape(topRingXY, topHolesXY);
     const topFlatIdx = [contourIdx[topIdx], ...holeIdx.map((hi) => hi[topIdx])].flat();
-    for (const face of topFaces) {
-      indices.push(topFlatIdx[face[0]], topFlatIdx[face[1]], topFlatIdx[face[2]]);
+    if (heightMapTop && bbox) {
+      buildHeightMappedCap(topRingXY, topHolesXY, topFlatIdx, rings[topIdx].z, positions, uvs, indices, bbox, heightMapTop, false, 1);
+    } else {
+      const topFaces = THREE.ShapeUtils.triangulateShape(topRingXY, topHolesXY);
+      for (const face of topFaces) {
+        indices.push(topFlatIdx[face[0]], topFlatIdx[face[1]], topFlatIdx[face[2]]);
+      }
     }
   }
 

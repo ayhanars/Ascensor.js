@@ -58,24 +58,83 @@ function regionsToThreeShapes(regions: ShapeRegion[]): THREE.Shape[] {
   });
 }
 
+interface CachedGeometryEntry {
+  regions: ShapeLayer["regions"];
+  cornerRadius: number;
+  extrusionDepth: number;
+  bevelBottom: number;
+  bevelTop: number;
+  indentBottom: number;
+  indentTop: number;
+  heightMapBottom: ShapeLayer["heightMapBottom"];
+  heightMapTop: ShapeLayer["heightMapTop"];
+  geometry: THREE.BufferGeometry;
+}
+
+/**
+ * Keyed by layer id rather than the layer object itself — every store
+ * update replaces the whole `layers` map (and every layer object in it,
+ * even ones nothing touched), so object-identity caching would miss on
+ * every single edit. Only the handful of fields that actually feed
+ * geometry construction are compared; regions is checked by reference
+ * (it's only ever replaced wholesale — a corner-radius/import edit — not
+ * mutated in place), so dragging one shape's bevel/indent slider no
+ * longer silently rebuilds every OTHER shape's geometry too on each
+ * pointer-move event, which is what made those sliders feel laggy: this
+ * function is what both the 3D viewport and the floating-shape/auto-stack
+ * Z-range math call for every visible shape, every render.
+ */
+const geometryCache = new Map<string, CachedGeometryEntry>();
+
 export function buildExtrudeGeometry(layer: ShapeLayer): THREE.BufferGeometry {
-  const shapes = regionsToThreeShapes(roundRegions(layer.regions, layer.cornerRadius));
-  const depth = Math.max(0.05, layer.extrusionDepth);
   const bevelBottom = layer.bevelBottom ?? 0;
   const bevelTop = layer.bevelTop ?? 0;
   const indentBottom = layer.indentBottom ?? 0;
   const indentTop = layer.indentTop ?? 0;
 
-  if (bevelBottom > 0 || bevelTop > 0 || indentBottom !== 0 || indentTop !== 0) {
-    return buildBeveledExtrudeGeometry(shapes, depth, bevelBottom, bevelTop, indentBottom, indentTop);
+  const heightMapBottom = layer.heightMapBottom;
+  const heightMapTop = layer.heightMapTop;
+
+  const cached = geometryCache.get(layer.id);
+  if (
+    cached &&
+    cached.regions === layer.regions &&
+    cached.cornerRadius === layer.cornerRadius &&
+    cached.extrusionDepth === layer.extrusionDepth &&
+    cached.bevelBottom === bevelBottom &&
+    cached.bevelTop === bevelTop &&
+    cached.indentBottom === indentBottom &&
+    cached.indentTop === indentTop &&
+    cached.heightMapBottom === heightMapBottom &&
+    cached.heightMapTop === heightMapTop
+  ) {
+    return cached.geometry;
   }
 
-  const geometry = new THREE.ExtrudeGeometry(shapes, {
-    depth,
-    bevelEnabled: false,
-    curveSegments: 1,
+  const shapes = regionsToThreeShapes(roundRegions(layer.regions, layer.cornerRadius));
+  const depth = Math.max(0.05, layer.extrusionDepth);
+
+  const geometry =
+    bevelBottom > 0 || bevelTop > 0 || indentBottom !== 0 || indentTop !== 0 || heightMapBottom || heightMapTop
+      ? buildBeveledExtrudeGeometry(shapes, depth, bevelBottom, bevelTop, indentBottom, indentTop, heightMapBottom, heightMapTop)
+      : (() => {
+          const g = new THREE.ExtrudeGeometry(shapes, { depth, bevelEnabled: false, curveSegments: 1 });
+          g.computeVertexNormals();
+          return g;
+        })();
+
+  geometryCache.set(layer.id, {
+    regions: layer.regions,
+    cornerRadius: layer.cornerRadius,
+    extrusionDepth: layer.extrusionDepth,
+    bevelBottom,
+    bevelTop,
+    indentBottom,
+    indentTop,
+    heightMapBottom,
+    heightMapTop,
+    geometry,
   });
-  geometry.computeVertexNormals();
   return geometry;
 }
 

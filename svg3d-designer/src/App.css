@@ -418,6 +418,26 @@
   cursor: pointer;
 }
 
+/* Every distinct color already used somewhere in the project, offered as
+   one-click swatches — reusing an existing color (instead of eyeballing
+   the same hex again) is what keeps a multi-part model's palette
+   consistent. */
+.color-palette-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+.color-palette-swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.color-palette-swatch.active { border-color: var(--accent); border-width: 2px; }
+
 .color-picker-wrapper { position: relative; display: inline-flex; }
 .color-picker-popover {
   /* position: fixed with an explicit top/left computed in JS (clamped to
@@ -711,14 +731,20 @@
 .z-slider-wrap {
   position: relative;
   width: 28px;
-  height: 130px;
+  /* Longer than it looks like it needs to be on purpose — the whole
+     [0, bed height] range is spread across this physical length, so a
+     short track (the original 130px) packed a typical ~250mm-tall bed
+     into so few pixels that every small mouse movement jumped several mm,
+     making fine height adjustments basically impossible. Doubling the
+     track halves how many mm one pixel of drag covers. */
+  height: 260px;
 }
 
 .z-slider {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 130px;
+  width: 260px;
   height: 28px;
   margin: 0;
   transform: translate(-50%, -50%) rotate(-90deg);

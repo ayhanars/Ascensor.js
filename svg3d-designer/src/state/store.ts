@@ -6,6 +6,7 @@ import type {
   AlignMode,
   DocumentSettings,
   GroupLayer,
+  HeightMapSettings,
   Layer,
   Plate,
   PrintBed,
@@ -179,6 +180,28 @@ function buildBlankProjectContent(): { content: TrackedSceneSlice; activePlateId
 }
 
 /**
+ * Every project saved to disk keeps whatever Transform2D fields existed at
+ * the time it was saved — a project saved before rotationX/rotationY
+ * existed simply has neither key at all, `as ProjectContent` notwithstanding
+ * (that cast is compile-time only; nothing validates the JSON at runtime).
+ * Reading a missing field back as `undefined` poisons every downstream
+ * NaN-sensitive computation, most visibly the 3D render/export quaternion
+ * (see extrude.ts's applyLayerTransform): a single NaN angle corrupts every
+ * component of the composed rotation, not just its own axis, so the whole
+ * mesh silently stops rendering. Layering IDENTITY_TRANSFORM's defaults
+ * underneath every loaded transform (rather than trusting the save to be
+ * complete) is what makes opening an old project safe regardless of which
+ * fields existed when it was written — including ones added after this.
+ */
+function normalizeLoadedLayers(layers: Record<string, Layer>): Record<string, Layer> {
+  const result: Record<string, Layer> = {};
+  for (const [id, layer] of Object.entries(layers)) {
+    result[id] = { ...layer, transform: { ...IDENTITY_TRANSFORM, ...layer.transform } };
+  }
+  return result;
+}
+
+/**
  * What to show on first paint: resume the last-open project if one
  * exists in this browser's storage, otherwise start a brand-new one (and
  * persist it immediately, so it already exists in the project browser's
@@ -191,6 +214,7 @@ function resolveInitialState(): TrackedSceneSlice & { activePlateId: string; act
     if (content) {
       return {
         ...content,
+        layers: normalizeLoadedLayers(content.layers),
         // Older saved projects predate this field entirely.
         dismissedFloatingIds: content.dismissedFloatingIds ?? [],
         activePlateId: content.plates[0]?.id ?? defaultPlates().activePlateId,
@@ -277,6 +301,14 @@ interface SceneState {
   setIndentBottom: (id: string, mm: number) => void;
   /** Same as setIndentBottom, for the top face. */
   setIndentTop: (id: string, mm: number) => void;
+  /** Sets or clears (`null`) a face's height-map displacement — see
+   * `ShapeLayer.heightMapBottom`/`heightMapTop`. Whole-object replace,
+   * used for uploading a new image or removing one entirely; see
+   * `updateHeightMapSettings` for tweaking strength/invert in place. */
+  setHeightMap: (id: string, face: "bottom" | "top", settings: HeightMapSettings | null) => void;
+  /** Adjusts strength/invert on a face's already-set height map without
+   * touching its sampled image data. */
+  updateHeightMapSettings: (id: string, face: "bottom" | "top", patch: Partial<Pick<HeightMapSettings, "strength" | "invert">>) => void;
   setIsHole: (id: string, value: boolean) => void;
   /**
    * Repositions a hole shape into a recessed pocket instead of a full
@@ -458,6 +490,7 @@ export const useSceneStore = create<SceneState>()(
     useSceneStore.temporal.getState().pause();
     set({
       ...content,
+      layers: normalizeLoadedLayers(content.layers),
       dismissedFloatingIds: content.dismissedFloatingIds ?? [],
       activePlateId: content.plates[0]?.id ?? defaultPlates().activePlateId,
       activeProjectId: id,
@@ -624,6 +657,34 @@ export const useSceneStore = create<SceneState>()(
       };
     }),
 
+  setHeightMap: (id, face, settings) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape") return {};
+      const field = face === "bottom" ? "heightMapBottom" : "heightMapTop";
+      return {
+        layers: {
+          ...state.layers,
+          [id]: { ...layer, [field]: settings ?? undefined } as ShapeLayer,
+        },
+      };
+    }),
+
+  updateHeightMapSettings: (id, face, patch) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape") return {};
+      const field = face === "bottom" ? "heightMapBottom" : "heightMapTop";
+      const current = layer[field];
+      if (!current) return {};
+      return {
+        layers: {
+          ...state.layers,
+          [id]: { ...layer, [field]: { ...current, ...patch } } as ShapeLayer,
+        },
+      };
+    }),
+
   setIsHole: (id, value) =>
     set((state) => {
       const layer = state.layers[id];
@@ -718,33 +779,75 @@ export const useSceneStore = create<SceneState>()(
         })
         .sort((a, b) => b.area - a.area);
 
-      const layers = { ...state.layers };
-      const placed: { regions: ReturnType<typeof getWorldRegions>; topZ: number }[] = [];
+      // A single top-to-bottom walk (largest footprint first) assumes the
+      // physical base is always the bigger of any two overlapping shapes —
+      // true almost always, but not for something like a wide flat lid
+      // resting on a small post: the lid (bigger area) gets walked, and
+      // therefore placed, BEFORE its actual support (the smaller post)
+      // has a settled height to rest on, so it lands wrong on this pass.
+      // The post itself still resolves correctly later in the same pass,
+      // which is exactly what let it look fixed only "the second click" —
+      // the first click did move the post, just not in time to help the
+      // lid that already walked past it. Repeating the whole walk against
+      // each pass's own settled heights (rather than the original,
+      // possibly-stale ones) converges any such case within a few passes
+      // instead of needing another manual click — footprints/areas never
+      // change here, only the z each shape settles at, so only the walk
+      // itself needs repeating.
+      const MAX_STACK_PASSES = 8;
+      let layers = state.layers;
+      for (let pass = 0; pass < MAX_STACK_PASSES; pass++) {
+        const nextLayers = { ...layers };
+        const placed: { regions: ReturnType<typeof getWorldRegions>; topZ: number }[] = [];
+        let anyChanged = false;
 
-      for (const { id, regions } of withRegions) {
-        const layer = layers[id] as ShapeLayer;
-        const localZRange = getLocalShapeZRange(layer);
+        for (const { id, regions } of withRegions) {
+          const layer = layers[id] as ShapeLayer;
+          const localZRange = getLocalShapeZRange(layer);
 
-        // baseZ is the tallest already-placed shape this one's real
-        // outline genuinely overlaps — not merely bbox-adjacent to. A
-        // shape only partially covered by that support (part of it
-        // hanging over empty space) is left for the persistent
-        // floating-shape banner to catch and offer a targeted fix for.
-        let baseZ = 0;
-        for (const p of placed) {
-          if (p.topZ <= baseZ) continue; // can't raise baseZ any further
-          if (regionsIntersectionArea(regions, p.regions) > 1e-6) baseZ = p.topZ;
+          // A shape nested inside a group is part of a deliberately
+          // assembled sub-structure — grouping it in the first place was
+          // the user locking its position relative to its siblings, not
+          // an accident of drag order. Auto-Stack still treats it as
+          // real, solid support that an ungrouped shape can land on top
+          // of, but never repositions it itself: otherwise clicking
+          // Auto-Stack silently dropped any deliberately-elevated part
+          // of a group straight to the bed the instant it didn't happen
+          // to overlap something else, which read as "Auto-Stack resets
+          // my groups".
+          if (layer.parentId !== null) {
+            const parentWorldZ = getWorldTransform(layers, layer.parentId).z;
+            placed.push({ regions, topZ: layer.transform.z + parentWorldZ + localZRange.max });
+            continue;
+          }
+
+          // baseZ is the tallest already-placed shape this one's real
+          // outline genuinely overlaps — not merely bbox-adjacent to. A
+          // shape only partially covered by that support (part of it
+          // hanging over empty space) is left for the persistent
+          // floating-shape banner to catch and offer a targeted fix for.
+          let baseZ = 0;
+          for (const p of placed) {
+            if (p.topZ <= baseZ) continue; // can't raise baseZ any further
+            if (regionsIntersectionArea(regions, p.regions) > 1e-6) baseZ = p.topZ;
+          }
+
+          // This shape is always top-level here (nested ones already
+          // continued above), so there's no parent offset to subtract —
+          // baseZ converts straight to local Z, just relative to this
+          // shape's own real geometric bottom (localZRange.min), which is
+          // below local z=0 for a shape with a convex Indent bulge.
+          const localZ = Math.max(0, baseZ - localZRange.min);
+          if (Math.abs(localZ - layer.transform.z) > 1e-6) {
+            nextLayers[id] = { ...layer, transform: { ...layer.transform, z: localZ } };
+            anyChanged = true;
+          }
+
+          placed.push({ regions, topZ: localZ + localZRange.max });
         }
 
-        // baseZ is a world-space height; convert it back to this layer's
-        // own local Z, relative to whatever group it's nested in — and
-        // relative to its own real geometric bottom (localZRange.min),
-        // which is below local z=0 for a shape with a convex Indent bulge.
-        const parentWorldZ = layer.parentId ? getWorldTransform(layers, layer.parentId).z : 0;
-        const localZ = Math.max(0, baseZ - parentWorldZ - localZRange.min);
-        layers[id] = { ...layer, transform: { ...layer.transform, z: localZ } };
-
-        placed.push({ regions, topZ: localZ + parentWorldZ + localZRange.max });
+        layers = nextLayers;
+        if (!anyChanged) break;
       }
       return { layers };
     });

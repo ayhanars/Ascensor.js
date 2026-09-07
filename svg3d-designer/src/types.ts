@@ -19,6 +19,33 @@ export interface ShapeRegion {
   holes: Contour[];
 }
 
+/**
+ * A grayscale image, pre-sampled once (at upload time — see
+ * `geometry/heightMap.ts`) into a small numeric grid, rather than stored
+ * as raw image data the geometry builder would need to decode. Image
+ * decoding is inherently async in a browser; geometry building is not
+ * (every shape's mesh is rebuilt synchronously during render), so keeping
+ * the image itself out of the hot path — and out of what needs decoding
+ * again on project load — is what lets a height-mapped face behave like
+ * any other geometry-affecting property.
+ */
+export interface HeightMapSettings {
+  /** Row-major grid of relative heights in [0, 1], sampled from the
+   * source image's luminance. samples[row][col]; row 0 is the image's
+   * top edge, col 0 its left edge. */
+  samples: number[][];
+  /** How many mm of displacement a sample of 1 (or 0, if inverted)
+   * produces at full strength; a sample of 0.5 always means no
+   * displacement, regardless of strength. */
+  strength: number;
+  /** Flips which end of the grayscale range pushes the surface out vs in. */
+  invert: boolean;
+  /** A small data-URL thumbnail of the source image, kept only so the
+   * Inspector can show the user what's applied — never read by geometry
+   * building, which uses `samples` exclusively. */
+  previewDataUrl: string;
+}
+
 export interface Transform2D {
   x: number; // mm, position of the layer origin on the document
   y: number; // mm
@@ -78,6 +105,21 @@ export interface ShapeLayer extends LayerCommon {
    * center inward/downward (concave); negative pushes it outward/upward
    * (convex bulge). */
   indentTop: number;
+  /**
+   * A procedural, image-driven alternative to Indent for the bottom
+   * face's whole-face treatment — same "None/Bevel/Indent" exclusivity
+   * per face, just a fourth option. Rather than one fixed dish/bulge
+   * profile, every point on the face gets its own height sampled from a
+   * grayscale image, letting a logo, a text stamp, or a photo-derived
+   * relief carve or emboss itself into the surface with no manual
+   * sculpting. Undefined (the normal case) means this face has no height
+   * map — matches bevelBottom/indentBottom's "0 = off" convention using
+   * `undefined` instead of `0` since there's no scalar amount, just
+   * present-or-not.
+   */
+  heightMapBottom?: HeightMapSettings;
+  /** Same as heightMapBottom, for the top face. */
+  heightMapTop?: HeightMapSettings;
   /**
    * When true, this shape isn't printed as its own solid — its extruded
    * volume is subtracted (a real 3D boolean difference) from every solid

@@ -82,7 +82,11 @@ export function resolvePushes(
   const movedSet = new Set(movedIds);
   const pushedPositions = new Map<string, { x: number; y: number }>();
 
-  let moverRegions: ShapeRegion[] = movedIds.flatMap((id) => getWorldRegions(layers, id));
+  // The shapes actually being dragged never move again during this
+  // resolution — only the obstacles being pushed do — so this stays fixed
+  // across every pass; each obstacle's own "what do I need to clear"
+  // set is built fresh per obstacle below instead (see baseMoverRegions).
+  const baseMoverRegions: ShapeRegion[] = movedIds.flatMap((id) => getWorldRegions(layers, id));
 
   const obstacles = candidateIds.filter((id) => {
     if (movedSet.has(id)) return false;
@@ -104,22 +108,30 @@ export function resolvePushes(
       const currentRegions = already
         ? translateRegions(getWorldRegions(layers, id), already.x - layer.transform.x, already.y - layer.transform.y)
         : getWorldRegions(layers, id);
-      const distance = findClearDistance(moverRegions, currentRegions, ux, uy);
+      // What this one obstacle needs to clear: the original movers, plus
+      // every OTHER obstacle already pushed this call (so a chain — A
+      // pushes B, B's new spot now overlaps C — resolves within the
+      // loop) — but never this same obstacle's own just-pushed position.
+      // Including that would mean checking it for overlap against
+      // itself: 100% self-overlap, no matter how far it had already
+      // moved, which forced another huge "escape" push every single
+      // pass — this was the actual cause of objects rocketing away.
+      const othersPushed = Array.from(pushedPositions.entries())
+        .filter(([otherId]) => otherId !== id)
+        .flatMap(([otherId, pos]) => {
+          const otherLayer = layers[otherId];
+          return isShapeLayer(otherLayer)
+            ? translateRegions(getWorldRegions(layers, otherId), pos.x - otherLayer.transform.x, pos.y - otherLayer.transform.y)
+            : [];
+        });
+      const avoidRegions = [...baseMoverRegions, ...othersPushed];
+      const distance = findClearDistance(avoidRegions, currentRegions, ux, uy);
       if (distance <= 0) continue;
       const base = already ?? { x: layer.transform.x, y: layer.transform.y };
       pushedPositions.set(id, { x: base.x + ux * distance, y: base.y + uy * distance });
       anyPushed = true;
     }
     if (!anyPushed) break;
-    // Next pass checks against everything pushed so far too, so a chain
-    // (A pushes B, B's new spot now overlaps C) resolves within the loop.
-    moverRegions = [
-      ...movedIds.flatMap((id) => getWorldRegions(layers, id)),
-      ...Array.from(pushedPositions.entries()).flatMap(([id, pos]) => {
-        const layer = layers[id];
-        return isShapeLayer(layer) ? translateRegions(getWorldRegions(layers, id), pos.x - layer.transform.x, pos.y - layer.transform.y) : [];
-      }),
-    ];
   }
 
   return Array.from(pushedPositions.entries()).map(([id, pos]) => ({ id, x: pos.x, y: pos.y }));
