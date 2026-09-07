@@ -32,6 +32,7 @@ import {
   getWorldTransform,
   IDENTITY_TRANSFORM,
   invertTransform2D,
+  widenThinFeatures,
 } from "./sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
 import {
@@ -301,6 +302,7 @@ interface SceneState {
   autoStackLayers: () => void;
   fixFloatingLayers: (ids: string[]) => void;
   dismissFloatingWarning: (ids: string[]) => void;
+  fixThinFeatures: (ids: string[]) => void;
   deleteLayer: (id: string) => void;
   deleteSelection: () => void;
   duplicateLayer: (id: string) => void;
@@ -884,6 +886,22 @@ export const useSceneStore = create<SceneState>()(
     set((state) => ({
       dismissedFloatingIds: Array.from(new Set([...state.dismissedFloatingIds, ...ids])),
     })),
+
+  fixThinFeatures: (ids) => {
+    let fixedCount = 0;
+    set((state) => {
+      const layers = { ...state.layers };
+      for (const id of ids) {
+        const layer = state.layers[id];
+        if (!layer || layer.type !== "shape") continue;
+        const fixedRegions = widenThinFeatures(state.layers, id);
+        layers[id] = { ...layer, regions: fixedRegions } as ShapeLayer;
+        fixedCount++;
+      }
+      return { layers };
+    });
+    if (fixedCount > 0) showToast(`Widened ${fixedCount} too-thin shape${fixedCount === 1 ? "" : "s"}`);
+  },
 
   deleteLayer: (id) =>
     set((state) => {
