@@ -10,6 +10,7 @@ interface Props {
   onExportStl: () => void;
   onExport3mf: () => void;
   onExportAllPlates: (format: "stl" | "3mf") => void;
+  onExportProjectJson: () => void;
   onResetView: () => void;
   onOpenProjects: () => void;
   exportDisabled: boolean;
@@ -23,6 +24,7 @@ export function TopToolbar({
   onExportStl,
   onExport3mf,
   onExportAllPlates,
+  onExportProjectJson,
   onResetView,
   onOpenProjects,
   exportDisabled,
@@ -141,6 +143,17 @@ export function TopToolbar({
                 </button>
               </>
             )}
+            <div className="export-menu-sep" />
+            <button
+              className="export-menu-item"
+              onClick={() => {
+                onExportProjectJson();
+                setExportMenuOpen(false);
+              }}
+            >
+              <span>Project (.json)</span>
+              <span className="export-menu-item-hint">Raw project data — for sharing or backup, not for printing</span>
+            </button>
           </div>
         )}
       </div>

@@ -16,7 +16,7 @@ import { useTheme } from "./state/theme";
 import { collectShapeLayers, isEffectivelyVisible } from "./state/sceneUtils";
 import { showToast } from "./state/toastStore";
 import { mergeSceneIntoSingleLayer, parseSvgToScene, type ParsedScene } from "./svg/parse";
-import { exportSceneToStl } from "./export/stl";
+import { downloadBlob, exportSceneToStl } from "./export/stl";
 import { exportSceneToThreeMf } from "./export/threemf";
 import { exportAllPlatesToZip } from "./export/multiPlate";
 
@@ -193,6 +193,26 @@ function App() {
           const count = await exportAllPlatesToZip(layers, state.plates, rootIdsByPlate, documentName, format);
           if (count > 0) showToast(`Exported ${count} plate${count === 1 ? "" : "s"} as ${format.toUpperCase()}`);
           else showToast("No objects on any plate to export", { tone: "warning" });
+        }}
+        onExportProjectJson={() => {
+          // The exact same shape a project persists as (see
+          // ProjectContent in state/projects.ts) — everything, not just
+          // the active plate, so this is a real, re-importable snapshot
+          // of the whole project rather than a partial dump. Mainly meant
+          // as a way to hand over the actual underlying data for a bug
+          // report, not (yet) a re-import feature.
+          const state = useSceneStore.getState();
+          const content = {
+            document: state.document,
+            layers: state.layers,
+            rootIds: state.rootIds,
+            plates: state.plates,
+            plateOf: state.plateOf,
+            dismissedFloatingIds: state.dismissedFloatingIds,
+          };
+          const blob = new Blob([JSON.stringify(content, null, 2)], { type: "application/json" });
+          downloadBlob(blob, `${documentName}.json`);
+          showToast(`Exported ${documentName}.json`);
         }}
         onResetView={() => setResetSignal((n) => n + 1)}
         onOpenProjects={() => setProjectsOpen(true)}
