@@ -1,9 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { beginGesture, endGesture, useActivePlateRootIds, useSceneStore, type TrackedSceneSlice } from "../state/store";
-import { boundsOverlap, getLayerWorldBounds, getMultiLayerWorldBounds, getTopLevelId, isAncestorOrSelf, isEffectivelyLocked, stepIntoOnClick } from "../state/sceneUtils";
+import {
+  boundsOverlap,
+  getLayerWorldBounds,
+  getLocalShapeBounds,
+  getMultiLayerWorldBounds,
+  getTopLevelId,
+  isAncestorOrSelf,
+  isEffectivelyLocked,
+  stepIntoOnClick,
+} from "../state/sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
-import { resolvePushes } from "../geometry/pushResolution";
-import type { Layer, ShapeRegion } from "../types";
+import type { Layer, ShapeRegion, Transform2D } from "../types";
 import { InfoIcon } from "./icons";
 
 function isEditableTarget(el: EventTarget | null): boolean {
@@ -51,6 +59,34 @@ const ZOOM_KEY_FACTOR = 1.4;
 // How far the selection outline sits outside a shape's own edge — see the
 // comment where it's used for why this can't just be 0.
 const SELECTION_OUTLINE_MARGIN_MM = 0.6;
+
+/** Never let a resize handle drag scale a shape down to (or past) zero —
+ * that flips into negative scale, which corrupts triangle winding on
+ * export (see extrude.ts's own comment on why scale is never negative). */
+const MIN_RESIZE_SCALE = 0.02;
+
+type ResizeHandle = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+
+/** Rotates a 2D vector by `deg`, matching the exact convention SVG's own
+ * `rotate()` transform uses (a standard rotation matrix applied in this
+ * app's Y-down document space) — so this can invert or replay that same
+ * rotation when converting between world and local space during a resize
+ * drag. */
+function rotateVec(x: number, y: number, deg: number): { x: number; y: number } {
+  const r = (deg * Math.PI) / 180;
+  const c = Math.cos(r);
+  const s = Math.sin(r);
+  return { x: x * c - y * s, y: x * s + y * c };
+}
+
+/** Maps a point in a shape's own local (unscaled) coordinate space to
+ * document/world space, mirroring exactly what `renderLayer`'s
+ * `translate(...) rotate(...) scale(...)` attribute does — scale first,
+ * then rotate, then translate. */
+function localToWorld(local: { x: number; y: number }, t: Transform2D): { x: number; y: number } {
+  const scaled = rotateVec(local.x * t.scaleX, local.y * t.scaleY, t.rotation);
+  return { x: scaled.x + t.x, y: scaled.y + t.y };
+}
 
 interface Props {
   resetSignal: number;
@@ -119,6 +155,33 @@ export function Canvas2D({ resetSignal }: Props) {
      * on a group's member would drill in immediately even when it was
      * really the start of a drag. */
     pendingDrillRawId: string | null;
+  } | null>(null);
+
+  // A resize-handle drag is kept entirely separate from dragState above
+  // (pan/move/marquee) rather than folded into that union — its shape is
+  // different enough (an anchor point that must stay fixed in world space,
+  // which axes are actually being resized, the shape's own local bounds)
+  // that sharing one type would mean every other mode carrying fields it
+  // never uses.
+  const resizeState = useRef<{
+    id: string;
+    handle: ResizeHandle;
+    origTransform: Transform2D;
+    /** The local-space point that must stay at the same world position
+     * throughout the drag — the opposite corner/edge from the one being
+     * dragged. */
+    anchorLocal: { x: number; y: number };
+    /** anchorWorld computed once at drag start from origTransform — the
+     * fixed point every subsequent frame solves a new transform around. */
+    anchorWorld: { x: number; y: number };
+    /** handleLocal - anchorLocal, in local (unscaled) space — fixed for
+     * the whole drag; only ever nonzero on the axis/axes this handle
+     * actually resizes. */
+    dLocal: { x: number; y: number };
+    resizesX: boolean;
+    resizesY: boolean;
+    preGestureSnapshot: TrackedSceneSlice;
+    moved: boolean;
   } | null>(null);
 
   // Space+drag pans, matching the 3D viewport's own convention — plain
@@ -350,6 +413,58 @@ export function Canvas2D({ resetSignal }: Props) {
     };
   }
 
+  /** Which local point stays fixed, and which axes actually change, for
+   * each of the 8 resize handles — see the derivation in the resizeState
+   * doc comment above: dragging a handle keeps the OPPOSITE corner/edge
+   * fixed in world space, Photoshop's own free-transform convention. */
+  function resizeHandleGeometry(
+    handle: ResizeHandle,
+    b: { minX: number; minY: number; maxX: number; maxY: number },
+  ): { anchorLocal: { x: number; y: number }; handleLocal: { x: number; y: number }; resizesX: boolean; resizesY: boolean } {
+    const { minX, minY, maxX, maxY } = b;
+    switch (handle) {
+      case "e":
+        return { anchorLocal: { x: minX, y: minY }, handleLocal: { x: maxX, y: minY }, resizesX: true, resizesY: false };
+      case "w":
+        return { anchorLocal: { x: maxX, y: minY }, handleLocal: { x: minX, y: minY }, resizesX: true, resizesY: false };
+      case "n":
+        return { anchorLocal: { x: minX, y: maxY }, handleLocal: { x: minX, y: minY }, resizesX: false, resizesY: true };
+      case "s":
+        return { anchorLocal: { x: minX, y: minY }, handleLocal: { x: minX, y: maxY }, resizesX: false, resizesY: true };
+      case "ne":
+        return { anchorLocal: { x: minX, y: maxY }, handleLocal: { x: maxX, y: minY }, resizesX: true, resizesY: true };
+      case "nw":
+        return { anchorLocal: { x: maxX, y: maxY }, handleLocal: { x: minX, y: minY }, resizesX: true, resizesY: true };
+      case "se":
+        return { anchorLocal: { x: minX, y: minY }, handleLocal: { x: maxX, y: maxY }, resizesX: true, resizesY: true };
+      case "sw":
+        return { anchorLocal: { x: maxX, y: minY }, handleLocal: { x: minX, y: maxY }, resizesX: true, resizesY: true };
+    }
+  }
+
+  function beginResize(e: React.PointerEvent, id: string, handle: ResizeHandle) {
+    const layer = layers[id];
+    if (!layer || layer.type !== "shape") return;
+    const localBounds = getLocalShapeBounds(layer);
+    if (!localBounds) return;
+    e.stopPropagation();
+    (e.target as Element).setPointerCapture(e.pointerId);
+    const t = layer.transform;
+    const { anchorLocal, handleLocal, resizesX, resizesY } = resizeHandleGeometry(handle, localBounds);
+    resizeState.current = {
+      id,
+      handle,
+      origTransform: t,
+      anchorLocal,
+      anchorWorld: localToWorld(anchorLocal, t),
+      dLocal: { x: handleLocal.x - anchorLocal.x, y: handleLocal.y - anchorLocal.y },
+      resizesX,
+      resizesY,
+      preGestureSnapshot: beginGesture(),
+      moved: false,
+    };
+  }
+
   // How close two edges/centers need to be (in document mm) to count as
   // "aligned" — scaled by the current zoom so it reads as a consistent
   // few screen pixels whether zoomed in or out.
@@ -386,6 +501,38 @@ export function Canvas2D({ resetSignal }: Props) {
   }
 
   function onPointerMove(e: React.PointerEvent) {
+    const resize = resizeState.current;
+    if (resize) {
+      const pointerWorld = clientToSvg(e.clientX, e.clientY);
+      const rel = { x: pointerWorld.x - resize.anchorWorld.x, y: pointerWorld.y - resize.anchorWorld.y };
+      // Un-rotate the pointer's world-space offset from the anchor back
+      // into the shape's own local frame — this is what lets a rotated
+      // shape's handle still drag along its own edge direction instead of
+      // the screen's X/Y, the same way Photoshop's free-transform handles
+      // track a rotated layer's own axes.
+      const localDelta = rotateVec(rel.x, rel.y, -resize.origTransform.rotation);
+      const t = resize.origTransform;
+      const scaleX = resize.resizesX
+        ? Math.max(MIN_RESIZE_SCALE, localDelta.x / resize.dLocal.x)
+        : t.scaleX;
+      const scaleY = resize.resizesY
+        ? Math.max(MIN_RESIZE_SCALE, localDelta.y / resize.dLocal.y)
+        : t.scaleY;
+      // Solve position from the SAME equation beginResize's anchorWorld
+      // came from, just inverted: with the new scale fixed, where must
+      // the origin sit so the anchor point still lands exactly on
+      // anchorWorld?
+      const anchorContribution = rotateVec(resize.anchorLocal.x * scaleX, resize.anchorLocal.y * scaleY, t.rotation);
+      resize.moved = true;
+      setLayerTransform(resize.id, {
+        scaleX,
+        scaleY,
+        x: resize.anchorWorld.x - anchorContribution.x,
+        y: resize.anchorWorld.y - anchorContribution.y,
+      });
+      return;
+    }
+
     const drag = dragState.current;
     if (!drag) return;
     const dxClient = e.clientX - drag.startClientX;
@@ -405,10 +552,6 @@ export function Canvas2D({ resetSignal }: Props) {
         setLayerTransform(id, { x: orig.x + dx, y: orig.y + dy });
       }
       const movedIds = Object.keys(drag.originals);
-      if (useSceneStore.getState().pushOnDrag) {
-        const pushes = resolvePushes(useSceneStore.getState().layers, rootIds, movedIds, dx, dy);
-        for (const p of pushes) setLayerTransform(p.id, { x: p.x, y: p.y });
-      }
       const liveLayers = useSceneStore.getState().layers;
       setAlignGuides(computeAlignGuides(movedIds, liveLayers));
     } else if (drag.mode === "marquee") {
@@ -423,6 +566,14 @@ export function Canvas2D({ resetSignal }: Props) {
   }
 
   function onPointerUp(e: React.PointerEvent) {
+    const resize = resizeState.current;
+    if (resize) {
+      endGesture(resize.preGestureSnapshot, resize.moved);
+      resizeState.current = null;
+      (e.target as Element).releasePointerCapture?.(e.pointerId);
+      return;
+    }
+
     const drag = dragState.current;
     if (drag?.mode === "pan" && !drag.moved) clearSelection();
     if (drag?.mode === "move") setAlignGuides({ v: [], h: [] });
@@ -664,6 +815,57 @@ export function Canvas2D({ resetSignal }: Props) {
             pointerEvents="none"
           />
         )}
+
+        {(() => {
+          // Photoshop-style drag-to-resize handles — only for a single,
+          // unlocked shape (not a group: a group's "size" would need its
+          // own combined-bounds notion this doesn't have yet, and multiple
+          // shapes have no single unambiguous handle to grab). Positioned
+          // at the same axis-aligned world bounds the selection outline
+          // above already uses, which is exact for an unrotated shape and
+          // a reasonable approximation for a rotated one — the resize math
+          // itself (see beginResize/onPointerMove) works in the shape's
+          // true local+rotated frame regardless of where the handle is
+          // drawn, so a rotated shape still resizes correctly even though
+          // its handles sit at the bounding box rather than its own
+          // rotated corners.
+          if (selection.length !== 1) return null;
+          const id = selection[0];
+          const layer = layers[id];
+          if (!layer || layer.type !== "shape" || isEffectivelyLocked(layers, id)) return null;
+          const b = getLayerWorldBounds(layers, id);
+          if (!b) return null;
+          const size = Math.max(1.2, vb.w * 0.01);
+          const half = size / 2;
+          const midX = (b.minX + b.maxX) / 2;
+          const midY = (b.minY + b.maxY) / 2;
+          const handles: { handle: ResizeHandle; x: number; y: number; cursor: string }[] = [
+            { handle: "nw", x: b.minX, y: b.minY, cursor: "nwse-resize" },
+            { handle: "n", x: midX, y: b.minY, cursor: "ns-resize" },
+            { handle: "ne", x: b.maxX, y: b.minY, cursor: "nesw-resize" },
+            { handle: "e", x: b.maxX, y: midY, cursor: "ew-resize" },
+            { handle: "se", x: b.maxX, y: b.maxY, cursor: "nwse-resize" },
+            { handle: "s", x: midX, y: b.maxY, cursor: "ns-resize" },
+            { handle: "sw", x: b.minX, y: b.maxY, cursor: "nesw-resize" },
+            { handle: "w", x: b.minX, y: midY, cursor: "ew-resize" },
+          ];
+          return (
+            <>
+              {handles.map((h) => (
+                <rect
+                  key={h.handle}
+                  className="selection-handle"
+                  x={h.x - half}
+                  y={h.y - half}
+                  width={size}
+                  height={size}
+                  style={{ cursor: h.cursor }}
+                  onPointerDown={(e) => beginResize(e, id, h.handle)}
+                />
+              ))}
+            </>
+          );
+        })()}
 
         {alignGuides.v.map((x) => (
           <line

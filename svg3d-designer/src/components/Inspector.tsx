@@ -10,10 +10,9 @@ import {
 } from "../state/store";
 import { collectShapeLayers, getLocalShapeBounds } from "../state/sceneUtils";
 import { ToggleSwitch } from "./ToggleSwitch";
-import { ColorPickerButton, normalizeHexColor } from "./ColorPicker";
+import { canonicalizeColor, ColorPickerButton, normalizeHexColor } from "./ColorPicker";
 import { displayToMM, formatLength, mmToDisplay, UNIT_LABELS } from "../state/units";
-import type { AlignMode, HeightMapSettings, ShapeLayer, Units } from "../types";
-import { buildHeightMapFromImageFile } from "../geometry/heightMap";
+import type { AlignMode, ShapeLayer, Units } from "../types";
 import {
   AlignBottomIcon,
   AlignCenterHIcon,
@@ -177,14 +176,15 @@ function HexColorInput({
  * selected shape's own color is the only one in use).
  */
 function ColorPaletteRow({ colors, current, onPick }: { colors: string[]; current?: string; onPick: (color: string) => void }) {
-  if (colors.length === 0 || (colors.length === 1 && colors[0].toLowerCase() === current?.toLowerCase())) return null;
+  const currentCanonical = current ? canonicalizeColor(current) : undefined;
+  if (colors.length === 0 || (colors.length === 1 && colors[0].toLowerCase() === currentCanonical?.toLowerCase())) return null;
   return (
     <div className="color-palette-row">
       {colors.map((color) => (
         <button
           key={color}
           type="button"
-          className={"color-palette-swatch" + (current?.toLowerCase() === color.toLowerCase() ? " active" : "")}
+          className={"color-palette-swatch" + (currentCanonical?.toLowerCase() === color.toLowerCase() ? " active" : "")}
           style={{ background: color }}
           title={color}
           onClick={() => onPick(color)}
@@ -308,17 +308,19 @@ export function Inspector() {
   // key order follows insertion order, and layer ids are only ever
   // inserted, never reordered in place) — cheap enough to recompute every
   // render for the layer counts a single project realistically has.
-  const usedColors = Array.from(new Set(Object.values(layers).flatMap((l) => (l.type === "shape" ? [l.color] : [])))).reverse();
+  // Canonicalized before deduping so an imported SVG's "black" and a
+  // picker-set "#000000" collapse into one swatch instead of showing the
+  // same color twice.
+  const usedColors = Array.from(
+    new Set(Object.values(layers).flatMap((l) => (l.type === "shape" ? [canonicalizeColor(l.color)] : []))),
+  ).reverse();
   const setExtrusionDepth = useSceneStore((s) => s.setExtrusionDepth);
   const setCornerRadius = useSceneStore((s) => s.setCornerRadius);
   const setBevelBottom = useSceneStore((s) => s.setBevelBottom);
   const setBevelTop = useSceneStore((s) => s.setBevelTop);
-  const setIndentBottom = useSceneStore((s) => s.setIndentBottom);
-  const setIndentTop = useSceneStore((s) => s.setIndentTop);
-  const setHeightMap = useSceneStore((s) => s.setHeightMap);
-  const updateHeightMapSettings = useSceneStore((s) => s.updateHeightMapSettings);
   const setIsHole = useSceneStore((s) => s.setIsHole);
   const setLayerZ = useSceneStore((s) => s.setLayerZ);
+  const fixFloatingLayers = useSceneStore((s) => s.fixFloatingLayers);
   const snapHoleToRecessedPocket = useSceneStore((s) => s.snapHoleToRecessedPocket);
   const [pinnedBedName, setPinnedBedName] = useState<string | null>(() => getPinnedBedPresetName());
   const [floorThickness, setFloorThickness] = useState(RECOMMENDED_FLOOR_MM);
@@ -327,11 +329,6 @@ export function Inspector() {
   const radiusGesture = useRef<TrackedSceneSlice | null>(null);
   const bevelBottomGesture = useRef<TrackedSceneSlice | null>(null);
   const bevelTopGesture = useRef<TrackedSceneSlice | null>(null);
-  const indentBottomGesture = useRef<TrackedSceneSlice | null>(null);
-  const indentTopGesture = useRef<TrackedSceneSlice | null>(null);
-  const heightMapBottomGesture = useRef<TrackedSceneSlice | null>(null);
-  const heightMapTopGesture = useRef<TrackedSceneSlice | null>(null);
-  const [heightMapError, setHeightMapError] = useState<string | null>(null);
   const matchDocumentToBed = useSceneStore((s) => s.matchDocumentToBed);
   const mergeLayers = useSceneStore((s) => s.mergeLayers);
   const groupSelection = useSceneStore((s) => s.groupSelection);
@@ -574,35 +571,84 @@ export function Inspector() {
               onChange={(v) => setLayerTransform(layer.id, { y: v })}
             />
             <NumberField
-              label={`Z (${unitLabel})`}
+              label={`Height (${unitLabel})`}
               value={layer.transform.z}
               min={0}
               unit={unit}
               onChange={(v) => setLayerZ(layer.id, v)}
             />
           </div>
-          <button
-            className="btn"
-            style={{ width: "100%", marginBottom: 6 }}
-            onClick={() => setLayerZ(layer.id, 0)}
-            title="Set Z back to 0 — sitting directly on the print bed"
-          >
-            Drop to bed
-          </button>
-          <div className="field-grid-2">
-            <NumberField
-              label="Scale X"
-              value={layer.transform.scaleX}
-              step={0.05}
-              onChange={(v) => setLayerTransform(layer.id, { scaleX: v })}
-            />
-            <NumberField
-              label="Scale Y"
-              value={layer.transform.scaleY}
-              step={0.05}
-              onChange={(v) => setLayerTransform(layer.id, { scaleY: v })}
-            />
+          <div className="field-grid-2" style={{ marginBottom: 6 }}>
+            <button
+              className="btn"
+              onClick={() => fixFloatingLayers([layer.id])}
+              title="Rest this shape exactly on top of whatever it actually overlaps — a manual, single-shape version of Auto-Stack"
+            >
+              Bring to Front
+            </button>
+            <button
+              className="btn"
+              onClick={() => setLayerZ(layer.id, 0)}
+              title="Set Height back to 0 — sitting directly on the print bed"
+            >
+              Send to Back
+            </button>
           </div>
+          {layer.type === "shape" ? (
+            (() => {
+              // Real, physical size — Photoshop-style, not a percentage —
+              // derived from the shape's own unscaled outline bounds times
+              // its current scale. Editing solves the scale that produces
+              // the requested physical size, so this is really the same
+              // scaleX/scaleY the fields below used to expose directly,
+              // just in the unit that actually matters when sizing a part
+              // for print instead of eyeballing a multiplier.
+              const localBounds = getLocalShapeBounds(layer);
+              const rawW = localBounds ? localBounds.maxX - localBounds.minX : 0;
+              const rawH = localBounds ? localBounds.maxY - localBounds.minY : 0;
+              const width = rawW * layer.transform.scaleX;
+              const length = rawH * layer.transform.scaleY;
+              return (
+                <div className="field-grid-2">
+                  <NumberField
+                    label={`Width (${unitLabel})`}
+                    value={width}
+                    min={0}
+                    unit={unit}
+                    onChange={(mm) => {
+                      if (rawW <= 1e-9) return;
+                      setLayerTransform(layer.id, { scaleX: Math.max(0.001, mm / rawW) });
+                    }}
+                  />
+                  <NumberField
+                    label={`Length (${unitLabel})`}
+                    value={length}
+                    min={0}
+                    unit={unit}
+                    onChange={(mm) => {
+                      if (rawH <= 1e-9) return;
+                      setLayerTransform(layer.id, { scaleY: Math.max(0.001, mm / rawH) });
+                    }}
+                  />
+                </div>
+              );
+            })()
+          ) : (
+            <div className="field-grid-2">
+              <NumberField
+                label="Scale X"
+                value={layer.transform.scaleX}
+                step={0.05}
+                onChange={(v) => setLayerTransform(layer.id, { scaleX: v })}
+              />
+              <NumberField
+                label="Scale Y"
+                value={layer.transform.scaleY}
+                step={0.05}
+                onChange={(v) => setLayerTransform(layer.id, { scaleY: v })}
+              />
+            </div>
+          )}
           <div className="field-grid-3">
             <NumberField
               label="Roll (Z°)"
@@ -742,264 +788,51 @@ export function Inspector() {
               </CollapsibleSection>
 
               {(() => {
-                // Bevel (rounds the rim, silhouette tapers at the cap),
-                // Indent (rim stays put, the face's *center* dents in or
-                // bulges out) and Height Map (an uploaded grayscale image
-                // drives the whole face's relief) are three different ways
-                // to shape the same face — geometrically incompatible on
-                // one face at once, so each face is exactly one of them,
-                // chosen with an explicit toggle rather than sections that
-                // silently fight over the same face (indent used to win
-                // with no explanation whenever bevel and indent both had a
-                // nonzero value, before this toggle existed). Top and
-                // Bottom are independent, so e.g. a beveled bottom with a
-                // height-mapped top is completely normal.
                 const bevelMax = Math.max(0.5, display.extrusionDepth / 2);
                 const bevelDefault = Math.min(0.3, bevelMax);
-                const indentMax = Math.max(0.5, display.extrusionDepth / 2);
-                const indentDefault = Math.min(indentMax, indentMax * 0.6);
-                const heightMapStrengthDefault = Math.min(1, indentMax);
-                // Older saved shapes predate the indent/height-map fields entirely.
-                const indentTop = display.indentTop ?? 0;
-                const indentBottom = display.indentBottom ?? 0;
-                const heightMapTop = display.heightMapTop;
-                const heightMapBottom = display.heightMapBottom;
                 const ids = targets.map((t) => t.id);
-
-                type FaceMode = "none" | "bevel" | "indent" | "heightmap";
-                const modeOf = (bevel: number, indent: number, heightMap: HeightMapSettings | undefined): FaceMode =>
-                  heightMap ? "heightmap" : indent !== 0 ? "indent" : bevel > 0 ? "bevel" : "none";
-                const topMode = modeOf(display.bevelTop, indentTop, heightMapTop);
-                const bottomMode = modeOf(display.bevelBottom, indentBottom, heightMapBottom);
 
                 function FaceRow({
                   label,
-                  face,
-                  mode,
                   bevelValue,
-                  indentValue,
-                  heightMap,
                   setBevel,
-                  setIndent,
                   bevelGestureRef,
-                  indentGestureRef,
-                  heightMapGestureRef,
                 }: {
                   label: string;
-                  face: "top" | "bottom";
-                  mode: FaceMode;
                   bevelValue: number;
-                  indentValue: number;
-                  heightMap: HeightMapSettings | undefined;
                   setBevel: (id: string, mm: number) => void;
-                  setIndent: (id: string, mm: number) => void;
                   bevelGestureRef: MutableRefObject<TrackedSceneSlice | null>;
-                  indentGestureRef: MutableRefObject<TrackedSceneSlice | null>;
-                  heightMapGestureRef: MutableRefObject<TrackedSceneSlice | null>;
                 }) {
-                  const fileInputRef = useRef<HTMLInputElement>(null);
-                  const storeFace = face === "top" ? "top" : "bottom";
-
-                  async function handleFile(file: File) {
-                    setHeightMapError(null);
-                    try {
-                      const settings = await buildHeightMapFromImageFile(file, heightMapStrengthDefault);
-                      applyToAll(ids, (id) => {
-                        setBevel(id, 0);
-                        setIndent(id, 0);
-                        setHeightMap(id, storeFace, settings);
-                      });
-                    } catch (err) {
-                      setHeightMapError(err instanceof Error ? err.message : "Could not load that image.");
-                    }
-                  }
-
                   return (
-                    <div style={{ marginBottom: 10 }}>
-                      <div className="field-row">
-                        <span className="field-label">{label}</span>
-                        <div className="toolbar-toggle-group face-mode-toggle">
-                          <button
-                            type="button"
-                            className={mode === "none" ? "active" : ""}
-                            onClick={() =>
-                              applyToAll(ids, (id) => {
-                                setBevel(id, 0);
-                                setIndent(id, 0);
-                                setHeightMap(id, storeFace, null);
-                              })
-                            }
-                          >
-                            None
-                          </button>
-                          <button
-                            type="button"
-                            className={mode === "bevel" ? "active" : ""}
-                            onClick={() =>
-                              applyToAll(ids, (id) => {
-                                setIndent(id, 0);
-                                setHeightMap(id, storeFace, null);
-                                setBevel(id, bevelValue > 0 ? bevelValue : bevelDefault);
-                              })
-                            }
-                          >
-                            Bevel
-                          </button>
-                          <button
-                            type="button"
-                            className={mode === "indent" ? "active" : ""}
-                            onClick={() =>
-                              applyToAll(ids, (id) => {
-                                setBevel(id, 0);
-                                setHeightMap(id, storeFace, null);
-                                setIndent(id, indentValue !== 0 ? indentValue : indentDefault);
-                              })
-                            }
-                          >
-                            Indent
-                          </button>
-                          <button
-                            type="button"
-                            className={mode === "heightmap" ? "active" : ""}
-                            onClick={() => fileInputRef.current?.click()}
-                          >
-                            Height Map
-                          </button>
-                        </div>
-                      </div>
+                    <div className="field-row" style={{ marginBottom: 10 }}>
+                      <span className="field-label">{label}</span>
                       <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/*"
-                        style={{ display: "none" }}
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) handleFile(file);
-                          e.target.value = "";
+                        className="field-input"
+                        type="range"
+                        min={0}
+                        max={bevelMax}
+                        step={0.05}
+                        value={Math.min(bevelMax, bevelValue)}
+                        onPointerDown={() => {
+                          bevelGestureRef.current = beginGesture();
                         }}
+                        onPointerUp={() => {
+                          if (bevelGestureRef.current) {
+                            endGesture(bevelGestureRef.current, true);
+                            bevelGestureRef.current = null;
+                          }
+                        }}
+                        onChange={(e) => targets.forEach((t) => setBevel(t.id, parseFloat(e.target.value)))}
+                        style={{ flex: "1 1 auto" }}
                       />
-                      {mode === "heightmap" && heightMap && (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                          <div className="field-row">
-                            <img
-                              src={heightMap.previewDataUrl}
-                              alt=""
-                              style={{ width: 32, height: 32, objectFit: "cover", borderRadius: 4, border: "1px solid var(--border-strong)" }}
-                            />
-                            <button type="button" className="btn" style={{ flex: "1 1 auto" }} onClick={() => fileInputRef.current?.click()}>
-                              Replace image
-                            </button>
-                            <button
-                              type="button"
-                              className="icon-btn"
-                              title="Remove height map"
-                              onClick={() => applyToAll(ids, (id) => setHeightMap(id, storeFace, null))}
-                            >
-                              ✕
-                            </button>
-                          </div>
-                          <div className="field-row">
-                            <span className="field-label">Strength</span>
-                            <input
-                              className="field-input"
-                              type="range"
-                              min={0}
-                              max={indentMax}
-                              step={0.05}
-                              value={Math.min(indentMax, heightMap.strength)}
-                              onPointerDown={() => {
-                                heightMapGestureRef.current = beginGesture();
-                              }}
-                              onPointerUp={() => {
-                                if (heightMapGestureRef.current) {
-                                  endGesture(heightMapGestureRef.current, true);
-                                  heightMapGestureRef.current = null;
-                                }
-                              }}
-                              onChange={(e) => {
-                                const strength = parseFloat(e.target.value);
-                                targets.forEach((t) => updateHeightMapSettings(t.id, storeFace, { strength }));
-                              }}
-                              style={{ flex: "1 1 auto" }}
-                            />
-                            <NumberField
-                              value={heightMap.strength}
-                              min={0}
-                              step={0.05}
-                              unit={unit}
-                              style={{ flex: "0 0 60px" }}
-                              onChange={(strength) => applyToAll(ids, (id) => updateHeightMapSettings(id, storeFace, { strength }))}
-                            />
-                          </div>
-                          <ToggleSwitch
-                            label="Invert"
-                            checked={heightMap.invert}
-                            onChange={() => applyToAll(ids, (id) => updateHeightMapSettings(id, storeFace, { invert: !heightMap.invert }))}
-                            title="Flip which end of the image (light or dark) pushes the surface out vs in"
-                          />
-                        </div>
-                      )}
-                      {mode === "bevel" && (
-                        <div className="field-row">
-                          <input
-                            className="field-input"
-                            type="range"
-                            min={0}
-                            max={bevelMax}
-                            step={0.05}
-                            value={Math.min(bevelMax, bevelValue)}
-                            onPointerDown={() => {
-                              bevelGestureRef.current = beginGesture();
-                            }}
-                            onPointerUp={() => {
-                              if (bevelGestureRef.current) {
-                                endGesture(bevelGestureRef.current, true);
-                                bevelGestureRef.current = null;
-                              }
-                            }}
-                            onChange={(e) => targets.forEach((t) => setBevel(t.id, parseFloat(e.target.value)))}
-                            style={{ flex: "1 1 auto" }}
-                          />
-                          <NumberField
-                            value={bevelValue}
-                            min={0}
-                            step={0.05}
-                            unit={unit}
-                            style={{ flex: "0 0 60px" }}
-                            onChange={(v) => applyToAll(ids, (id) => setBevel(id, v))}
-                          />
-                        </div>
-                      )}
-                      {mode === "indent" && (
-                        <div className="field-row">
-                          <input
-                            className="field-input"
-                            type="range"
-                            min={-indentMax}
-                            max={indentMax}
-                            step={0.05}
-                            value={Math.max(-indentMax, Math.min(indentMax, indentValue))}
-                            onPointerDown={() => {
-                              indentGestureRef.current = beginGesture();
-                            }}
-                            onPointerUp={() => {
-                              if (indentGestureRef.current) {
-                                endGesture(indentGestureRef.current, true);
-                                indentGestureRef.current = null;
-                              }
-                            }}
-                            onChange={(e) => targets.forEach((t) => setIndent(t.id, parseFloat(e.target.value)))}
-                            style={{ flex: "1 1 auto" }}
-                          />
-                          <NumberField
-                            value={indentValue}
-                            step={0.05}
-                            unit={unit}
-                            style={{ flex: "0 0 60px" }}
-                            onChange={(v) => applyToAll(ids, (id) => setIndent(id, v))}
-                          />
-                        </div>
-                      )}
+                      <NumberField
+                        value={bevelValue}
+                        min={0}
+                        step={0.05}
+                        unit={unit}
+                        style={{ flex: "0 0 60px" }}
+                        onChange={(v) => applyToAll(ids, (id) => setBevel(id, v))}
+                      />
                     </div>
                   );
                 }
@@ -1007,7 +840,7 @@ export function Inspector() {
                 return (
                   <CollapsibleSection
                     title={`Edge shaping${isBatch ? " (all shapes in group)" : ""}`}
-                    active={display.bevelTop > 0 || display.bevelBottom > 0 || indentTop !== 0 || indentBottom !== 0 || !!heightMapTop || !!heightMapBottom}
+                    active={display.bevelTop > 0 || display.bevelBottom > 0}
                     onAdd={() =>
                       applyToAll(ids, (id) => {
                         setBevelTop(id, bevelDefault);
@@ -1018,45 +851,12 @@ export function Inspector() {
                       applyToAll(ids, (id) => {
                         setBevelTop(id, 0);
                         setBevelBottom(id, 0);
-                        setIndentTop(id, 0);
-                        setIndentBottom(id, 0);
-                        setHeightMap(id, "top", null);
-                        setHeightMap(id, "bottom", null);
                       })
                     }
                   >
-                    <p className="hole-hint">
-                      Bevel rounds the rim; Indent bows the whole face into a smooth dent (positive)
-                      or bulge (negative); Height Map instead reads the relief from a grayscale
-                      image. Each face — Top or Bottom — can only be one of the three at a time.
-                    </p>
-                    {heightMapError && <p className="hole-hint" style={{ color: "#ef4444" }}>{heightMapError}</p>}
-                    <FaceRow
-                      label="Top"
-                      face="top"
-                      mode={topMode}
-                      bevelValue={display.bevelTop}
-                      indentValue={indentTop}
-                      heightMap={heightMapTop}
-                      setBevel={setBevelTop}
-                      setIndent={setIndentTop}
-                      bevelGestureRef={bevelTopGesture}
-                      indentGestureRef={indentTopGesture}
-                      heightMapGestureRef={heightMapTopGesture}
-                    />
-                    <FaceRow
-                      label="Bottom"
-                      face="bottom"
-                      mode={bottomMode}
-                      bevelValue={display.bevelBottom}
-                      indentValue={indentBottom}
-                      heightMap={heightMapBottom}
-                      setBevel={setBevelBottom}
-                      setIndent={setIndentBottom}
-                      bevelGestureRef={bevelBottomGesture}
-                      indentGestureRef={indentBottomGesture}
-                      heightMapGestureRef={heightMapBottomGesture}
-                    />
+                    <p className="hole-hint">Rounds the rim of the top and/or bottom face.</p>
+                    <FaceRow label="Top" bevelValue={display.bevelTop} setBevel={setBevelTop} bevelGestureRef={bevelTopGesture} />
+                    <FaceRow label="Bottom" bevelValue={display.bevelBottom} setBevel={setBevelBottom} bevelGestureRef={bevelBottomGesture} />
                   </CollapsibleSection>
                 );
               })()}

@@ -169,9 +169,6 @@
 .toolbar-toggle-group button + button { border-left: 1px solid var(--border-strong); }
 .toolbar-toggle-group button.active { background: var(--accent); color: var(--accent-contrast); }
 
-.face-mode-toggle { flex: 0 0 auto; margin-left: auto; }
-.face-mode-toggle button { padding: 3px 8px; font-size: 12px; }
-
 /* ---------- Main layout ---------- */
 
 .main-body {
