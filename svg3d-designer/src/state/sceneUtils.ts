@@ -710,7 +710,42 @@ function widenThinRing(points: Point2[], targetWidthMM: number): Point2[] {
     }
     current = next;
   }
-  return current;
+  return mergeCloseAdjacentPoints(current, THIN_FEATURE_MIN_SEGMENT_MM);
+}
+
+// How close two ADJACENT points on the ring are allowed to end up after
+// nudging before they're merged back into one. This guards a genuinely
+// different failure mode than the pinch this function exists to fix: two
+// points that were already close together on this ring's own fine detail
+// (this outline's own average segment length can be well under 1mm) can
+// end up landing right on top of each other once one of them gets nudged
+// — a near-zero-length edge. A subsequent bevel's own per-vertex offset
+// math divides by each edge's length, so that one degenerate edge is
+// enough to send its movement vector's magnitude toward infinity and
+// blow a huge, wildly misplaced triangle into the mesh (this is exactly
+// what happened the first time this shipped: valid, watertight geometry
+// with a straight, unbeveled extrusion, but the same fixed points fed
+// into an actual bevel produced hundreds of winding conflicts and
+// triangles covering a third of the shape's own area). Comfortably above
+// float precision, comfortably below anything that would visibly move
+// the outline.
+const THIN_FEATURE_MIN_SEGMENT_MM = 0.05;
+
+function mergeCloseAdjacentPoints(points: Point2[], minDistMM: number): Point2[] {
+  if (points.length < 4) return points;
+  const out: Point2[] = [];
+  for (const p of points) {
+    const prev = out[out.length - 1];
+    if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) < minDistMM) continue;
+    out.push(p);
+  }
+  // The wrap-around pair (last, first) needs the same check — the loop
+  // above only ever compares each point against the one immediately
+  // before it in `out`.
+  if (out.length > 3 && Math.hypot(out[0].x - out[out.length - 1].x, out[0].y - out[out.length - 1].y) < minDistMM) {
+    out.pop();
+  }
+  return out.length >= 3 ? out : points;
 }
 
 export interface ThinFeatureWarning {

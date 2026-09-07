@@ -63,6 +63,37 @@ const BEVEL_CORNER_SEGMENTS = 6;
  * that same safe maximum directly instead of guessing at a value. */
 export const BEVEL_SELF_INTERSECTION_SAFETY = 0.85;
 
+// Above this squared length, a computed miter vector is treated as blown
+// up rather than trusted — see the fallback below. The two "normal"
+// branches of getBevelVec both settle on exactly 2 (or less) by
+// construction, so anything meaningfully past that is already outside
+// what a healthy corner ever produces, not just "a sharp one."
+const BEVEL_VEC_MAX_LENSQ = 8;
+
+/**
+ * A simple, always-numerically-stable offset direction for a corner —
+ * the normalized average of each adjacent edge's own perpendicular,
+ * without trying to compute the exact miter length a sharp corner would
+ * ideally get. Used only as a fallback (see getBevelVec) when the real
+ * miter computation comes out degenerate, so it trades a little precision
+ * at that one corner (very slightly under-mitered instead of exact) for
+ * never producing a wildly wrong or unbounded vertex.
+ */
+function safeFallbackVec(vPrevX: number, vPrevY: number, vPrevLen: number, vNextX: number, vNextY: number, vNextLen: number): THREE.Vector2 {
+  const perpPrevX = -vPrevY / vPrevLen;
+  const perpPrevY = vPrevX / vPrevLen;
+  const perpNextX = -vNextY / vNextLen;
+  const perpNextY = vNextX / vNextLen;
+  const sumX = perpPrevX + perpNextX;
+  const sumY = perpPrevY + perpNextY;
+  const sumLen = Math.hypot(sumX, sumY);
+  // The two edges point their perpendiculars in exactly opposite
+  // directions (a true 180° spike/notch) — any one consistent
+  // perpendicular is as reasonable a choice as another there.
+  if (sumLen < 1e-9) return new THREE.Vector2(perpPrevX, perpPrevY);
+  return new THREE.Vector2(sumX / sumLen, sumY / sumLen);
+}
+
 function getBevelVec(inPt: THREE.Vector2, inPrev: THREE.Vector2, inNext: THREE.Vector2): THREE.Vector2 {
   let v_trans_x: number, v_trans_y: number, shrink_by: number;
 
@@ -91,6 +122,24 @@ function getBevelVec(inPt: THREE.Vector2, inPrev: THREE.Vector2, inNext: THREE.V
     v_trans_y = ptPrevShift_y + v_prev_y * sf - inPt.y;
 
     const v_trans_lensq = v_trans_x * v_trans_x + v_trans_y * v_trans_y;
+    // A shape built by unioning several overlapping circles (a mane, a
+    // cluster of petals) routinely creates a seam where the two edges
+    // meeting at a vertex point in nearly the same direction — a razor-
+    // sharp spike or notch. The "exact miter" formula above divides by
+    // essentially that same near-zero angle, and floating-point precision
+    // loss can make its result wildly, arbitrarily large (or NaN) right
+    // when it should just be a big-but-bounded number — verified directly
+    // against a real design: a single corrupted vertex there was enough to
+    // blow a triangle covering nearly a third of the whole shape's own
+    // area into the exported mesh, with hundreds of winding conflicts
+    // alongside it. Falling back to the always-stable perpendicular
+    // average instead of trusting a blown-up "exact" result is what
+    // actually fixes that, regardless of which upstream step (a corner-
+    // rounding pass, a boolean union, a manual edit) produced the sharp
+    // vertex in the first place.
+    if (!Number.isFinite(v_trans_lensq) || v_trans_lensq > BEVEL_VEC_MAX_LENSQ) {
+      return safeFallbackVec(v_prev_x, v_prev_y, v_prev_len, v_next_x, v_next_y, v_next_len);
+    }
     if (v_trans_lensq <= 2) {
       return new THREE.Vector2(v_trans_x, v_trans_y);
     }
@@ -117,6 +166,15 @@ function getBevelVec(inPt: THREE.Vector2, inPrev: THREE.Vector2, inNext: THREE.V
     }
   }
 
+  // Same safety net as above, covering the collinear branch too — an edge
+  // that's short enough to be numerically shaky (but not short enough for
+  // mergeOverlappingPoints to have already dropped it) can make shrink_by
+  // itself unstable.
+  if (shrink_by < 1e-9 || !Number.isFinite(v_trans_x / shrink_by) || !Number.isFinite(v_trans_y / shrink_by)) {
+    const v_prev_len = Math.sqrt(v_prev_lensq);
+    const v_next_len = Math.hypot(v_next_x, v_next_y);
+    return safeFallbackVec(v_prev_x, v_prev_y, v_prev_len || 1, v_next_x, v_next_y, v_next_len || 1);
+  }
   return new THREE.Vector2(v_trans_x / shrink_by, v_trans_y / shrink_by);
 }
 
