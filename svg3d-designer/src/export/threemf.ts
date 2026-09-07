@@ -94,6 +94,57 @@ function xmlEscape(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+// A coordinate this close (mm) is the same physical vertex — well above a
+// single float32 ULP at print-bed scale (~1.2e-5mm at 100mm from origin),
+// comfortably below any real printable feature, so this only ever merges
+// genuinely-coincident points, never two that are actually distinct.
+const WELD_EPSILON_MM = 1e-4;
+
+/**
+ * Welds `positions` (flat, 9-floats-per-triangle, already-expanded/unshared
+ * — see WorldMesh) back into a real indexed mesh: coincident corners across
+ * DIFFERENT triangles collapse onto one shared vertex, so adjacent
+ * triangles reference the same vertex index at a shared edge.
+ *
+ * This matters because a 3MF/STL consumer determines whether a mesh is
+ * manifold (has no holes) by checking that every edge — a (vertex-index,
+ * vertex-index) pair — is used by exactly two triangles, in opposite
+ * directions. That check works on INDICES, not coordinates: it never
+ * re-derives which vertices are "the same point" by comparing their
+ * numbers. Emitting a fresh, never-reused vertex index per triangle corner
+ * (as this exporter used to) makes every edge trivially "open" — shared by
+ * only one triangle — regardless of how geometrically sound the mesh
+ * actually is, which is exactly what a slicer's own mesh-repair step
+ * flags as broken.
+ */
+function buildIndexedMesh(positions: Float32Array): { vertices: [number, number, number][]; triangles: [number, number, number][] } {
+  const key = (x: number, y: number, z: number) =>
+    `${Math.round(x / WELD_EPSILON_MM)},${Math.round(y / WELD_EPSILON_MM)},${Math.round(z / WELD_EPSILON_MM)}`;
+  const indexOf = new Map<string, number>();
+  const vertices: [number, number, number][] = [];
+  const triangles: [number, number, number][] = [];
+  const triangleCount = positions.length / 9;
+  for (let t = 0; t < triangleCount; t++) {
+    const o = t * 9;
+    const corner: number[] = [];
+    for (let c = 0; c < 3; c++) {
+      const x = positions[o + c * 3];
+      const y = positions[o + c * 3 + 1];
+      const z = positions[o + c * 3 + 2];
+      const k = key(x, y, z);
+      let vi = indexOf.get(k);
+      if (vi === undefined) {
+        vi = vertices.length;
+        indexOf.set(k, vi);
+        vertices.push([x, y, z]);
+      }
+      corner.push(vi);
+    }
+    triangles.push([corner[0], corner[1], corner[2]]);
+  }
+  return { vertices, triangles };
+}
+
 /**
  * Builds the 3MF model XML: one `<m:colorgroup>` color entry and one
  * `<object>` per printable shape, referenced 1:1 by `pindex`, so every
@@ -127,14 +178,14 @@ function buildModelXml(clusters: WorldMesh[][]): string {
       const objectId = nextObjectId++;
       objectIdOf.set(m, objectId);
       const pindex = objectId - 2;
-      const vertexCount = m.positions.length / 3;
+      const { vertices: weldedVertices, triangles: weldedTriangles } = buildIndexedMesh(m.positions);
       let vertices = "";
-      for (let v = 0; v < vertexCount; v++) {
-        vertices += `<vertex x="${m.positions[v * 3]}" y="${m.positions[v * 3 + 1]}" z="${m.positions[v * 3 + 2]}"/>`;
+      for (const [x, y, z] of weldedVertices) {
+        vertices += `<vertex x="${x}" y="${y}" z="${z}"/>`;
       }
       let triangles = "";
-      for (let t = 0; t < vertexCount / 3; t++) {
-        triangles += `<triangle v1="${t * 3}" v2="${t * 3 + 1}" v3="${t * 3 + 2}"/>`;
+      for (const [v1, v2, v3] of weldedTriangles) {
+        triangles += `<triangle v1="${v1}" v2="${v2}" v3="${v3}"/>`;
       }
       return (
         `<object id="${objectId}" type="model" name="${xmlEscape(m.name)}" pid="1" pindex="${pindex}">` +

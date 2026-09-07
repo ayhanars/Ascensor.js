@@ -14,7 +14,7 @@ import { subtractHoles } from "./holeSubtraction";
  * geometry engine notes). Never apply a negative-scale node instead: that
  * would flip triangle winding/normals and corrupt exported meshes.
  */
-function applyLayerTransform(object: THREE.Object3D, t: Transform2D): void {
+export function applyLayerTransform(object: THREE.Object3D, t: Transform2D): void {
   object.position.set(t.x, -t.y, t.z);
   // Full 3-axis orientation (roll = Z/t.rotation, pitch = X/t.rotationX, yaw =
   // Y/t.rotationY), composed as Euler angles in the original SVG-space
