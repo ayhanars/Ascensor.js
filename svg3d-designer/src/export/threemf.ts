@@ -91,7 +91,11 @@ function xmlEscape(s: string): string {
 /**
  * Builds the 3MF model XML: one `<m:colorgroup>` color entry and one
  * `<object>` per printable shape, referenced 1:1 by `pindex`, so every
- * shape keeps its own color independent of any other shape's.
+ * shape keeps its own color independent of any other shape's. Every one of
+ * those per-shape objects is then wrapped as a `<component>` of a single
+ * outer assembly object, with only THAT assembly placed in `<build>` — see
+ * the comment on the assembly object below for why a flat list of
+ * independent top-level items is the wrong structure here.
  *
  * Deliberately uses the Materials Extension's `<m:colorgroup>`/`<m:color>`
  * rather than the 3MF core spec's `<basematerials>`/`displaycolor` — pulled
@@ -124,15 +128,31 @@ function buildModelXml(meshes: WorldMesh[]): string {
     })
     .join("");
 
-  const items = meshes.map((_, i) => `<item objectid="${i + 2}"/>`).join("");
+  // Every per-shape object above is placed as a <component> of ONE outer
+  // assembly object, rather than each getting its own top-level <item> in
+  // <build> — this is what tells a slicer "these parts are one fixed
+  // assembly," not "N independent objects I placed on the plate together."
+  // A flat list of independent items is exactly what a design built from
+  // several thin, closely-stacked or touching layers (a multi-color relief,
+  // e.g.) looks like to Bambu Studio's own arrange/collision logic: pieces
+  // that share or nearly share a footprint, or don't individually rest
+  // on the bed, register as objects needing to be pulled apart — so
+  // opening the file silently scattered them, discarding the exact
+  // relative layout this app spent so much effort getting right. No
+  // `transform` attribute is needed on a `<component>` (it defaults to
+  // identity) since every vertex above is already baked to absolute world
+  // coordinates by collectWorldMeshes.
+  const components = meshes.map((_, i) => `<component objectid="${i + 2}"/>`).join("");
+  const assemblyId = meshes.length + 2;
+  const assembly = `<object id="${assemblyId}" type="model"><components>${components}</components></object>`;
 
   return (
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
     `<model unit="millimeter" xml:lang="en-US" ` +
     `xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" ` +
     `xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02">` +
-    `<resources><m:colorgroup id="1">${colorEntries}</m:colorgroup>${objects}</resources>` +
-    `<build>${items}</build>` +
+    `<resources><m:colorgroup id="1">${colorEntries}</m:colorgroup>${objects}${assembly}</resources>` +
+    `<build><item objectid="${assemblyId}"/></build>` +
     `</model>`
   );
 }
