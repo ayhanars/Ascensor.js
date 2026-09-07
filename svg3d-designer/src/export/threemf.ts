@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { strToU8, zipSync } from "three/examples/jsm/libs/fflate.module.js";
 import type { Layer } from "../types";
 import { buildAssemblyGroup } from "../geometry/extrude";
+import { computeConnectedClusters } from "../state/sceneUtils";
 import { downloadBlob } from "./stl";
 
 interface WorldMesh {
@@ -12,6 +13,10 @@ interface WorldMesh {
   positions: Float32Array;
   name: string;
   colorHex: string;
+  /** The originating layer id — used to sort meshes back into their real
+   * connected-component cluster (see computeConnectedClusters) once
+   * geometry has already been baked to world space. */
+  layerId: string;
 }
 
 // Below this triangle area (mm²), a triangle is treated as degenerate —
@@ -78,6 +83,7 @@ function collectWorldMeshes(root: THREE.Object3D): WorldMesh[] {
       positions: new Float32Array(kept),
       name: mesh.name || "Shape",
       colorHex: `#${material.color.getHexString()}`,
+      layerId: (mesh.userData.layerId as string | undefined) ?? "",
     });
   });
 
@@ -91,11 +97,16 @@ function xmlEscape(s: string): string {
 /**
  * Builds the 3MF model XML: one `<m:colorgroup>` color entry and one
  * `<object>` per printable shape, referenced 1:1 by `pindex`, so every
- * shape keeps its own color independent of any other shape's. Every one of
- * those per-shape objects is then wrapped as a `<component>` of a single
- * outer assembly object, with only THAT assembly placed in `<build>` — see
- * the comment on the assembly object below for why a flat list of
- * independent top-level items is the wrong structure here.
+ * shape keeps its own color independent of any other shape's.
+ *
+ * `clusters` groups those per-shape objects into the sets that actually,
+ * physically touch each other (see computeConnectedClusters) — each
+ * cluster of 2+ shapes is wrapped as a single rigid assembly `<object>`
+ * (its members placed as `<component>`s, with only the assembly itself
+ * placed in `<build>`); a cluster of exactly 1 shape is placed directly as
+ * its own top-level `<item>`, with no assembly wrapper needed. See the
+ * comment on the assembly-building loop below for why this grouping (welding
+ * only real clusters, not the entire document into one object) matters.
  *
  * Deliberately uses the Materials Extension's `<m:colorgroup>`/`<m:color>`
  * rather than the 3MF core spec's `<basematerials>`/`displaycolor` — pulled
@@ -105,12 +116,17 @@ function xmlEscape(s: string): string {
  * `<basematerials>` at all). A first version of this exporter used
  * basematerials and colors silently never showed up in Bambu Studio.
  */
-function buildModelXml(meshes: WorldMesh[]): string {
-  const colorEntries = meshes.map((m) => `<m:color color="${m.colorHex.toUpperCase()}FF"/>`).join("");
+function buildModelXml(clusters: WorldMesh[][]): string {
+  const flat = clusters.flat();
+  const colorEntries = flat.map((m) => `<m:color color="${m.colorHex.toUpperCase()}FF"/>`).join("");
 
-  const objects = meshes
-    .map((m, i) => {
-      const objectId = i + 2; // 1 is reserved for the colorgroup resource
+  let nextObjectId = 2; // 1 is reserved for the colorgroup resource
+  const objectIdOf = new Map<WorldMesh, number>();
+  const objectsXml = flat
+    .map((m) => {
+      const objectId = nextObjectId++;
+      objectIdOf.set(m, objectId);
+      const pindex = objectId - 2;
       const vertexCount = m.positions.length / 3;
       let vertices = "";
       for (let v = 0; v < vertexCount; v++) {
@@ -121,38 +137,60 @@ function buildModelXml(meshes: WorldMesh[]): string {
         triangles += `<triangle v1="${t * 3}" v2="${t * 3 + 1}" v3="${t * 3 + 2}"/>`;
       }
       return (
-        `<object id="${objectId}" type="model" name="${xmlEscape(m.name)}" pid="1" pindex="${i}">` +
+        `<object id="${objectId}" type="model" name="${xmlEscape(m.name)}" pid="1" pindex="${pindex}">` +
         `<mesh><vertices>${vertices}</vertices><triangles>${triangles}</triangles></mesh>` +
         `</object>`
       );
     })
     .join("");
 
-  // Every per-shape object above is placed as a <component> of ONE outer
-  // assembly object, rather than each getting its own top-level <item> in
-  // <build> — this is what tells a slicer "these parts are one fixed
-  // assembly," not "N independent objects I placed on the plate together."
-  // A flat list of independent items is exactly what a design built from
-  // several thin, closely-stacked or touching layers (a multi-color relief,
-  // e.g.) looks like to Bambu Studio's own arrange/collision logic: pieces
-  // that share or nearly share a footprint, or don't individually rest
-  // on the bed, register as objects needing to be pulled apart — so
-  // opening the file silently scattered them, discarding the exact
-  // relative layout this app spent so much effort getting right. No
-  // `transform` attribute is needed on a `<component>` (it defaults to
-  // identity) since every vertex above is already baked to absolute world
-  // coordinates by collectWorldMeshes.
-  const components = meshes.map((_, i) => `<component objectid="${i + 2}"/>`).join("");
-  const assemblyId = meshes.length + 2;
-  const assembly = `<object id="${assemblyId}" type="model"><components>${components}</components></object>`;
+  // Every cluster of shapes that actually touch is welded into ONE rigid
+  // assembly object (its members placed as <component>s of it, rather than
+  // each getting its own top-level <item> in <build>) — this is what tells
+  // a slicer "these parts are one fixed assembly," not "N independent
+  // objects I placed on the plate together." A flat list of independent
+  // items is exactly what a design built from several thin, closely-stacked
+  // or touching layers (a multi-color relief, e.g.) looks like to Bambu
+  // Studio's own arrange/collision logic: pieces that share or nearly share
+  // a footprint, or don't individually rest on the bed, register as objects
+  // needing to be pulled apart — so opening the file silently scattered
+  // them, discarding the exact relative layout this app spent so much
+  // effort getting right.
+  //
+  // But welding EVERY shape in the document into one object regardless of
+  // whether it's geometrically connected overcorrects: a shape with no real
+  // contact to anything else (a genuinely separate part, or — just as
+  // often — a leftover duplicate sitting elsewhere on the bed) then reads
+  // to the slicer as a floating, unsupported region of what's supposed to
+  // be one connected object, which is its own printability warning. Each
+  // cluster gets exactly one item — a real assembly for 2+ touching shapes,
+  // or the shape's own object directly for a lone one — so a genuinely
+  // separate part stays independently placeable/printable instead of being
+  // falsely glued to a cluster it never touched. No `transform` attribute is
+  // needed on a `<component>` (it defaults to identity) since every vertex
+  // above is already baked to absolute world coordinates by
+  // collectWorldMeshes.
+  const assembliesXml: string[] = [];
+  const itemsXml: string[] = [];
+  for (const cluster of clusters) {
+    if (cluster.length === 0) continue;
+    if (cluster.length === 1) {
+      itemsXml.push(`<item objectid="${objectIdOf.get(cluster[0])}"/>`);
+      continue;
+    }
+    const assemblyId = nextObjectId++;
+    const components = cluster.map((m) => `<component objectid="${objectIdOf.get(m)}"/>`).join("");
+    assembliesXml.push(`<object id="${assemblyId}" type="model"><components>${components}</components></object>`);
+    itemsXml.push(`<item objectid="${assemblyId}"/>`);
+  }
 
   return (
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
     `<model unit="millimeter" xml:lang="en-US" ` +
     `xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" ` +
     `xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02">` +
-    `<resources><m:colorgroup id="1">${colorEntries}</m:colorgroup>${objects}${assembly}</resources>` +
-    `<build><item objectid="${assemblyId}"/></build>` +
+    `<resources><m:colorgroup id="1">${colorEntries}</m:colorgroup>${objectsXml}${assembliesXml.join("")}</resources>` +
+    `<build>${itemsXml.join("")}</build>` +
     `</model>`
   );
 }
@@ -181,7 +219,26 @@ const RELS_XML =
 export function exportSceneToThreeMfBlob(layers: Record<string, Layer>, rootIds: string[]): Blob {
   const assembly = buildAssemblyGroup(layers, rootIds, { respectVisibility: true });
   const meshes = collectWorldMeshes(assembly);
-  const modelXml = buildModelXml(meshes);
+
+  // Group the already world-baked meshes back into the real connected
+  // clusters they belong to (see buildModelXml) — computed independently
+  // from the layer tree, then matched up here by layerId, since that's
+  // cheaper and more direct than re-deriving connectivity from raw
+  // triangles.
+  const clusterIdLists = computeConnectedClusters(layers, rootIds);
+  const clusterIndexByLayerId = new Map<string, number>();
+  clusterIdLists.forEach((ids, idx) => ids.forEach((id) => clusterIndexByLayerId.set(id, idx)));
+  const clusters: WorldMesh[][] = clusterIdLists.map(() => []);
+  for (const m of meshes) {
+    const idx = clusterIndexByLayerId.get(m.layerId);
+    // Every exportable mesh should have a matching cluster — this only
+    // falls back to a lone cluster of its own if that ever isn't true,
+    // rather than silently lumping it in with something unrelated.
+    if (idx === undefined) clusters.push([m]);
+    else clusters[idx].push(m);
+  }
+
+  const modelXml = buildModelXml(clusters);
 
   const zipped = zipSync(
     {

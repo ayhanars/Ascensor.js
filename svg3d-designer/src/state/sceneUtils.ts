@@ -487,3 +487,69 @@ export function computeFloatingLayerSeverities(
   }
   return { critical, partial };
 }
+
+/**
+ * Groups shape layers into clusters of ones that actually, physically touch
+ * — real XY polygon overlap AND a real Z overlap/touch, not just "both
+ * happen to be part of the same document." Two shapes with no geometric
+ * relationship at all (a stray duplicate sitting somewhere else on the bed,
+ * unrelated to everything else) end up in their own separate cluster.
+ *
+ * This is what a multi-part 3MF export uses to decide what to weld into one
+ * rigid object (see threemf.ts): bundling everything in the document into a
+ * single object regardless of whether it's geometrically connected is what
+ * originally fixed shapes scattering apart in a slicer's arrange step, but
+ * it overcorrects for a design that contains a genuinely separate, floating
+ * island (by design, or — just as often — a leftover duplicate) — a slicer
+ * evaluating "is every part of this one object properly connected/
+ * supported" will flag that island as a floating region or an empty-layer
+ * gap, even though each cluster on its own would print completely fine.
+ * Exporting one object per real cluster keeps the original anti-scatter fix
+ * for shapes that belong together while no longer falsely gluing unrelated
+ * ones into the same object.
+ */
+export function computeConnectedClusters(layers: Record<string, Layer>, rootIds: string[]): string[][] {
+  const ids = flattenForDisplay(layers, rootIds)
+    .map((r) => r.id)
+    .filter((id) => isShapeLayer(layers[id]) && !(layers[id] as ShapeLayer).isHole);
+
+  const info = ids.map((id) => ({
+    id,
+    regions: getWorldRegions(layers, id),
+    zRange: getShapeWorldZRange(layers, id) ?? { min: 0, max: 0 },
+  }));
+
+  const parent = new Map(ids.map((id) => [id, id]));
+  function find(x: string): string {
+    while (parent.get(x) !== x) {
+      parent.set(x, parent.get(parent.get(x)!)!);
+      x = parent.get(x)!;
+    }
+    return x;
+  }
+  function union(a: string, b: string): void {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  }
+
+  for (let i = 0; i < info.length; i++) {
+    for (let j = i + 1; j < info.length; j++) {
+      const a = info[i];
+      const b = info[j];
+      const zTouches = a.zRange.min <= b.zRange.max + Z_ALIGN_EPSILON_MM && b.zRange.min <= a.zRange.max + Z_ALIGN_EPSILON_MM;
+      if (!zTouches) continue;
+      if (regionsIntersectionArea(a.regions, b.regions) < 1e-6) continue;
+      union(a.id, b.id);
+    }
+  }
+
+  const clusters = new Map<string, string[]>();
+  for (const id of ids) {
+    const root = find(id);
+    const list = clusters.get(root);
+    if (list) list.push(id);
+    else clusters.set(root, [id]);
+  }
+  return Array.from(clusters.values());
+}
