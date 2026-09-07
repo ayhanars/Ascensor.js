@@ -28,6 +28,7 @@ import {
   getShapeWorldZRange,
   getTopLevelId,
   getWorldRegions,
+  getWorldSupportRegions,
   getWorldTransform,
   IDENTITY_TRANSFORM,
   invertTransform2D,
@@ -686,9 +687,19 @@ export const useSceneStore = create<SceneState>()(
       // stacked on each other when their real outlines never touch. Scoped
       // to the active plate only — a different plate is a different
       // physical bed, so its objects have nothing to do with this stack.
+      // A hole is a cutting tool, not a physical object — it has no
+      // printable material of its own to rest on anything, and its Z is
+      // deliberately set relative to whatever it cuts (manually, or via
+      // the recessed-pocket snap), not by what's stacked beneath it.
+      // Auto-Stack must never reposition one, or treat one as solid
+      // support for anything else — same convention already used by
+      // computeFloatingLayerSeverities.
       const order = flattenForDisplay(state.layers, getRootIdsForPlate(state, state.activePlateId))
         .map((r) => r.id)
-        .filter((id) => state.layers[id]?.type === "shape");
+        .filter((id) => {
+          const l = state.layers[id];
+          return l?.type === "shape" && !(l as ShapeLayer).isHole;
+        });
 
       // Process the largest footprint first, not layer-panel order — a
       // real physical base (a background, a mounting plate) is reliably
@@ -741,7 +752,11 @@ export const useSceneStore = create<SceneState>()(
           // my groups".
           if (layer.parentId !== null) {
             const parentWorldZ = getWorldTransform(layers, layer.parentId).z;
-            placed.push({ regions, topZ: layer.transform.z + parentWorldZ + localZRange.max });
+            const topZ = layer.transform.z + parentWorldZ + localZRange.max;
+            // A hole cut into it removes it from what's usable as landing
+            // surface for anything else, the same as for a top-level shape
+            // below — see getWorldSupportRegions.
+            placed.push({ regions: getWorldSupportRegions(layers, id, topZ), topZ });
             continue;
           }
 
@@ -782,7 +797,10 @@ export const useSceneStore = create<SceneState>()(
             anyChanged = true;
           }
 
-          placed.push({ regions, topZ: localZ + localZRange.max });
+          {
+            const topZ = localZ + localZRange.max;
+            placed.push({ regions: getWorldSupportRegions(layers, id, topZ), topZ });
+          }
         }
 
         layers = nextLayers;
@@ -797,9 +815,16 @@ export const useSceneStore = create<SceneState>()(
     let fixedCount = 0;
     set((state) => {
       const layers = { ...state.layers };
+      // A hole is a cutting tool, not a physical object — see the same
+      // exclusion in autoStackLayers. It can neither BE the floating item
+      // being fixed (computeFloatingLayerSeverities already never reports
+      // one) nor count as something else's support.
       const allIds = flattenForDisplay(state.layers, getRootIdsForPlate(state, state.activePlateId))
         .map((r) => r.id)
-        .filter((id) => state.layers[id]?.type === "shape");
+        .filter((id) => {
+          const l = state.layers[id];
+          return l?.type === "shape" && !(l as ShapeLayer).isHole;
+        });
       // Support is computed against everyone else's CURRENT position, using
       // the original (pre-fix) snapshot — fixing one floating shape should
       // never change what another floating shape in the same batch is
@@ -836,7 +861,10 @@ export const useSceneStore = create<SceneState>()(
         for (const o of others) {
           const topZ = o.zRange.max;
           if (topZ <= baseZ) continue;
-          if (regionsIntersectionArea(item.regions, o.regions) > 1e-6) baseZ = topZ;
+          // A hole cut through `o` right at its own top surface leaves
+          // nothing there to rest on — see getWorldSupportRegions.
+          const supportRegions = getWorldSupportRegions(state.layers, o.id, topZ);
+          if (regionsIntersectionArea(item.regions, supportRegions) > 1e-6) baseZ = topZ;
         }
         // Land the shape's ACTUAL geometry — not its transform origin or
         // its selection-outline bounding box, which is only a visual
