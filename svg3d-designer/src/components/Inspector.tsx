@@ -12,7 +12,8 @@ import { collectShapeLayers, getLocalShapeBounds } from "../state/sceneUtils";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { ColorPickerButton, normalizeHexColor } from "./ColorPicker";
 import { displayToMM, formatLength, mmToDisplay, UNIT_LABELS } from "../state/units";
-import type { AlignMode, ShapeLayer, Units } from "../types";
+import type { AlignMode, HeightMapSettings, ShapeLayer, Units } from "../types";
+import { buildHeightMapFromImageFile } from "../geometry/heightMap";
 import {
   AlignBottomIcon,
   AlignCenterHIcon,
@@ -314,6 +315,8 @@ export function Inspector() {
   const setBevelTop = useSceneStore((s) => s.setBevelTop);
   const setIndentBottom = useSceneStore((s) => s.setIndentBottom);
   const setIndentTop = useSceneStore((s) => s.setIndentTop);
+  const setHeightMap = useSceneStore((s) => s.setHeightMap);
+  const updateHeightMapSettings = useSceneStore((s) => s.updateHeightMapSettings);
   const setIsHole = useSceneStore((s) => s.setIsHole);
   const setLayerZ = useSceneStore((s) => s.setLayerZ);
   const snapHoleToRecessedPocket = useSceneStore((s) => s.snapHoleToRecessedPocket);
@@ -326,6 +329,9 @@ export function Inspector() {
   const bevelTopGesture = useRef<TrackedSceneSlice | null>(null);
   const indentBottomGesture = useRef<TrackedSceneSlice | null>(null);
   const indentTopGesture = useRef<TrackedSceneSlice | null>(null);
+  const heightMapBottomGesture = useRef<TrackedSceneSlice | null>(null);
+  const heightMapTopGesture = useRef<TrackedSceneSlice | null>(null);
+  const [heightMapError, setHeightMapError] = useState<string | null>(null);
   const matchDocumentToBed = useSceneStore((s) => s.matchDocumentToBed);
   const mergeLayers = useSceneStore((s) => s.mergeLayers);
   const groupSelection = useSceneStore((s) => s.groupSelection);
@@ -736,50 +742,78 @@ export function Inspector() {
               </CollapsibleSection>
 
               {(() => {
-                // Bevel (rounds the rim, silhouette tapers at the cap) and
+                // Bevel (rounds the rim, silhouette tapers at the cap),
                 // Indent (rim stays put, the face's *center* dents in or
-                // bulges out) are two different ways to shape the same
-                // face — geometrically incompatible on one face at once, so
-                // each face is either None, Bevel, or Indent, chosen with an
-                // explicit toggle rather than two separate sections that
+                // bulges out) and Height Map (an uploaded grayscale image
+                // drives the whole face's relief) are three different ways
+                // to shape the same face — geometrically incompatible on
+                // one face at once, so each face is exactly one of them,
+                // chosen with an explicit toggle rather than sections that
                 // silently fight over the same face (indent used to win
-                // with no explanation whenever both had a nonzero value).
-                // Top and Bottom are independent, so e.g. a beveled bottom
-                // with an indented top is completely normal.
+                // with no explanation whenever bevel and indent both had a
+                // nonzero value, before this toggle existed). Top and
+                // Bottom are independent, so e.g. a beveled bottom with a
+                // height-mapped top is completely normal.
                 const bevelMax = Math.max(0.5, display.extrusionDepth / 2);
                 const bevelDefault = Math.min(0.3, bevelMax);
                 const indentMax = Math.max(0.5, display.extrusionDepth / 2);
                 const indentDefault = Math.min(indentMax, indentMax * 0.6);
-                // Older saved shapes predate the indent fields entirely.
+                const heightMapStrengthDefault = Math.min(1, indentMax);
+                // Older saved shapes predate the indent/height-map fields entirely.
                 const indentTop = display.indentTop ?? 0;
                 const indentBottom = display.indentBottom ?? 0;
+                const heightMapTop = display.heightMapTop;
+                const heightMapBottom = display.heightMapBottom;
                 const ids = targets.map((t) => t.id);
 
-                type FaceMode = "none" | "bevel" | "indent";
-                const modeOf = (bevel: number, indent: number): FaceMode =>
-                  indent !== 0 ? "indent" : bevel > 0 ? "bevel" : "none";
-                const topMode = modeOf(display.bevelTop, indentTop);
-                const bottomMode = modeOf(display.bevelBottom, indentBottom);
+                type FaceMode = "none" | "bevel" | "indent" | "heightmap";
+                const modeOf = (bevel: number, indent: number, heightMap: HeightMapSettings | undefined): FaceMode =>
+                  heightMap ? "heightmap" : indent !== 0 ? "indent" : bevel > 0 ? "bevel" : "none";
+                const topMode = modeOf(display.bevelTop, indentTop, heightMapTop);
+                const bottomMode = modeOf(display.bevelBottom, indentBottom, heightMapBottom);
 
                 function FaceRow({
                   label,
+                  face,
                   mode,
                   bevelValue,
                   indentValue,
+                  heightMap,
                   setBevel,
                   setIndent,
                   bevelGestureRef,
                   indentGestureRef,
+                  heightMapGestureRef,
                 }: {
                   label: string;
+                  face: "top" | "bottom";
                   mode: FaceMode;
                   bevelValue: number;
                   indentValue: number;
+                  heightMap: HeightMapSettings | undefined;
                   setBevel: (id: string, mm: number) => void;
                   setIndent: (id: string, mm: number) => void;
                   bevelGestureRef: MutableRefObject<TrackedSceneSlice | null>;
                   indentGestureRef: MutableRefObject<TrackedSceneSlice | null>;
+                  heightMapGestureRef: MutableRefObject<TrackedSceneSlice | null>;
                 }) {
+                  const fileInputRef = useRef<HTMLInputElement>(null);
+                  const storeFace = face === "top" ? "top" : "bottom";
+
+                  async function handleFile(file: File) {
+                    setHeightMapError(null);
+                    try {
+                      const settings = await buildHeightMapFromImageFile(file, heightMapStrengthDefault);
+                      applyToAll(ids, (id) => {
+                        setBevel(id, 0);
+                        setIndent(id, 0);
+                        setHeightMap(id, storeFace, settings);
+                      });
+                    } catch (err) {
+                      setHeightMapError(err instanceof Error ? err.message : "Could not load that image.");
+                    }
+                  }
+
                   return (
                     <div style={{ marginBottom: 10 }}>
                       <div className="field-row">
@@ -792,6 +826,7 @@ export function Inspector() {
                               applyToAll(ids, (id) => {
                                 setBevel(id, 0);
                                 setIndent(id, 0);
+                                setHeightMap(id, storeFace, null);
                               })
                             }
                           >
@@ -803,6 +838,7 @@ export function Inspector() {
                             onClick={() =>
                               applyToAll(ids, (id) => {
                                 setIndent(id, 0);
+                                setHeightMap(id, storeFace, null);
                                 setBevel(id, bevelValue > 0 ? bevelValue : bevelDefault);
                               })
                             }
@@ -815,14 +851,94 @@ export function Inspector() {
                             onClick={() =>
                               applyToAll(ids, (id) => {
                                 setBevel(id, 0);
+                                setHeightMap(id, storeFace, null);
                                 setIndent(id, indentValue !== 0 ? indentValue : indentDefault);
                               })
                             }
                           >
                             Indent
                           </button>
+                          <button
+                            type="button"
+                            className={mode === "heightmap" ? "active" : ""}
+                            onClick={() => fileInputRef.current?.click()}
+                          >
+                            Height Map
+                          </button>
                         </div>
                       </div>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        style={{ display: "none" }}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleFile(file);
+                          e.target.value = "";
+                        }}
+                      />
+                      {mode === "heightmap" && heightMap && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          <div className="field-row">
+                            <img
+                              src={heightMap.previewDataUrl}
+                              alt=""
+                              style={{ width: 32, height: 32, objectFit: "cover", borderRadius: 4, border: "1px solid var(--border-strong)" }}
+                            />
+                            <button type="button" className="btn" style={{ flex: "1 1 auto" }} onClick={() => fileInputRef.current?.click()}>
+                              Replace image
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              title="Remove height map"
+                              onClick={() => applyToAll(ids, (id) => setHeightMap(id, storeFace, null))}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          <div className="field-row">
+                            <span className="field-label">Strength</span>
+                            <input
+                              className="field-input"
+                              type="range"
+                              min={0}
+                              max={indentMax}
+                              step={0.05}
+                              value={Math.min(indentMax, heightMap.strength)}
+                              onPointerDown={() => {
+                                heightMapGestureRef.current = beginGesture();
+                              }}
+                              onPointerUp={() => {
+                                if (heightMapGestureRef.current) {
+                                  endGesture(heightMapGestureRef.current, true);
+                                  heightMapGestureRef.current = null;
+                                }
+                              }}
+                              onChange={(e) => {
+                                const strength = parseFloat(e.target.value);
+                                targets.forEach((t) => updateHeightMapSettings(t.id, storeFace, { strength }));
+                              }}
+                              style={{ flex: "1 1 auto" }}
+                            />
+                            <NumberField
+                              value={heightMap.strength}
+                              min={0}
+                              step={0.05}
+                              unit={unit}
+                              style={{ flex: "0 0 60px" }}
+                              onChange={(strength) => applyToAll(ids, (id) => updateHeightMapSettings(id, storeFace, { strength }))}
+                            />
+                          </div>
+                          <ToggleSwitch
+                            label="Invert"
+                            checked={heightMap.invert}
+                            onChange={() => applyToAll(ids, (id) => updateHeightMapSettings(id, storeFace, { invert: !heightMap.invert }))}
+                            title="Flip which end of the image (light or dark) pushes the surface out vs in"
+                          />
+                        </div>
+                      )}
                       {mode === "bevel" && (
                         <div className="field-row">
                           <input
@@ -891,7 +1007,7 @@ export function Inspector() {
                 return (
                   <CollapsibleSection
                     title={`Edge shaping${isBatch ? " (all shapes in group)" : ""}`}
-                    active={display.bevelTop > 0 || display.bevelBottom > 0 || indentTop !== 0 || indentBottom !== 0}
+                    active={display.bevelTop > 0 || display.bevelBottom > 0 || indentTop !== 0 || indentBottom !== 0 || !!heightMapTop || !!heightMapBottom}
                     onAdd={() =>
                       applyToAll(ids, (id) => {
                         setBevelTop(id, bevelDefault);
@@ -904,33 +1020,42 @@ export function Inspector() {
                         setBevelBottom(id, 0);
                         setIndentTop(id, 0);
                         setIndentBottom(id, 0);
+                        setHeightMap(id, "top", null);
+                        setHeightMap(id, "bottom", null);
                       })
                     }
                   >
                     <p className="hole-hint">
-                      Bevel rounds the rim; Indent instead bows the whole face into a smooth dent
-                      (positive) or bulge (negative), keeping the rim untouched. Each face — Top or
-                      Bottom — can only be one or the other at a time.
+                      Bevel rounds the rim; Indent bows the whole face into a smooth dent (positive)
+                      or bulge (negative); Height Map instead reads the relief from a grayscale
+                      image. Each face — Top or Bottom — can only be one of the three at a time.
                     </p>
+                    {heightMapError && <p className="hole-hint" style={{ color: "#ef4444" }}>{heightMapError}</p>}
                     <FaceRow
                       label="Top"
+                      face="top"
                       mode={topMode}
                       bevelValue={display.bevelTop}
                       indentValue={indentTop}
+                      heightMap={heightMapTop}
                       setBevel={setBevelTop}
                       setIndent={setIndentTop}
                       bevelGestureRef={bevelTopGesture}
                       indentGestureRef={indentTopGesture}
+                      heightMapGestureRef={heightMapTopGesture}
                     />
                     <FaceRow
                       label="Bottom"
+                      face="bottom"
                       mode={bottomMode}
                       bevelValue={display.bevelBottom}
                       indentValue={indentBottom}
+                      heightMap={heightMapBottom}
                       setBevel={setBevelBottom}
                       setIndent={setIndentBottom}
                       bevelGestureRef={bevelBottomGesture}
                       indentGestureRef={indentBottomGesture}
+                      heightMapGestureRef={heightMapBottomGesture}
                     />
                   </CollapsibleSection>
                 );

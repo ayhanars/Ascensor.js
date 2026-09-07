@@ -6,6 +6,7 @@ import type {
   AlignMode,
   DocumentSettings,
   GroupLayer,
+  HeightMapSettings,
   Layer,
   Plate,
   PrintBed,
@@ -300,6 +301,14 @@ interface SceneState {
   setIndentBottom: (id: string, mm: number) => void;
   /** Same as setIndentBottom, for the top face. */
   setIndentTop: (id: string, mm: number) => void;
+  /** Sets or clears (`null`) a face's height-map displacement — see
+   * `ShapeLayer.heightMapBottom`/`heightMapTop`. Whole-object replace,
+   * used for uploading a new image or removing one entirely; see
+   * `updateHeightMapSettings` for tweaking strength/invert in place. */
+  setHeightMap: (id: string, face: "bottom" | "top", settings: HeightMapSettings | null) => void;
+  /** Adjusts strength/invert on a face's already-set height map without
+   * touching its sampled image data. */
+  updateHeightMapSettings: (id: string, face: "bottom" | "top", patch: Partial<Pick<HeightMapSettings, "strength" | "invert">>) => void;
   setIsHole: (id: string, value: boolean) => void;
   /**
    * Repositions a hole shape into a recessed pocket instead of a full
@@ -644,6 +653,34 @@ export const useSceneStore = create<SceneState>()(
         layers: {
           ...state.layers,
           [id]: { ...layer, indentTop: Number.isFinite(mm) ? mm : 0 } as ShapeLayer,
+        },
+      };
+    }),
+
+  setHeightMap: (id, face, settings) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape") return {};
+      const field = face === "bottom" ? "heightMapBottom" : "heightMapTop";
+      return {
+        layers: {
+          ...state.layers,
+          [id]: { ...layer, [field]: settings ?? undefined } as ShapeLayer,
+        },
+      };
+    }),
+
+  updateHeightMapSettings: (id, face, patch) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape") return {};
+      const field = face === "bottom" ? "heightMapBottom" : "heightMapTop";
+      const current = layer[field];
+      if (!current) return {};
+      return {
+        layers: {
+          ...state.layers,
+          [id]: { ...layer, [field]: { ...current, ...patch } } as ShapeLayer,
         },
       };
     }),

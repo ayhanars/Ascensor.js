@@ -1,5 +1,7 @@
 import * as THREE from "three";
 import { roundContour } from "./roundCorners";
+import { heightMapDisplacement } from "./heightMap";
+import type { HeightMapSettings } from "../types";
 
 /**
  * Independent top/bottom edge bevels for an extruded shape — distinct from
@@ -61,6 +63,120 @@ const BEVEL_CORNER_SEGMENTS = 6;
  * the Dimple tool pressing a smooth recess into another shape) can ask for
  * that same safe maximum directly instead of guessing at a value. */
 export const BEVEL_SELF_INTERSECTION_SAFETY = 0.85;
+
+/** How many recursive 4-way splits each ear-clipped cap triangle gets when
+ * a height map is applied — 4 levels turns one triangle into 4^4 = 256
+ * smaller ones, fine enough to carry real image detail. Capped down per
+ * shape (see HEIGHT_MAP_MAX_TRIANGLES) for outlines that already have
+ * many ears of their own (an imported SVG glyph, say). */
+const HEIGHT_MAP_SUBDIVISION_DEPTH = 4;
+/** Hard ceiling on how many triangles a single height-mapped cap may
+ * produce — without this, an outline with hundreds of its own ears times
+ * 256 would turn one shape into a multi-million-triangle mesh. */
+const HEIGHT_MAP_MAX_TRIANGLES = 40000;
+
+/**
+ * Replaces a flat, ear-clipped cap with one displaced by a height map:
+ * every ear-clip triangle is recursively split into 4 sub-triangles
+ * (each new vertex placed at its parent edge's midpoint, in 2D, then
+ * given its own sampled Z), which — unlike generating an independent grid
+ * and clipping it to the polygon — exactly conforms to the shape's real
+ * outline (including holes and concave corners) with no separate
+ * boundary-stitching step, since subdivision only ever adds points
+ * strictly on existing edges or inside existing triangles.
+ *
+ * The outline's own corner vertices are shared with the wall built
+ * earlier (same indices), so their Z is displaced *in place* in
+ * `positions` rather than pushed fresh — the wall already reads from
+ * those same buffer slots, so this is what keeps the wall meeting a
+ * height-mapped cap without a seam, the same way a flat cap's corners are
+ * shared rather than duplicated.
+ */
+function buildHeightMappedCap(
+  ringXY: THREE.Vector2[],
+  holesXY: THREE.Vector2[][],
+  flatIdx: number[],
+  baseZ: number,
+  positions: number[],
+  uvs: number[],
+  indices: number[],
+  bbox: { minX: number; maxX: number; minY: number; maxY: number },
+  heightMap: HeightMapSettings,
+  reversed: boolean,
+  sign: 1 | -1,
+): void {
+  const faces = THREE.ShapeUtils.triangulateShape(ringXY, holesXY);
+  if (faces.length === 0) return;
+  const flatPts = [ringXY, ...holesXY].flat();
+
+  const spanX = bbox.maxX - bbox.minX || 1;
+  const spanY = bbox.maxY - bbox.minY || 1;
+  function offsetAt(x: number, y: number): number {
+    const u = (x - bbox.minX) / spanX;
+    const v = (y - bbox.minY) / spanY;
+    return sign * heightMapDisplacement(heightMap, u, v);
+  }
+
+  const subdivisionDepth = Math.max(
+    0,
+    Math.min(HEIGHT_MAP_SUBDIVISION_DEPTH, Math.floor(Math.log(Math.max(1, HEIGHT_MAP_MAX_TRIANGLES / faces.length)) / Math.log(4))),
+  );
+
+  interface Vert {
+    idx: number;
+    x: number;
+    y: number;
+  }
+
+  const displacedCorners = new Set<number>();
+  function cornerVertex(faceIdx: number): Vert {
+    const idx = flatIdx[faceIdx];
+    const p = flatPts[faceIdx];
+    if (!displacedCorners.has(idx)) {
+      displacedCorners.add(idx);
+      positions[idx * 3 + 2] += offsetAt(p.x, p.y);
+    }
+    return { idx, x: p.x, y: p.y };
+  }
+
+  const midpointCache = new Map<string, Vert>();
+  function midpoint(p: Vert, q: Vert): Vert {
+    const key = p.idx < q.idx ? `${p.idx}_${q.idx}` : `${q.idx}_${p.idx}`;
+    const cached = midpointCache.get(key);
+    if (cached) return cached;
+    const mx = (p.x + q.x) / 2;
+    const my = (p.y + q.y) / 2;
+    const idx = positions.length / 3;
+    positions.push(mx, my, baseZ + offsetAt(mx, my));
+    uvs.push(mx, my);
+    const result: Vert = { idx, x: mx, y: my };
+    midpointCache.set(key, result);
+    return result;
+  }
+
+  function emit(a: Vert, b: Vert, c: Vert): void {
+    if (reversed) indices.push(c.idx, b.idx, a.idx);
+    else indices.push(a.idx, b.idx, c.idx);
+  }
+
+  function subdivide(a: Vert, b: Vert, c: Vert, depthLeft: number): void {
+    if (depthLeft <= 0) {
+      emit(a, b, c);
+      return;
+    }
+    const ab = midpoint(a, b);
+    const bc = midpoint(b, c);
+    const ca = midpoint(c, a);
+    subdivide(a, ab, ca, depthLeft - 1);
+    subdivide(ab, b, bc, depthLeft - 1);
+    subdivide(ca, bc, c, depthLeft - 1);
+    subdivide(ab, bc, ca, depthLeft - 1);
+  }
+
+  for (const face of faces) {
+    subdivide(cornerVertex(face[0]), cornerVertex(face[1]), cornerVertex(face[2]), subdivisionDepth);
+  }
+}
 
 function getBevelVec(inPt: THREE.Vector2, inPrev: THREE.Vector2, inNext: THREE.Vector2): THREE.Vector2 {
   let v_trans_x: number, v_trans_y: number, shrink_by: number;
@@ -192,6 +308,8 @@ export function buildBeveledExtrudeGeometry(
   bevelTop: number,
   indentBottom = 0,
   indentTop = 0,
+  heightMapBottom?: HeightMapSettings,
+  heightMapTop?: HeightMapSettings,
 ): THREE.BufferGeometry {
   const bottomIsIndent = indentBottom !== 0;
   const topIsIndent = indentTop !== 0;
@@ -545,22 +663,47 @@ export function buildBeveledExtrudeGeometry(
     // ---- Caps: ear-clip triangulate the bottom-most and top-most rings,
     // reusing the SAME vertex indices those rings' walls already created
     // (rather than pushing fresh ones) so the cap is properly stitched
-    // into the same smoothing group as the curve it caps off. ----
+    // into the same smoothing group as the curve it caps off — unless a
+    // height map applies to that face, in which case the ear-clip result
+    // is subdivided and displaced instead of triangulated flat. ----
+    let bbox: { minX: number; maxX: number; minY: number; maxY: number } | null = null;
+    if (heightMapBottom || heightMapTop) {
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      for (const p of contour) {
+        minX = Math.min(minX, p.x);
+        maxX = Math.max(maxX, p.x);
+        minY = Math.min(minY, p.y);
+        maxY = Math.max(maxY, p.y);
+      }
+      bbox = { minX, maxX, minY, maxY };
+    }
+
     const bottomRingXY = contourRings[0];
     const bottomHolesXY = holeRings.map((hr) => hr[0]);
-    const bottomFaces = THREE.ShapeUtils.triangulateShape(bottomRingXY, bottomHolesXY);
     const bottomFlatIdx = [contourIdx[0], ...holeIdx.map((hi) => hi[0])].flat();
-    for (const face of bottomFaces) {
-      indices.push(bottomFlatIdx[face[2]], bottomFlatIdx[face[1]], bottomFlatIdx[face[0]]);
+    if (heightMapBottom && bbox) {
+      buildHeightMappedCap(bottomRingXY, bottomHolesXY, bottomFlatIdx, rings[0].z, positions, uvs, indices, bbox, heightMapBottom, true, -1);
+    } else {
+      const bottomFaces = THREE.ShapeUtils.triangulateShape(bottomRingXY, bottomHolesXY);
+      for (const face of bottomFaces) {
+        indices.push(bottomFlatIdx[face[2]], bottomFlatIdx[face[1]], bottomFlatIdx[face[0]]);
+      }
     }
 
     const topIdx = rings.length - 1;
     const topRingXY = contourRings[topIdx];
     const topHolesXY = holeRings.map((hr) => hr[topIdx]);
-    const topFaces = THREE.ShapeUtils.triangulateShape(topRingXY, topHolesXY);
     const topFlatIdx = [contourIdx[topIdx], ...holeIdx.map((hi) => hi[topIdx])].flat();
-    for (const face of topFaces) {
-      indices.push(topFlatIdx[face[0]], topFlatIdx[face[1]], topFlatIdx[face[2]]);
+    if (heightMapTop && bbox) {
+      buildHeightMappedCap(topRingXY, topHolesXY, topFlatIdx, rings[topIdx].z, positions, uvs, indices, bbox, heightMapTop, false, 1);
+    } else {
+      const topFaces = THREE.ShapeUtils.triangulateShape(topRingXY, topHolesXY);
+      for (const face of topFaces) {
+        indices.push(topFlatIdx[face[0]], topFlatIdx[face[1]], topFlatIdx[face[2]]);
+      }
     }
   }
 

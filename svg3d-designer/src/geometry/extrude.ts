@@ -66,6 +66,8 @@ interface CachedGeometryEntry {
   bevelTop: number;
   indentBottom: number;
   indentTop: number;
+  heightMapBottom: ShapeLayer["heightMapBottom"];
+  heightMapTop: ShapeLayer["heightMapTop"];
   geometry: THREE.BufferGeometry;
 }
 
@@ -90,6 +92,9 @@ export function buildExtrudeGeometry(layer: ShapeLayer): THREE.BufferGeometry {
   const indentBottom = layer.indentBottom ?? 0;
   const indentTop = layer.indentTop ?? 0;
 
+  const heightMapBottom = layer.heightMapBottom;
+  const heightMapTop = layer.heightMapTop;
+
   const cached = geometryCache.get(layer.id);
   if (
     cached &&
@@ -99,7 +104,9 @@ export function buildExtrudeGeometry(layer: ShapeLayer): THREE.BufferGeometry {
     cached.bevelBottom === bevelBottom &&
     cached.bevelTop === bevelTop &&
     cached.indentBottom === indentBottom &&
-    cached.indentTop === indentTop
+    cached.indentTop === indentTop &&
+    cached.heightMapBottom === heightMapBottom &&
+    cached.heightMapTop === heightMapTop
   ) {
     return cached.geometry;
   }
@@ -108,8 +115,8 @@ export function buildExtrudeGeometry(layer: ShapeLayer): THREE.BufferGeometry {
   const depth = Math.max(0.05, layer.extrusionDepth);
 
   const geometry =
-    bevelBottom > 0 || bevelTop > 0 || indentBottom !== 0 || indentTop !== 0
-      ? buildBeveledExtrudeGeometry(shapes, depth, bevelBottom, bevelTop, indentBottom, indentTop)
+    bevelBottom > 0 || bevelTop > 0 || indentBottom !== 0 || indentTop !== 0 || heightMapBottom || heightMapTop
+      ? buildBeveledExtrudeGeometry(shapes, depth, bevelBottom, bevelTop, indentBottom, indentTop, heightMapBottom, heightMapTop)
       : (() => {
           const g = new THREE.ExtrudeGeometry(shapes, { depth, bevelEnabled: false, curveSegments: 1 });
           g.computeVertexNormals();
@@ -124,6 +131,8 @@ export function buildExtrudeGeometry(layer: ShapeLayer): THREE.BufferGeometry {
     bevelTop,
     indentBottom,
     indentTop,
+    heightMapBottom,
+    heightMapTop,
     geometry,
   });
   return geometry;
