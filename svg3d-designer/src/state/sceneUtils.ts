@@ -1,5 +1,5 @@
 import type { Layer, Point2, ShapeLayer, ShapeRegion, Transform2D } from "../types";
-import { regionsArea, regionsIntersectionArea, unionRegions } from "../geometry/booleanOps";
+import { differenceRegions, regionsArea, regionsIntersectionArea, unionRegions } from "../geometry/booleanOps";
 import { buildExtrudeGeometry } from "../geometry/extrude";
 
 export const IDENTITY_TRANSFORM: Transform2D = {
@@ -361,6 +361,53 @@ export function getWorldRegions(layers: Record<string, Layer>, id: string): Shap
 // genuinely different stacking heights as the same one.
 const Z_ALIGN_EPSILON_MM = 0.05;
 
+/**
+ * A shape's world regions with whatever any `isHole` layer clears away at
+ * its own TOP surface subtracted out — what something resting on top of it
+ * can actually land on. `subtractHoles` (holeSubtraction.ts) does a real 3D
+ * CSG cut of every hole from every solid it geometrically overlaps, but
+ * that only ever touches the built THREE geometry — the 2D `regions` this
+ * shape's support/floating checks (auto-stack, the floating-shape warning,
+ * fixFloatingLayers) all read from is never updated to match, so without
+ * this a hole cut clean through a shape is invisible to every one of them:
+ * they still see the shape's full, uncut footprint as solid support. A
+ * shallow pocket that never reaches this shape's own top Z leaves the top
+ * surface untouched (nothing rests inside a pocket that stops below the
+ * surface it's cut from), so only a hole whose own Z range actually
+ * reaches (or passes through) this shape's top counts — whether the hole
+ * continues on through the bottom or stops right there makes no
+ * difference from above.
+ *
+ * `topZOverride` lets a caller supply the shape's real current top Z
+ * directly instead of having it re-derived from `layers[id].transform` —
+ * needed by auto-stack, which computes a shape's brand-new Z within the
+ * same pass that then asks what it can support, before that new Z has
+ * been written back into `layers` for getShapeWorldZRange to see.
+ */
+export function getWorldSupportRegions(
+  layers: Record<string, Layer>,
+  id: string,
+  topZOverride?: number,
+): ShapeRegion[] {
+  const own = getWorldRegions(layers, id);
+  const topZ = topZOverride ?? getShapeWorldZRange(layers, id)?.max;
+  if (topZ === undefined) return own;
+
+  const clips: ShapeRegion[][] = [];
+  for (const hole of Object.values(layers)) {
+    if (!isShapeLayer(hole) || !hole.isHole || hole.id === id) continue;
+    const holeZRange = getShapeWorldZRange(layers, hole.id);
+    if (!holeZRange) continue;
+    if (holeZRange.max < topZ - Z_ALIGN_EPSILON_MM) continue; // doesn't reach the top surface
+    if (holeZRange.min > topZ + Z_ALIGN_EPSILON_MM) continue; // sits entirely above it — no overlap
+    const holeRegions = getWorldRegions(layers, hole.id);
+    if (regionsIntersectionArea(own, holeRegions) < 1e-9) continue;
+    clips.push(holeRegions);
+  }
+  if (clips.length === 0) return own;
+  return differenceRegions([own, ...clips]);
+}
+
 // Above this fraction of a shape's own footprint being supported, it's
 // considered fully attached (not worth flagging at all). Below
 // PARTIAL_CONTACT_FRACTION, there's no meaningful contact — it's genuinely
@@ -433,7 +480,7 @@ export function computeFloatingLayerSeverities(
       critical.push(item.id);
       continue;
     }
-    const supportUnion = unionRegions(supporters.flatMap((s) => s.regions));
+    const supportUnion = unionRegions(supporters.flatMap((s) => getWorldSupportRegions(layers, s.id)));
     const supportedArea = regionsIntersectionArea(item.regions, supportUnion);
     if (supportedArea < item.area * PARTIAL_CONTACT_FRACTION) critical.push(item.id);
     else if (supportedArea < item.area * FULLY_SUPPORTED_FRACTION) partial.push(item.id);
