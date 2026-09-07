@@ -1342,6 +1342,44 @@ export const useSceneStore = create<SceneState>()(
         }));
       }
 
+      // Re-anchor the merged shape's own local origin to its bounding box's
+      // corner, matching the same convention every OTHER shape already
+      // follows (a freshly-created rect's own points start at its local
+      // (0,0), and transform.x/y IS that corner's real position) — without
+      // this, `regions` above are left sitting wherever the union math
+      // happened to bake them (effectively the document/parent origin) with
+      // transform.x/y at a meaningless (0, 0) that has nothing to do with
+      // where the shape actually is. That mismatch is harmless for the 3D
+      // scene itself (transform.x/y=0 contributes nothing, so the baked
+      // points alone are still the correct final position) but corrupts
+      // the ONE thing transform.x/y is for: repositioning the shape
+      // afterward. The X/Y Inspector fields, an align action, or a drag all
+      // read/write transform.x/y expecting it to already equal the shape's
+      // own corner — so nudging a merged shape by typing a new X, or
+      // aligning it with another shape, silently landed it somewhere
+      // else entirely (transform.x/y=0 masqueraded as "already at the
+      // origin", so any edit added straight onto the real baked position
+      // instead of replacing it), which is exactly what going on to export
+      // the file looked like: the merged shape "jumping" to an unexpected
+      // spot on the plate.
+      let minX = Infinity;
+      let minY = Infinity;
+      for (const region of regions) {
+        for (const p of region.outer.points) {
+          minX = Math.min(minX, p.x);
+          minY = Math.min(minY, p.y);
+        }
+      }
+      if (Number.isFinite(minX) && Number.isFinite(minY)) {
+        regions = regions.map((region) => ({
+          outer: { points: region.outer.points.map((p) => ({ x: p.x - minX, y: p.y - minY })) },
+          holes: region.holes.map((h) => ({ points: h.points.map((p) => ({ x: p.x - minX, y: p.y - minY })) })),
+        }));
+      } else {
+        minX = 0;
+        minY = 0;
+      }
+
       const frontMost = shapeLayers[shapeLayers.length - 1];
       const mergedId = nanoid(8);
       // Keep the merged shape sitting at the same physical height AND the
@@ -1366,6 +1404,8 @@ export const useSceneStore = create<SceneState>()(
         color: frontMost.color,
         transform: {
           ...IDENTITY_TRANSFORM,
+          x: minX,
+          y: minY,
           z: Math.max(0, frontMostWorld.z - mergedParentWorld.z),
           rotationX: frontMostWorld.rotationX - mergedParentWorld.rotationX,
           rotationY: frontMostWorld.rotationY - mergedParentWorld.rotationY,
