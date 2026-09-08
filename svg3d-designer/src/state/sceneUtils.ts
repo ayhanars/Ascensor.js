@@ -752,10 +752,31 @@ function findWorstLocalPinch(rawPoints: Point2[]): LocalPinch | null {
           // opposite-edge comparison a thin rectangle needs) — both land
           // on the same dIndex.
           if (j === i || (j + 1) % n === i) continue;
-          const dIndex = Math.min((j - i + n) % n, (i - j + n) % n);
+          const j1 = (j + 1) % n;
+          // The exclusion window has to be measured to whichever of the
+          // segment's TWO endpoints the closest-point projection actually
+          // lands on, not just to the segment's start (j). Clamped
+          // projection very often lands right on an endpoint, and that
+          // endpoint can sit well within the window of i even when j
+          // itself doesn't — e.g. j is 2 steps from i, but the projection
+          // clamps to j+1, which is only 1 step from i (i.e. i's own
+          // direct neighbor). Using only dIndex(i, j) there reports the
+          // literal length of the real edge between i and its neighbor as
+          // if it were a cross-shape pinch — a meaningless number that has
+          // nothing to do with material thickness, and was the actual
+          // cause of persistent false positives (and, it turns out, some
+          // apparent "true positives" that were never real either) on
+          // ordinary curved outlines. Taking the smaller of the two
+          // endpoint distances closes that gap while still comparing i
+          // against a genuinely different stretch of the boundary whenever
+          // one exists (the sparse-rectangle case above is untouched: both
+          // its endpoints already sit outside a same-sized window there).
+          const dIndexJ = Math.min((j - i + n) % n, (i - j + n) % n);
+          const dIndexJ1 = Math.min((j1 - i + n) % n, (i - j1 + n) % n);
+          const dIndex = Math.min(dIndexJ, dIndexJ1);
           if (dIndex < indexWindow) continue;
           const a = points[j];
-          const b = points[(j + 1) % n];
+          const b = points[j1];
           const closest = closestPointOnSegment(p, a, b);
           const dx = closest.x - p.x;
           const dy = closest.y - p.y;
