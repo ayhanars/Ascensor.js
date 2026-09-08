@@ -607,21 +607,25 @@ export function computeConnectedClusters(layers: Record<string, Layer>, rootIds:
 // margin above a typical 0.4mm nozzle's own minimum.
 const MIN_SAFE_LOCAL_WIDTH_MM = 0.5;
 
-// Two points this close together along the ring's own index order are
-// just neighboring samples on one local curve, not two separate parts of
-// the shape coming near each other — skipped so a tightly-curved (but
-// perfectly printable) stretch of outline doesn't flag itself. Used
-// as-is for any shape with enough points to have been tuned against
-// originally (see findWorstLocalPinch's indexWindow); a low-point shape
-// (a native rectangle's 4 corners) instead gets a narrower,
-// arc-length-derived window built from THIN_FEATURE_ARC_EXCLUDE_MM below.
-const FIXED_INDEX_WINDOW = 5;
-const FIXED_WINDOW_MIN_POINTS = 2 * FIXED_INDEX_WINDOW + 1;
-
-// The physical exclusion distance (mm) a low-point shape's index window
-// is derived from — see findWorstLocalPinch. Reusing MIN_SAFE_LOCAL_WIDTH
-// _MM's own scale rather than a new unrelated constant.
-const THIN_FEATURE_ARC_EXCLUDE_MM = MIN_SAFE_LOCAL_WIDTH_MM * 2;
+// Two points this close together along the ring's own PERIMETER (arc
+// length, not index count) are just neighboring samples on one local
+// curve, not two separate parts of the shape coming near each other —
+// skipped so a tightly-curved (but perfectly printable) stretch of
+// outline doesn't flag itself. Every ring gets this same arc-length-
+// derived window uniformly now (a fixed, point-count-only window used to
+// be tried instead for anything with 11+ points — dropped once SVG
+// import started simplifying every curve down to a "native" point
+// density on its own: with that in place, a shape's point count no
+// longer means "already dense enough to trust a fixed window," so
+// splitting sparse from dense shapes here doesn't track anything real
+// anymore). 1.5mm was reached empirically against a real multi-shape
+// project rather than picked a priori: it's the value that clears the
+// most false positives (curvature-only "pinches" on plainly round shapes
+// — an eye, a nose) while still keeping every one of that project's
+// genuinely thin details (several whiskers as narrow as 0.15mm) safely
+// below the 0.5mm safety threshold; neither a smaller nor a larger value
+// did both at once.
+const THIN_FEATURE_ARC_EXCLUDE_MM = MIN_SAFE_LOCAL_WIDTH_MM * 3;
 
 function closestPointOnSegment(p: Point2, a: Point2, b: Point2): Point2 {
   const abx = b.x - a.x;
@@ -682,42 +686,29 @@ function findWorstLocalPinch(rawPoints: Point2[]): LocalPinch | null {
   const n = points.length;
   if (n < 4) return null;
 
-  // A shape with plenty of points (any real tessellated curve — every
-  // shape this was originally built and tuned against) keeps the exact
-  // FIXED index window this always used: verified directly against a real
-  // multi-shape project that it's already the right amount of exclusion
-  // across a whole mix of tightly-tessellated thin strokes AND coarser,
-  // plainly-round shapes (eyes, ears) alike — those never falsely flagged
-  // before, and an arc-length-derived window (tried first) came out too
-  // narrow for some of them purely from curvature, not any real pinch,
-  // since point spacing on a smooth curve doesn't actually track how
-  // tightly it curves, just how long the original bezier segment was.
-  //
-  // A LOW-point-count shape (a native rectangle's 4 corners; nothing this
-  // ever ran on before, since it never had enough points to pass the old
-  // n>=11 floor at all) gets a much narrower, arc-length-derived window
-  // instead — the fixed window would swallow its only few, widely-spaced
-  // points whole and never compare anything. Arc length alone (excluding
-  // a segment whenever either of ITS OWN endpoints sits within the
-  // exclusion distance of i) was tried and rejected even for this case: a
+  // Arc-length-derived index window, uniformly for every ring regardless
+  // of point count (see THIN_FEATURE_ARC_EXCLUDE_MM above for how the
+  // distance itself was picked). A pure arc-length test (excluding a
+  // segment whenever either of ITS OWN endpoints sits within the
+  // exclusion distance of i) was tried and rejected: a low-point
   // rectangle's short edges are only ~0.1-few mm long, so the segment
   // representing the OPPOSITE long edge would get excluded just because
   // it happens to start at the same corner a short edge ends at — throwing
   // away the exact comparison (corner vs. opposite edge) that reveals a
   // thin rectangle at all. An index window instead reduces to "only
-  // exclude a segment from the point that's literally its own endpoint,"
-  // exactly the discrimination a sharp-cornered polygon needs.
-  const indexWindow = (() => {
-    if (n >= FIXED_WINDOW_MIN_POINTS) return FIXED_INDEX_WINDOW;
-    let perimeter = 0;
-    for (let k = 0; k < n; k++) {
-      const a = points[k];
-      const b = points[(k + 1) % n];
-      perimeter += Math.hypot(b.x - a.x, b.y - a.y);
-    }
-    const avgSegmentLength = perimeter / n;
-    return avgSegmentLength > 0 ? Math.max(1, Math.round(THIN_FEATURE_ARC_EXCLUDE_MM / avgSegmentLength)) : 1;
-  })();
+  // exclude a segment from the point that's literally its own endpoint"
+  // for such a sparse shape, exactly the discrimination it needs, while
+  // scaling up to a real multi-point smoothing window for a finely
+  // tessellated curve.
+  let perimeter = 0;
+  for (let k = 0; k < n; k++) {
+    const a = points[k];
+    const b = points[(k + 1) % n];
+    perimeter += Math.hypot(b.x - a.x, b.y - a.y);
+  }
+  const avgSegmentLength = perimeter / n;
+  const indexWindow =
+    avgSegmentLength > 0 ? Math.max(1, Math.round(THIN_FEATURE_ARC_EXCLUDE_MM / avgSegmentLength)) : 1;
 
   const cellSize = MIN_SAFE_LOCAL_WIDTH_MM * 2;
   const cellKey = (x: number, y: number) => `${Math.floor(x / cellSize)},${Math.floor(y / cellSize)}`;

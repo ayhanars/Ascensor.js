@@ -9,6 +9,7 @@ import type {
   ShapeRegion,
 } from "../types";
 import { IDENTITY_TRANSFORM } from "../state/sceneUtils";
+import { simplifyClosedRing } from "./simplify";
 
 const CURVE_SEGMENTS = 16;
 const PX_TO_MM = 25.4 / 96;
@@ -128,11 +129,22 @@ export function parseSvgToScene(svgText: string, fileName: string): ParsedScene 
     for (const shape of shapes) {
       const extracted = shape.extractPoints(CURVE_SEGMENTS);
       if (extracted.shape.length < 3) continue;
+      // SVGLoader cuts every curve into the SAME fixed number of segments
+      // regardless of how long or tightly it actually bends (see
+      // simplify.ts), so a shape's raw point density here is an accident
+      // of its original bezier curves, not its real complexity. Simplify
+      // it down to a "native" density — only the points that actually
+      // carry shape information survive — right after conversion to mm,
+      // so the tolerance means the same physical distance for every
+      // import regardless of the source file's own coordinate scale.
+      const outerMM = simplifyClosedRing(extracted.shape.map((v) => toPoint2(v, scale)));
+      if (outerMM.length < 3) continue;
       regions.push({
-        outer: { points: extracted.shape.map((v) => toPoint2(v, scale)) },
+        outer: { points: outerMM },
         holes: extracted.holes
           .filter((h) => h.length >= 3)
-          .map((h) => ({ points: h.map((v) => toPoint2(v, scale)) })),
+          .map((h) => ({ points: simplifyClosedRing(h.map((v) => toPoint2(v, scale))) }))
+          .filter((h) => h.points.length >= 3),
       });
     }
     return regions;
