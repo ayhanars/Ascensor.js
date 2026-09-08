@@ -632,6 +632,29 @@ export interface ThinFeatureWarning {
  * same outer contour pinching close together (an intricate outline —
  * a mane, foliage, lettering — folding back near itself).
  */
+// The topological check behind minLocalRingWidth (rasterize + flood-fill)
+// is genuinely expensive — real multi-shape projects have measured in the
+// low seconds for a single full pass — so this is cached per shape rather
+// than redone on every call. Editing one shape's position, rotation, color,
+// or anything else that leaves its OWN geometry untouched shouldn't pay to
+// re-rasterize every OTHER shape in the project too, and the store already
+// treats a layer's `regions` as replace-not-mutate (a plain `transform`
+// edit spreads the layer but keeps the same `regions` array reference), so
+// identity comparison is a reliable "did this shape's actual outline
+// change" signal. Translation and rotation don't change any pairwise
+// distance in the shape's own outline (they're isometries), so only the
+// regions reference and the world SCALE (which does stretch distances)
+// need to be part of the cache key — position/rotation changes elsewhere
+// in the tree, including a parent's, are safe to ignore here.
+interface ThinFeatureCacheEntry {
+  regions: ShapeRegion[];
+  scaleX: number;
+  scaleY: number;
+  minSafeWidthMM: number;
+  minWidth: number;
+}
+const thinFeatureCache = new Map<string, ThinFeatureCacheEntry>();
+
 export function computeThinFeatureWarnings(
   layers: Record<string, Layer>,
   rootIds: string[],
@@ -641,13 +664,33 @@ export function computeThinFeatureWarnings(
     .map((r) => r.id)
     .filter((id) => isShapeLayer(layers[id]) && !(layers[id] as ShapeLayer).isHole);
 
+  const liveIds = new Set(ids);
+  for (const cachedId of thinFeatureCache.keys()) {
+    if (!liveIds.has(cachedId)) thinFeatureCache.delete(cachedId);
+  }
+
   const warnings: ThinFeatureWarning[] = [];
   for (const id of ids) {
-    const regions = getWorldRegions(layers, id);
-    let minWidth = Infinity;
-    for (const region of regions) {
-      minWidth = Math.min(minWidth, minLocalRingWidth(region.outer.points, minSafeWidthMM));
-      for (const hole of region.holes) minWidth = Math.min(minWidth, minLocalRingWidth(hole.points, minSafeWidthMM));
+    const layer = layers[id] as ShapeLayer;
+    const { scaleX, scaleY } = getWorldTransform(layers, id);
+    const cached = thinFeatureCache.get(id);
+    let minWidth: number;
+    if (
+      cached &&
+      cached.regions === layer.regions &&
+      cached.scaleX === scaleX &&
+      cached.scaleY === scaleY &&
+      cached.minSafeWidthMM === minSafeWidthMM
+    ) {
+      minWidth = cached.minWidth;
+    } else {
+      const regions = getWorldRegions(layers, id);
+      minWidth = Infinity;
+      for (const region of regions) {
+        minWidth = Math.min(minWidth, minLocalRingWidth(region.outer.points, minSafeWidthMM));
+        for (const hole of region.holes) minWidth = Math.min(minWidth, minLocalRingWidth(hole.points, minSafeWidthMM));
+      }
+      thinFeatureCache.set(id, { regions: layer.regions, scaleX, scaleY, minSafeWidthMM, minWidth });
     }
     if (minWidth < minSafeWidthMM) warnings.push({ id, minWidthMM: minWidth });
   }
