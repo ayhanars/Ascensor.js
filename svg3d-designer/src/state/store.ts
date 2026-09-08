@@ -733,7 +733,7 @@ export const useSceneStore = create<SceneState>()(
       let layers = state.layers;
       for (let pass = 0; pass < MAX_STACK_PASSES; pass++) {
         const nextLayers = { ...layers };
-        const placed: { parentId: string | null; regions: ReturnType<typeof getWorldRegions>; topZ: number }[] = [];
+        const placed: { regions: ReturnType<typeof getWorldRegions>; topZ: number }[] = [];
         let anyChanged = false;
 
         for (const { id, regions, area } of withRegions) {
@@ -762,23 +762,21 @@ export const useSceneStore = create<SceneState>()(
           // hanging over empty space) is left for the persistent
           // floating-shape banner to catch and offer a targeted fix for.
           //
-          // A shape nested in a group only ever rests on a SIBLING under
-          // that same immediate parent — grouping shapes together is the
-          // user deliberately assembling them relative to EACH OTHER, so
-          // members of one group settle against their own group siblings
-          // the same way top-level shapes settle against each other (this
-          // is what makes Auto-Stack actually do something for, say, a
-          // face group's eyes/nose/mustache), but never against some
-          // unrelated top-level shape or another group's members, which
-          // would blow apart a deliberately assembled sub-structure. A
-          // TOP-LEVEL shape has no such restriction — it can still land on
-          // top of a group's tallest member (or any other top-level
-          // shape), which is the one-directional half of this that keeps
-          // "rest a decorative piece on top of an assembled group" working.
+          // Grouping is an organizational device, not a physics boundary —
+          // a shape rests on whichever already-placed shape it genuinely
+          // overlaps most, whether that support is a sibling under the
+          // same group, a completely different group's member, or a
+          // top-level shape. This used to be restricted to same-group-only
+          // support (so a group's members would settle against each other
+          // but never against anything outside the group), which broke the
+          // ordinary case of a few decorative pieces grouped together for
+          // organization while still physically sitting on top of an
+          // ungrouped base shape — Auto-Stack silently sank them back to
+          // the group's own local floor instead of resting them on what
+          // they actually overlap, every time it ran.
           const MEANINGFUL_OVERLAP_FRACTION = 0.05;
           let baseZ = 0;
           for (const p of placed) {
-            if (layer.parentId !== null && p.parentId !== layer.parentId) continue;
             if (p.topZ <= baseZ) continue; // can't raise baseZ any further
             if (regionsIntersectionArea(regions, p.regions) > area * MEANINGFUL_OVERLAP_FRACTION) baseZ = p.topZ;
           }
@@ -802,7 +800,7 @@ export const useSceneStore = create<SceneState>()(
             const topZ = parentWorldZ + localZ + localZRange.max;
             // A hole cut into it removes it from what's usable as landing
             // surface for anything else — see getWorldSupportRegions.
-            placed.push({ parentId: layer.parentId, regions: getWorldSupportRegions(layers, id, topZ), topZ });
+            placed.push({ regions: getWorldSupportRegions(layers, id, topZ), topZ });
           }
         }
 
