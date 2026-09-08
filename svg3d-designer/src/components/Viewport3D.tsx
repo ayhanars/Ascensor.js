@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { beginGesture, endGesture, useActivePlateRootIds, useSceneStore, type TrackedSceneSlice } from "../state/store";
 import type { ResolvedTheme } from "../state/theme";
 import { buildAssemblyGroup, computeVisibleBounds } from "../geometry/extrude";
-import { flattenForDisplay, isEffectivelyLocked } from "../state/sceneUtils";
+import { flattenForDisplay, getTopLevelId, isAncestorOrSelf, isEffectivelyLocked, stepIntoOnClick } from "../state/sceneUtils";
 import { AxisSideBar } from "./AxisSideBar";
 
 /** Never participates in raycasting — used for the selection-decoration
@@ -333,8 +333,17 @@ function Assembly() {
       if (!drag) return;
       if (controlsRef.current) controlsRef.current.enabled = true;
       endGesture(drag.snapshot, drag.moved);
+      // The pointer never actually moved — this was a plain click on an
+      // already-selected group/shape, not the start of a drag, so now (and
+      // only now) resolve it as "step one level deeper," matching the 2D
+      // canvas's click-to-select-group-then-drill-in behavior. This effect
+      // only attaches its window listeners once (see the empty deps below),
+      // so `layers`/`selection` from the render closure would be frozen at
+      // mount — read live state instead.
       if (!drag.moved && !drag.additive && drag.keptSelection) {
-        setSelection([drag.layerId]);
+        const live = useSceneStore.getState();
+        const singleSelected = live.selection.length === 1 ? live.selection[0] : undefined;
+        setSelection([stepIntoOnClick(live.layers, singleSelected, drag.layerId)]);
       }
     }
 
@@ -390,17 +399,28 @@ function Assembly() {
         let dragIds: string[];
         let keptSelection = false;
         if (additive) {
+          // Shift-click always toggles the exact shape under the cursor,
+          // same as the 2D canvas — no top-level resolution here.
           const nextSelection = selection.includes(layerId)
             ? selection.filter((s) => s !== layerId)
             : [...selection, layerId];
           setSelection(nextSelection);
           dragIds = nextSelection;
-        } else if (selection.includes(layerId)) {
+        } else if (selection.some((s) => isAncestorOrSelf(layers, s, layerId))) {
+          // A plain click on a member of the current selection (a selected
+          // group's child, or any member of a multi-selection) keeps
+          // moving the whole current selection as one unit; only resolved
+          // down to "step one level deeper" in onWindowPointerUp if the
+          // gesture turns out to be a click with no movement.
           dragIds = selection;
           keptSelection = true;
         } else {
-          setSelection([layerId]);
-          dragIds = [layerId];
+          // A fresh click always lands on the outermost group, matching
+          // the 2D canvas's Figma-style "click selects the group, click
+          // again (or double-click) to work on what's inside it."
+          const id = getTopLevelId(layers, layerId);
+          setSelection([id]);
+          dragIds = [id];
         }
 
         const startPoint = raycastToPlane(e.clientX, e.clientY);
