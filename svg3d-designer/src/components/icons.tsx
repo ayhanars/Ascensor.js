@@ -128,6 +128,13 @@ export const PolygonToolIcon = ({ size = 16 }: IconProps) => (
   </svg>
 );
 
+export const PenToolIcon = ({ size = 16 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M4 12 11.5 4.5a1.4 1.4 0 0 1 2 2L6 14l-3 1 1-3Z" />
+    <circle cx="4" cy="12" r="1" fill="currentColor" stroke="none" />
+  </svg>
+);
+
 export const StarToolIcon = ({ size = 16 }: IconProps) => (
   <svg {...base(size)}>
     <path d="M8 1.8 9.7 6h4.5l-3.6 2.7 1.4 4.4L8 10.4l-3.9 2.7 1.4-4.4L1.8 6h4.5Z" strokeLinejoin="round" />

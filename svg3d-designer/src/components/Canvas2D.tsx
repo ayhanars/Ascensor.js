@@ -102,6 +102,10 @@ export function Canvas2D({ resetSignal }: Props) {
   const clearSelection = useSceneStore((s) => s.clearSelection);
   const setLayerTransform = useSceneStore((s) => s.setLayerTransform);
   const showGrid = useSceneStore((s) => s.showGrid);
+  const penToolActive = useSceneStore((s) => s.penToolActive);
+  const penDraftPoints = useSceneStore((s) => s.penDraftPoints);
+  const addPenPoint = useSceneStore((s) => s.addPenPoint);
+  const finishPenTool = useSceneStore((s) => s.finishPenTool);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const [vb, setVb] = useState<ViewBox>(() => fitView(document_.widthMM, document_.heightMM));
@@ -111,6 +115,14 @@ export function Canvas2D({ resetSignal }: Props) {
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [marqueeRect, setMarqueeRect] = useState<ViewBox | null>(null);
   const [showHint, setShowHint] = useState(false);
+  // Live cursor position in document (mm) space while the pen tool is
+  // armed — drives the rubber-band preview line from the last placed point
+  // to wherever the pointer currently is, the same live-preview feedback
+  // Figma's own pen tool gives before you've clicked the next point.
+  const [penHoverPoint, setPenHoverPoint] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!penToolActive) setPenHoverPoint(null);
+  }, [penToolActive]);
   // Smart alignment guides: while dragging shapes, a dashed line highlights
   // any edge/center that lines up with another shape's, so you can actually
   // see the alignment happen instead of eyeballing it against the (visually
@@ -316,6 +328,37 @@ export function Canvas2D({ resetSignal }: Props) {
     // one click.
     e.stopPropagation();
     zoomAround(clientToSvg(e.clientX, e.clientY), zoomToolOut ? ZOOM_KEY_FACTOR : 1 / ZOOM_KEY_FACTOR);
+    return true;
+  }
+
+  /** A click this close (in real screen pixels, not document mm — so it
+   * feels the same at any zoom level) to the path's own first point closes
+   * it, the same "click back on the start" convention every vector pen
+   * tool uses. */
+  const PEN_CLOSE_THRESHOLD_PX = 10;
+
+  /** Handles a click while the pen tool is armed; returns whether it did
+   * (callers should skip their normal select/pan/move handling if so) —
+   * same shape as tryZoomToolClick above. */
+  function tryPenToolClick(e: React.PointerEvent): boolean {
+    if (!penToolActive) return false;
+    e.stopPropagation();
+    if (penDraftPoints.length >= 3) {
+      const svg = svgRef.current;
+      const first = penDraftPoints[0];
+      if (svg) {
+        const pt = svg.createSVGPoint();
+        pt.x = first.x;
+        pt.y = first.y;
+        const ctm = svg.getScreenCTM();
+        const firstClient = ctm ? pt.matrixTransform(ctm) : null;
+        if (firstClient && Math.hypot(e.clientX - firstClient.x, e.clientY - firstClient.y) <= PEN_CLOSE_THRESHOLD_PX) {
+          finishPenTool();
+          return true;
+        }
+      }
+    }
+    addPenPoint(clientToSvg(e.clientX, e.clientY));
     return true;
   }
 
@@ -620,6 +663,10 @@ export function Canvas2D({ resetSignal }: Props) {
   function handleShapeDown(e: React.PointerEvent, rawId: string) {
     e.stopPropagation();
     if (tryZoomToolClick(e)) return;
+    // The pen tool places a point wherever you click, existing shapes
+    // included — the same "draw right through anything" behavior Figma's
+    // own pen tool has, rather than selecting/moving whatever's underneath.
+    if (tryPenToolClick(e)) return;
     // Space+drag pans even when the pointer happens to come down on a
     // shape — without this, the shape's own handler (which runs first and
     // stops the event before it ever reaches the canvas-level pan check)
@@ -712,12 +759,17 @@ export function Canvas2D({ resetSignal }: Props) {
           strokeDasharray={layer.isHole ? "3 2" : undefined}
           vectorEffect={layer.isHole ? "non-scaling-stroke" : undefined}
           style={{
-            cursor: zoomToolArmed ? (zoomToolOut ? "zoom-out" : "zoom-in") : isEffectivelyLocked(layers, id) ? "default" : "move",
+            cursor: zoomToolArmed
+              ? zoomToolOut ? "zoom-out" : "zoom-in"
+              : penToolActive ? "crosshair"
+              : isEffectivelyLocked(layers, id) ? "default" : "move",
           }}
           onPointerDown={(e) => {
             // The zoom tool zooms on anything you click, lock included —
-            // it's not a selection action.
+            // it's not a selection action. Same for the pen tool: it draws
+            // right through a locked shape rather than being blocked by it.
             if (tryZoomToolClick(e)) return;
+            if (tryPenToolClick(e)) return;
             // A shape locked directly OR inherited from a locked ancestor
             // group is entirely inert to canvas clicks — matches Figma:
             // locking a group freezes everything inside it too, not just
@@ -740,17 +792,25 @@ export function Canvas2D({ resetSignal }: Props) {
           "canvas2d" +
           (isPanning ? " panning" : "") +
           (spaceHeld ? " space-pan" : "") +
-          (zoomToolArmed ? (zoomToolOut ? " zoom-out-tool" : " zoom-in-tool") : "")
+          (zoomToolArmed ? (zoomToolOut ? " zoom-out-tool" : " zoom-in-tool") : "") +
+          (penToolActive ? " pen-tool" : "")
         }
         viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
         onPointerDown={(e) => {
           if (tryZoomToolClick(e)) return;
+          if (tryPenToolClick(e)) return;
           if (e.target === svgRef.current || (e.target as Element).tagName === "rect") {
             if (spaceHeld) beginPan(e);
             else beginMarquee(e);
           }
         }}
-        onPointerMove={onPointerMove}
+        onPointerMove={(e) => {
+          if (penToolActive) {
+            setPenHoverPoint(clientToSvg(e.clientX, e.clientY));
+            return;
+          }
+          onPointerMove(e);
+        }}
         onPointerUp={onPointerUp}
       >
         <defs>
@@ -889,6 +949,41 @@ export function Canvas2D({ resetSignal }: Props) {
             pointerEvents="none"
           />
         ))}
+
+        {penToolActive && penDraftPoints.length > 0 && (
+          <>
+            <polyline
+              className="pen-draft-line"
+              points={penDraftPoints.map((p) => `${p.x},${p.y}`).join(" ")}
+              pointerEvents="none"
+            />
+            {penHoverPoint && (
+              <line
+                className="pen-draft-rubber-band"
+                x1={penDraftPoints[penDraftPoints.length - 1].x}
+                y1={penDraftPoints[penDraftPoints.length - 1].y}
+                x2={penHoverPoint.x}
+                y2={penHoverPoint.y}
+                pointerEvents="none"
+              />
+            )}
+            {penDraftPoints.map((p, i) => {
+              const isFirst = i === 0;
+              const closable = isFirst && penDraftPoints.length >= 3;
+              const r = Math.max(0.9, vb.w * 0.005) * (isFirst ? 1.6 : 1);
+              return (
+                <circle
+                  key={i}
+                  className={"pen-draft-point" + (isFirst ? " first-point" : "") + (closable ? " closable" : "")}
+                  cx={p.x}
+                  cy={p.y}
+                  r={r}
+                  pointerEvents="none"
+                />
+              );
+            })}
+          </>
+        )}
       </svg>
       <div className="canvas-status-bar" ref={hintRef}>
         <button

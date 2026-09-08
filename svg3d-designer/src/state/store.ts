@@ -8,6 +8,7 @@ import type {
   GroupLayer,
   Layer,
   Plate,
+  Point2,
   PrintBed,
   ShapeLayer,
   ShapeRegion,
@@ -256,6 +257,15 @@ interface SceneState {
   viewMode: ViewMode2D3D;
   showGrid: boolean;
   wireframe: boolean;
+  /** Whether the Pen tool is currently armed — a view/interaction concern
+   * like `selection`, not undo-tracked. Canvas2D reads this to switch its
+   * own click handling over to placing points instead of selecting/
+   * marqueeing, and to render the in-progress outline. */
+  penToolActive: boolean;
+  /** Points placed so far in the current in-progress pen path, in document
+   * (mm) space — cleared on finish/cancel. Also not undo-tracked; only the
+   * finished shape this eventually produces is a real, trackable edit. */
+  penDraftPoints: Point2[];
 
   addPlate: () => void;
   renamePlate: (id: string, name: string) => void;
@@ -328,6 +338,22 @@ interface SceneState {
   createShapeLayer: (kind: "rect" | "circle" | "hole" | "line" | "arrow" | "polygon" | "star") => void;
   setPolygonSides: (id: string, sides: number) => void;
   setStarParams: (id: string, points: number, innerRatio: number) => void;
+
+  /** Arms the Pen tool — click points on the canvas to build a custom
+   * outline, the same click-to-place/click-near-start-to-close/Enter-to-
+   * finish/Escape-to-cancel flow as Figma's own pen tool, ending in one
+   * ordinary closed-polygon ShapeLayer (see finishPenTool). */
+  beginPenTool: () => void;
+  addPenPoint: (p: Point2) => void;
+  /** Removes the most recently placed point (Backspace while drawing) —
+   * cancels the whole tool if that was the only point left. */
+  undoLastPenPoint: () => void;
+  /** Closes the current draft into a real shape layer and returns to the
+   * Select tool. Needs at least 3 points to form an outline — with fewer,
+   * behaves like cancelPenTool instead (there's no sensible shape to make
+   * out of one or two points, so there's nothing to leave half-drawn). */
+  finishPenTool: () => void;
+  cancelPenTool: () => void;
 }
 
 /**
@@ -374,6 +400,8 @@ export const useSceneStore = create<SceneState>()(
   viewMode: "2d",
   showGrid: true,
   wireframe: false,
+  penToolActive: false,
+  penDraftPoints: [],
 
   addPlate: () =>
     set((state) => {
@@ -1994,6 +2022,66 @@ export const useSceneStore = create<SceneState>()(
         },
       };
     }),
+
+  beginPenTool: () => set(() => ({ penToolActive: true, penDraftPoints: [], selection: [] })),
+
+  addPenPoint: (p) =>
+    set((state) => (state.penToolActive ? { penDraftPoints: [...state.penDraftPoints, p] } : {})),
+
+  undoLastPenPoint: () =>
+    set((state) => {
+      if (!state.penToolActive) return {};
+      if (state.penDraftPoints.length === 0) return { penToolActive: false };
+      return { penDraftPoints: state.penDraftPoints.slice(0, -1) };
+    }),
+
+  finishPenTool: () =>
+    set((state) => {
+      if (!state.penToolActive) return {};
+      if (state.penDraftPoints.length < 3) return { penToolActive: false, penDraftPoints: [] };
+
+      // Re-anchor to the drawn points' own bounding-box corner, same as
+      // every other shape's local-origin convention (see mergeLayers'
+      // identical re-anchoring, and its comment on why transform.x/y has
+      // to actually equal the shape's real corner for X/Y edits, align,
+      // and drag to keep working correctly afterward).
+      let minX = Infinity;
+      let minY = Infinity;
+      for (const p of state.penDraftPoints) {
+        minX = Math.min(minX, p.x);
+        minY = Math.min(minY, p.y);
+      }
+      const points = state.penDraftPoints.map((p) => ({ x: p.x - minX, y: p.y - minY }));
+
+      const id = nanoid(8);
+      const layer: ShapeLayer = {
+        id,
+        type: "shape",
+        name: "Pen shape",
+        visible: true,
+        locked: false,
+        color: "#4f46e5",
+        transform: { ...IDENTITY_TRANSFORM, x: minX, y: minY },
+        parentId: null,
+        regions: [{ outer: { points }, holes: [] }],
+        extrusionDepth: 1.2,
+        cornerRadius: 0,
+        bevelBottom: 0,
+        bevelTop: 0,
+        isHole: false,
+      };
+
+      return {
+        layers: { ...state.layers, [id]: layer },
+        rootIds: [...state.rootIds, id],
+        plateOf: { ...state.plateOf, [id]: state.activePlateId },
+        selection: [id],
+        penToolActive: false,
+        penDraftPoints: [],
+      };
+    }),
+
+  cancelPenTool: () => set(() => ({ penToolActive: false, penDraftPoints: [] })),
     }),
     {
       partialize: partializeScene,
