@@ -376,6 +376,8 @@ export function Inspector() {
   const setBevelTop = useSceneStore((s) => s.setBevelTop);
   const setIsHole = useSceneStore((s) => s.setIsHole);
   const setLayerZ = useSceneStore((s) => s.setLayerZ);
+  const setPolygonSides = useSceneStore((s) => s.setPolygonSides);
+  const setStarParams = useSceneStore((s) => s.setStarParams);
   const fixFloatingLayers = useSceneStore((s) => s.fixFloatingLayers);
   const snapHoleToRecessedPocket = useSceneStore((s) => s.snapHoleToRecessedPocket);
   const [pinnedBedName, setPinnedBedName] = useState<string | null>(() => getPinnedBedPresetName());
@@ -749,6 +751,44 @@ export function Inspector() {
             </button>
           </div>
         </div>
+
+        {layer.type === "shape" && layer.polygonSides !== undefined && (
+          <div className="inspector-section">
+            <div className="inspector-section-title">Polygon</div>
+            <NumberField
+              label="Sides"
+              value={layer.polygonSides}
+              step={1}
+              min={3}
+              onChange={(v) => setPolygonSides(layer.id, v)}
+              title="Regenerates the outline with this many sides, keeping the shape's current width/length"
+            />
+          </div>
+        )}
+
+        {layer.type === "shape" && layer.starPoints !== undefined && (
+          <div className="inspector-section">
+            <div className="inspector-section-title">Star</div>
+            <div className="field-grid-2">
+              <NumberField
+                label="Points"
+                value={layer.starPoints}
+                step={1}
+                min={3}
+                onChange={(v) => setStarParams(layer.id, v, layer.starInnerRatio ?? 0.45)}
+                title="Regenerates the outline with this many points, keeping the shape's current width/length"
+              />
+              <NumberField
+                label="Inner ratio"
+                value={layer.starInnerRatio ?? 0.45}
+                step={0.05}
+                min={0.05}
+                onChange={(v) => setStarParams(layer.id, layer.starPoints ?? 5, v)}
+                title="How far the inner vertices sit toward the center, as a fraction of the outer radius — lower is spikier"
+              />
+            </div>
+          </div>
+        )}
 
         {(() => {
           // A group has no shape properties of its own, but forcing the

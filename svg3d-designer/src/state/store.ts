@@ -23,6 +23,7 @@ import {
   boundsOverlap,
   type Bounds,
   getLayerWorldBounds,
+  getLocalShapeBounds,
   getLocalShapeZRange,
   getMultiLayerWorldBounds,
   getShapeWorldZRange,
@@ -34,6 +35,7 @@ import {
   invertTransform2D,
 } from "./sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
+import { arrowPoints, normalizeToBounds, regularPolygonPoints, starPolygonPoints } from "../geometry/primitives";
 import {
   differenceRegions,
   intersectionRegions,
@@ -323,7 +325,9 @@ interface SceneState {
   setUnits: (units: Units) => void;
   fitDocumentToSelection: () => void;
   matchDocumentToBed: () => void;
-  createShapeLayer: (kind: "rect" | "circle" | "hole") => void;
+  createShapeLayer: (kind: "rect" | "circle" | "hole" | "line" | "arrow" | "polygon" | "star") => void;
+  setPolygonSides: (id: string, sides: number) => void;
+  setStarParams: (id: string, points: number, innerRatio: number) => void;
 }
 
 /**
@@ -1845,6 +1849,9 @@ export const useSceneStore = create<SceneState>()(
       let w: number;
       let h: number;
       let regions: ShapeRegion[];
+      const DEFAULT_POLYGON_SIDES = 6;
+      const DEFAULT_STAR_POINTS = 5;
+      const DEFAULT_STAR_INNER_RATIO = 0.45;
 
       if (kind === "rect") {
         w = 30;
@@ -1859,6 +1866,42 @@ export const useSceneStore = create<SceneState>()(
                 { x: 0, y: h },
               ],
             },
+            holes: [],
+          },
+        ];
+      } else if (kind === "line") {
+        // A straight line has no fillable area of its own — give it a
+        // real, thin rectangular strip so it's an ordinary extrudable
+        // shape, not a special case anywhere else in the pipeline.
+        w = 40;
+        h = 3;
+        regions = [
+          {
+            outer: {
+              points: [
+                { x: 0, y: 0 },
+                { x: w, y: 0 },
+                { x: w, y: h },
+                { x: 0, y: h },
+              ],
+            },
+            holes: [],
+          },
+        ];
+      } else if (kind === "arrow") {
+        w = 40;
+        h = 16;
+        regions = [{ outer: { points: normalizeToBounds(arrowPoints(), w, h) }, holes: [] }];
+      } else if (kind === "polygon") {
+        w = 20;
+        h = 20;
+        regions = [{ outer: { points: normalizeToBounds(regularPolygonPoints(DEFAULT_POLYGON_SIDES), w, h) }, holes: [] }];
+      } else if (kind === "star") {
+        w = 20;
+        h = 20;
+        regions = [
+          {
+            outer: { points: normalizeToBounds(starPolygonPoints(DEFAULT_STAR_POINTS, DEFAULT_STAR_INNER_RATIO), w, h) },
             holes: [],
           },
         ];
@@ -1878,10 +1921,19 @@ export const useSceneStore = create<SceneState>()(
         regions = [{ outer: { points }, holes: [] }];
       }
 
+      const name =
+        kind === "rect" ? "Rectangle"
+        : kind === "hole" ? "Hole"
+        : kind === "circle" ? "Circle"
+        : kind === "line" ? "Line"
+        : kind === "arrow" ? "Arrow"
+        : kind === "polygon" ? "Polygon"
+        : "Star";
+
       const layer: ShapeLayer = {
         id,
         type: "shape",
-        name: kind === "rect" ? "Rectangle" : kind === "hole" ? "Hole" : "Circle",
+        name,
         visible: true,
         locked: false,
         color: "#4f46e5",
@@ -1897,6 +1949,8 @@ export const useSceneStore = create<SceneState>()(
         bevelBottom: 0,
         bevelTop: 0,
         isHole: kind === "hole",
+        ...(kind === "polygon" ? { polygonSides: DEFAULT_POLYGON_SIDES } : {}),
+        ...(kind === "star" ? { starPoints: DEFAULT_STAR_POINTS, starInnerRatio: DEFAULT_STAR_INNER_RATIO } : {}),
       };
 
       return {
@@ -1904,6 +1958,40 @@ export const useSceneStore = create<SceneState>()(
         rootIds: [...state.rootIds, id],
         plateOf: { ...state.plateOf, [id]: state.activePlateId },
         selection: [id],
+      };
+    }),
+
+  setPolygonSides: (id, sides) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape") return {};
+      const clamped = Math.max(3, Math.min(24, Math.round(sides)));
+      const bounds = getLocalShapeBounds(layer);
+      const w = bounds ? bounds.maxX - bounds.minX : 20;
+      const h = bounds ? bounds.maxY - bounds.minY : 20;
+      const regions: ShapeRegion[] = [{ outer: { points: normalizeToBounds(regularPolygonPoints(clamped), w, h) }, holes: [] }];
+      return {
+        layers: { ...state.layers, [id]: { ...layer, regions, polygonSides: clamped } },
+      };
+    }),
+
+  setStarParams: (id, points, innerRatio) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape") return {};
+      const clampedPoints = Math.max(3, Math.min(24, Math.round(points)));
+      const clampedRatio = Math.max(0.05, Math.min(0.95, innerRatio));
+      const bounds = getLocalShapeBounds(layer);
+      const w = bounds ? bounds.maxX - bounds.minX : 20;
+      const h = bounds ? bounds.maxY - bounds.minY : 20;
+      const regions: ShapeRegion[] = [
+        { outer: { points: normalizeToBounds(starPolygonPoints(clampedPoints, clampedRatio), w, h) }, holes: [] },
+      ];
+      return {
+        layers: {
+          ...state.layers,
+          [id]: { ...layer, regions, starPoints: clampedPoints, starInnerRatio: clampedRatio },
+        },
       };
     }),
     }),
