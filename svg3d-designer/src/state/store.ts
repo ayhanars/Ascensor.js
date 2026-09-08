@@ -1442,9 +1442,17 @@ export const useSceneStore = create<SceneState>()(
         parentId: topLayer.parentId,
         regions,
         extrusionDepth: frontMost.extrusionDepth,
+        // Corner rounding already bakes into the outline itself (see
+        // roundRegions above, applied to each source before the union), so
+        // there's no separate rounding left for the merged shape's own
+        // cornerRadius to apply. Bevel is a distinct top/bottom chamfer the
+        // extrude geometry generates per-region generically — it has no
+        // problem with the multi-region, holed, or concave outlines a union
+        // routinely produces, so there's no reason to throw away whatever
+        // edge treatment the front-most source had, unlike corner rounding.
         cornerRadius: 0,
-        bevelBottom: 0,
-        bevelTop: 0,
+        bevelBottom: frontMost.bevelBottom,
+        bevelTop: frontMost.bevelTop,
         isHole: false,
       };
 
@@ -1589,9 +1597,15 @@ export const useSceneStore = create<SceneState>()(
         parentId: topLayer.parentId,
         regions,
         extrusionDepth: frontMost.extrusionDepth,
+        // See the identical comment in mergeLayers above: corner rounding
+        // is already baked into each operand's outline before the boolean
+        // op runs, but bevel is a distinct top/bottom chamfer the extrude
+        // geometry generates per-region regardless of how complex the
+        // resulting outline is, so there's no reason to discard whatever
+        // edge treatment the front-most operand had.
         cornerRadius: 0,
-        bevelBottom: 0,
-        bevelTop: 0,
+        bevelBottom: frontMost.bevelBottom,
+        bevelTop: frontMost.bevelTop,
         isHole: false,
       };
 
