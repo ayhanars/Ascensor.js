@@ -2,6 +2,7 @@ import * as THREE from "three";
 import type { Layer, Point2, ShapeLayer, ShapeRegion, Transform2D } from "../types";
 import { differenceRegions, regionsArea, regionsIntersectionArea, unionRegions } from "../geometry/booleanOps";
 import { applyLayerTransform, buildExtrudeGeometry } from "../geometry/extrude";
+import { trueMinRingWidth } from "./thinFeatureTopology";
 
 export const IDENTITY_TRANSFORM: Transform2D = {
   x: 0,
@@ -607,191 +608,8 @@ export function computeConnectedClusters(layers: Record<string, Layer>, rootIds:
 // margin above a typical 0.4mm nozzle's own minimum.
 const MIN_SAFE_LOCAL_WIDTH_MM = 0.5;
 
-// Two points this close together along the ring's own PERIMETER (arc
-// length, not index count) are just neighboring samples on one local
-// curve, not two separate parts of the shape coming near each other —
-// skipped so a tightly-curved (but perfectly printable) stretch of
-// outline doesn't flag itself. Every ring gets this same arc-length-
-// derived window uniformly now (a fixed, point-count-only window used to
-// be tried instead for anything with 11+ points — dropped once SVG
-// import started simplifying every curve down to a "native" point
-// density on its own: with that in place, a shape's point count no
-// longer means "already dense enough to trust a fixed window," so
-// splitting sparse from dense shapes here doesn't track anything real
-// anymore). 1.5mm was reached empirically against a real multi-shape
-// project rather than picked a priori: it's the value that clears the
-// most false positives (curvature-only "pinches" on plainly round shapes
-// — an eye, a nose) while still keeping every one of that project's
-// genuinely thin details (several whiskers as narrow as 0.15mm) safely
-// below the 0.5mm safety threshold; neither a smaller nor a larger value
-// did both at once.
-const THIN_FEATURE_ARC_EXCLUDE_MM = MIN_SAFE_LOCAL_WIDTH_MM * 3;
-
-function closestPointOnSegment(p: Point2, a: Point2, b: Point2): Point2 {
-  const abx = b.x - a.x;
-  const aby = b.y - a.y;
-  const apx = p.x - a.x;
-  const apy = p.y - a.y;
-  const len2 = abx * abx + aby * aby;
-  let t = len2 > 0 ? (apx * abx + apy * aby) / len2 : 0;
-  t = Math.max(0, Math.min(1, t));
-  return { x: a.x + abx * t, y: a.y + aby * t };
-}
-
-interface LocalPinch {
-  width: number;
-  /** Index of the boundary point found too close to a non-adjacent segment. */
-  i: number;
-  /** Index of that segment's first point (the segment runs j to j+1). */
-  j: number;
-}
-
-/**
- * The narrowest local gap anywhere within one ring's own outline — how
- * close two genuinely separate stretches of the boundary (not neighboring
- * points on the same local curve) come to touching each other. Uses a
- * uniform spatial grid (cell size matched to the distance actually being
- * searched for) so this stays fast for a dense, thousand-point imported
- * path rather than checking every pair of points.
- */
-// SVG-derived rings very commonly repeat their own first point as an
-// explicit closing point (e.g. `M 0,0 L 80,0 L 80,80 L 0,80 L 0,0 Z`) — a
-// real, coordinate-identical duplicate, not just two points that happen to
-// land close together. Left in, it silently breaks pinch detection: the
-// segment ending at that duplicate is only one INDEX away from point 0 in
-// one direction, but the wrap-around means it's a totally different
-// direction from the other, so a small (correctly!) sized exclusion
-// window for a sparse shape no longer reliably excludes it, and the
-// duplicate point registers as a real 0mm-wide "pinch" against itself.
-const DUPLICATE_POINT_EPSILON_MM = 1e-6;
-
-function dedupeClosedRing(points: Point2[]): Point2[] {
-  const out: Point2[] = [];
-  for (const p of points) {
-    const prev = out[out.length - 1];
-    if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) < DUPLICATE_POINT_EPSILON_MM) continue;
-    out.push(p);
-  }
-  if (
-    out.length > 3 &&
-    Math.hypot(out[0].x - out[out.length - 1].x, out[0].y - out[out.length - 1].y) < DUPLICATE_POINT_EPSILON_MM
-  ) {
-    out.pop();
-  }
-  return out;
-}
-
-function findWorstLocalPinch(rawPoints: Point2[]): LocalPinch | null {
-  const points = dedupeClosedRing(rawPoints);
-  const n = points.length;
-  if (n < 4) return null;
-
-  // Arc-length-derived index window, uniformly for every ring regardless
-  // of point count (see THIN_FEATURE_ARC_EXCLUDE_MM above for how the
-  // distance itself was picked). A pure arc-length test (excluding a
-  // segment whenever either of ITS OWN endpoints sits within the
-  // exclusion distance of i) was tried and rejected: a low-point
-  // rectangle's short edges are only ~0.1-few mm long, so the segment
-  // representing the OPPOSITE long edge would get excluded just because
-  // it happens to start at the same corner a short edge ends at — throwing
-  // away the exact comparison (corner vs. opposite edge) that reveals a
-  // thin rectangle at all. An index window instead reduces to "only
-  // exclude a segment from the point that's literally its own endpoint"
-  // for such a sparse shape, exactly the discrimination it needs, while
-  // scaling up to a real multi-point smoothing window for a finely
-  // tessellated curve.
-  let perimeter = 0;
-  for (let k = 0; k < n; k++) {
-    const a = points[k];
-    const b = points[(k + 1) % n];
-    perimeter += Math.hypot(b.x - a.x, b.y - a.y);
-  }
-  const avgSegmentLength = perimeter / n;
-  const indexWindow =
-    avgSegmentLength > 0 ? Math.max(1, Math.round(THIN_FEATURE_ARC_EXCLUDE_MM / avgSegmentLength)) : 1;
-
-  const cellSize = MIN_SAFE_LOCAL_WIDTH_MM * 2;
-  const cellKey = (x: number, y: number) => `${Math.floor(x / cellSize)},${Math.floor(y / cellSize)}`;
-  const grid = new Map<string, number[]>();
-  function addToGrid(j: number, x: number, y: number) {
-    const key = cellKey(x, y);
-    const list = grid.get(key);
-    if (list) {
-      if (list[list.length - 1] !== j) list.push(j);
-    } else grid.set(key, [j]);
-  }
-  for (let j = 0; j < n; j++) {
-    // Indexed by BOTH endpoints, not just the segment's start point — a
-    // segment much longer than cellSize (again, a native polygon's edge,
-    // vs. an imported curve's tiny sub-mm segments) has its two ends in
-    // completely different grid cells, and a point near only the FAR end
-    // must still be able to find it.
-    addToGrid(j, points[j].x, points[j].y);
-    const b = points[(j + 1) % n];
-    addToGrid(j, b.x, b.y);
-  }
-
-  let best: LocalPinch | null = null;
-  for (let i = 0; i < n; i++) {
-    const p = points[i];
-    const cx = Math.floor(p.x / cellSize);
-    const cy = Math.floor(p.y / cellSize);
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        const list = grid.get(`${cx + dx},${cy + dy}`);
-        if (!list) continue;
-        for (const j of list) {
-          // A segment that literally has i as one of its own two endpoints
-          // is always excluded outright — the distance from i to a segment
-          // that starts or ends AT i is 0 by construction, not a pinch.
-          // This has to be checked directly (not folded into the
-          // symmetric index-distance below): dIndex is undirected, so a
-          // small window can't tell "j ends at i" (must always exclude)
-          // apart from "the NEXT segment after the one starting at i"
-          // (must NOT exclude for a sparse polygon — that's exactly the
-          // opposite-edge comparison a thin rectangle needs) — both land
-          // on the same dIndex.
-          if (j === i || (j + 1) % n === i) continue;
-          const j1 = (j + 1) % n;
-          // The exclusion window has to be measured to whichever of the
-          // segment's TWO endpoints the closest-point projection actually
-          // lands on, not just to the segment's start (j). Clamped
-          // projection very often lands right on an endpoint, and that
-          // endpoint can sit well within the window of i even when j
-          // itself doesn't — e.g. j is 2 steps from i, but the projection
-          // clamps to j+1, which is only 1 step from i (i.e. i's own
-          // direct neighbor). Using only dIndex(i, j) there reports the
-          // literal length of the real edge between i and its neighbor as
-          // if it were a cross-shape pinch — a meaningless number that has
-          // nothing to do with material thickness, and was the actual
-          // cause of persistent false positives (and, it turns out, some
-          // apparent "true positives" that were never real either) on
-          // ordinary curved outlines. Taking the smaller of the two
-          // endpoint distances closes that gap while still comparing i
-          // against a genuinely different stretch of the boundary whenever
-          // one exists (the sparse-rectangle case above is untouched: both
-          // its endpoints already sit outside a same-sized window there).
-          const dIndexJ = Math.min((j - i + n) % n, (i - j + n) % n);
-          const dIndexJ1 = Math.min((j1 - i + n) % n, (i - j1 + n) % n);
-          const dIndex = Math.min(dIndexJ, dIndexJ1);
-          if (dIndex < indexWindow) continue;
-          const a = points[j];
-          const b = points[j1];
-          const closest = closestPointOnSegment(p, a, b);
-          const dx = closest.x - p.x;
-          const dy = closest.y - p.y;
-          const d = Math.hypot(dx, dy);
-          if (best && d >= best.width) continue;
-          best = { width: d, i, j };
-        }
-      }
-    }
-  }
-  return best;
-}
-
-function minLocalRingWidth(points: Point2[]): number {
-  return findWorstLocalPinch(points)?.width ?? Infinity;
+function minLocalRingWidth(points: Point2[], minSafeWidthMM: number): number {
+  return trueMinRingWidth(points, minSafeWidthMM);
 }
 
 export interface ThinFeatureWarning {
@@ -801,9 +619,11 @@ export interface ThinFeatureWarning {
 
 /**
  * Which shapes have a local feature narrower than a safe printable width
- * somewhere in their own outline — see minLocalRingWidth. Checked in world
- * space (so a shape's own scale is accounted for), across every ring
- * (a region's outer contour and each of its holes) a shape has.
+ * somewhere in their own outline — see minLocalRingWidth (backed by
+ * trueMinRingWidth, a topological "does cutting material here actually
+ * disconnect the shape" test, not a boundary-point-proximity guess).
+ * Checked in world space (so a shape's own scale is accounted for), across
+ * every ring (a region's outer contour and each of its holes) a shape has.
  *
  * Scoped to within a single ring at a time — two DIFFERENT rings on the
  * same shape (say, a hole passing close to the outer edge) can still form
@@ -826,8 +646,8 @@ export function computeThinFeatureWarnings(
     const regions = getWorldRegions(layers, id);
     let minWidth = Infinity;
     for (const region of regions) {
-      minWidth = Math.min(minWidth, minLocalRingWidth(region.outer.points));
-      for (const hole of region.holes) minWidth = Math.min(minWidth, minLocalRingWidth(hole.points));
+      minWidth = Math.min(minWidth, minLocalRingWidth(region.outer.points, minSafeWidthMM));
+      for (const hole of region.holes) minWidth = Math.min(minWidth, minLocalRingWidth(hole.points, minSafeWidthMM));
     }
     if (minWidth < minSafeWidthMM) warnings.push({ id, minWidthMM: minWidth });
   }
