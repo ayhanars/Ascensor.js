@@ -726,8 +726,29 @@ const THIN_FEATURE_MAX_ITERATIONS = 300;
  */
 function widenThinRing(points: Point2[], targetWidthMM: number): Point2[] {
   let current = points.map((p) => ({ ...p }));
+  // Nudging the worst pinch away from the ONE segment it's currently
+  // closest to is a purely local, greedy move — on a simple outline (a
+  // single long gentle curve) that's always safe, but on a real, more
+  // convoluted one (a tapered/hooked stroke, several close-together
+  // curves in one path) it can push a point closer to a DIFFERENT nearby
+  // segment than the one it was just pulled away from, making the ring's
+  // own global worst pinch narrower than it started, not wider. Tracking
+  // the best (highest worst-pinch-width) ring seen at any point during
+  // iteration — rather than just returning wherever the loop happens to
+  // end up — means this can never come back worse than what went in, even
+  // if a later iteration wanders into a worse local state chasing a
+  // different pinch; every later iteration is still a legitimate cheap
+  // shot at fully converging, since finding a NEW best only ever replaces
+  // the old one when it's strictly better.
+  let best = current;
+  let bestWidth = findWorstLocalPinch(current)?.width ?? Infinity;
   for (let iter = 0; iter < THIN_FEATURE_MAX_ITERATIONS; iter++) {
     const pinch = findWorstLocalPinch(current);
+    const currentWidth = pinch?.width ?? Infinity;
+    if (currentWidth > bestWidth) {
+      best = current;
+      bestWidth = currentWidth;
+    }
     if (!pinch || pinch.width >= targetWidthMM) break;
 
     const n = current.length;
@@ -764,7 +785,9 @@ function widenThinRing(points: Point2[], targetWidthMM: number): Point2[] {
     }
     current = next;
   }
-  return mergeCloseAdjacentPoints(current, THIN_FEATURE_MIN_SEGMENT_MM);
+  const finalWidth = findWorstLocalPinch(current)?.width ?? Infinity;
+  if (finalWidth > bestWidth) best = current;
+  return mergeCloseAdjacentPoints(best, THIN_FEATURE_MIN_SEGMENT_MM);
 }
 
 // How close two ADJACENT points on the ring are allowed to end up after
