@@ -235,11 +235,30 @@ function buildModelXml(clusters: WorldMesh[][]): string {
     itemsXml.push(`<item objectid="${assemblyId}"/>`);
   }
 
+  // Bambu Studio (and the rest of the Slic3r-derived family it shares its
+  // 3MF importer lineage with, AnkerMake's own slicer included) reads the
+  // core-spec <metadata name="Application"> element to identify which
+  // program produced a 3MF, in the "AppName-Version" form every one of
+  // them writes (e.g. "BambuStudio-01.09.00.65", "OrcaSlicer-1.9.0"). This
+  // exporter never wrote one at all, leaving that field blank — with
+  // nothing to identify the file as ours, an importer with its own list of
+  // known third-party producers (Bambu Studio ships one, for its
+  // third-party-printer support) has nothing to go on but an empty string,
+  // and can fall through to whatever it guesses for "unrecognized," which
+  // is how one of our own files ended up read back as if AnkerMake's own
+  // software had made it. Declaring our own identity here removes the
+  // ambiguity outright, independent of whatever any single importer's
+  // fallback happens to guess otherwise.
+  const metadataXml =
+    `<metadata name="Application">SVGto3DPrint-1.0</metadata>` +
+    `<metadata name="CreationDate">${new Date().toISOString().slice(0, 10)}</metadata>`;
+
   return (
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
     `<model unit="millimeter" xml:lang="en-US" ` +
     `xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" ` +
     `xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02">` +
+    metadataXml +
     `<resources><m:colorgroup id="1">${colorEntries}</m:colorgroup>${objectsXml}${assembliesXml.join("")}</resources>` +
     `<build>${itemsXml.join("")}</build>` +
     `</model>`
