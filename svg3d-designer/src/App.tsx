@@ -244,6 +244,8 @@ function App() {
       {pendingImport && (
         <ImportDialog
           summary={pendingImport.summary}
+          layers={pendingImport.layers}
+          rootIds={pendingImport.rootIds}
           onCancel={() => setPendingImport(null)}
           onConfirm={(mode) => {
             const scene =
