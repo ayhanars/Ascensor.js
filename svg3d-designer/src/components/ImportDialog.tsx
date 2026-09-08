@@ -1,14 +1,33 @@
-import { useState } from "react";
-import type { ImportSummary } from "../types";
+import { useMemo, useState } from "react";
+import type { ImportSummary, Layer } from "../types";
+import { computeThinFeatureWarnings } from "../state/sceneUtils";
 
 interface Props {
   summary: ImportSummary;
+  layers: Record<string, Layer>;
+  rootIds: string[];
   onCancel: () => void;
   onConfirm: (mode: "layers" | "merge") => void;
 }
 
-export function ImportDialog({ summary, onCancel, onConfirm }: Props) {
+export function ImportDialog({ summary, layers, rootIds, onCancel, onConfirm }: Props) {
   const [mode, setMode] = useState<"layers" | "merge">("layers");
+
+  // Checked right here, before the user even confirms the import, rather
+  // than only after the fact via the persistent in-canvas warning banner —
+  // this is the one moment a too-thin detail is easiest to actually fix:
+  // scale the whole SVG up on the next import, instead of hand-editing a
+  // shape's geometry after the fact (which we tried automating and found
+  // unreliable on real, complex outlines — see the thin-feature warning's
+  // own "Select" button, which is deliberately manual now).
+  const thinFeatureWarnings = useMemo(
+    () => computeThinFeatureWarnings(layers, rootIds),
+    [layers, rootIds],
+  );
+  const narrowestThinFeatureMM = thinFeatureWarnings.reduce(
+    (min, w) => Math.min(min, w.minWidthMM),
+    Infinity,
+  );
 
   return (
     <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
@@ -45,6 +64,16 @@ export function ImportDialog({ summary, onCancel, onConfirm }: Props) {
               {summary.unsupportedCount} SVG element{summary.unsupportedCount === 1 ? "" : "s"} could not be
               converted to printable geometry (text, images, or stroke-only shapes are not yet supported) and
               {summary.unsupportedCount === 1 ? " was" : " were"} skipped.
+            </div>
+          )}
+
+          {thinFeatureWarnings.length > 0 && (
+            <div className="dialog-warning">
+              {thinFeatureWarnings.length} detail{thinFeatureWarnings.length === 1 ? "" : "s"} in this file
+              {thinFeatureWarnings.length === 1 ? " is" : " are"} as narrow as {narrowestThinFeatureMM.toFixed(2)}mm
+              at this size — thinner than a standard 0.4mm nozzle can reliably print. If this matters, cancel and
+              re-import at a larger scale, or size up the artboard/print bed after importing; a too-thin detail can
+              also be selected and thickened by hand from the warning banner once it's in the scene.
             </div>
           )}
 

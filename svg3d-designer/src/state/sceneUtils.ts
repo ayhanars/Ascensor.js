@@ -607,13 +607,23 @@ export function computeConnectedClusters(layers: Record<string, Layer>, rootIds:
 // margin above a typical 0.4mm nozzle's own minimum.
 const MIN_SAFE_LOCAL_WIDTH_MM = 0.5;
 
-// Two points this close together along the SAME ring's index order are
+// Two points this close together along the ring's own index order are
 // just neighboring samples on one local curve, not two separate parts of
 // the shape coming near each other — skipped so a tightly-curved (but
-// perfectly printable) stretch of outline doesn't flag itself.
-const THIN_FEATURE_INDEX_WINDOW = 5;
+// perfectly printable) stretch of outline doesn't flag itself. Used
+// as-is for any shape with enough points to have been tuned against
+// originally (see findWorstLocalPinch's indexWindow); a low-point shape
+// (a native rectangle's 4 corners) instead gets a narrower,
+// arc-length-derived window built from THIN_FEATURE_ARC_EXCLUDE_MM below.
+const FIXED_INDEX_WINDOW = 5;
+const FIXED_WINDOW_MIN_POINTS = 2 * FIXED_INDEX_WINDOW + 1;
 
-function pointSegmentDistance(p: Point2, a: Point2, b: Point2): number {
+// The physical exclusion distance (mm) a low-point shape's index window
+// is derived from — see findWorstLocalPinch. Reusing MIN_SAFE_LOCAL_WIDTH
+// _MM's own scale rather than a new unrelated constant.
+const THIN_FEATURE_ARC_EXCLUDE_MM = MIN_SAFE_LOCAL_WIDTH_MM * 2;
+
+function closestPointOnSegment(p: Point2, a: Point2, b: Point2): Point2 {
   const abx = b.x - a.x;
   const aby = b.y - a.y;
   const apx = p.x - a.x;
@@ -621,9 +631,7 @@ function pointSegmentDistance(p: Point2, a: Point2, b: Point2): number {
   const len2 = abx * abx + aby * aby;
   let t = len2 > 0 ? (apx * abx + apy * aby) / len2 : 0;
   t = Math.max(0, Math.min(1, t));
-  const cx = a.x + abx * t;
-  const cy = a.y + aby * t;
-  return Math.hypot(p.x - cx, p.y - cy);
+  return { x: a.x + abx * t, y: a.y + aby * t };
 }
 
 interface LocalPinch {
@@ -642,18 +650,94 @@ interface LocalPinch {
  * searched for) so this stays fast for a dense, thousand-point imported
  * path rather than checking every pair of points.
  */
-function findWorstLocalPinch(points: Point2[]): LocalPinch | null {
+// SVG-derived rings very commonly repeat their own first point as an
+// explicit closing point (e.g. `M 0,0 L 80,0 L 80,80 L 0,80 L 0,0 Z`) — a
+// real, coordinate-identical duplicate, not just two points that happen to
+// land close together. Left in, it silently breaks pinch detection: the
+// segment ending at that duplicate is only one INDEX away from point 0 in
+// one direction, but the wrap-around means it's a totally different
+// direction from the other, so a small (correctly!) sized exclusion
+// window for a sparse shape no longer reliably excludes it, and the
+// duplicate point registers as a real 0mm-wide "pinch" against itself.
+const DUPLICATE_POINT_EPSILON_MM = 1e-6;
+
+function dedupeClosedRing(points: Point2[]): Point2[] {
+  const out: Point2[] = [];
+  for (const p of points) {
+    const prev = out[out.length - 1];
+    if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) < DUPLICATE_POINT_EPSILON_MM) continue;
+    out.push(p);
+  }
+  if (
+    out.length > 3 &&
+    Math.hypot(out[0].x - out[out.length - 1].x, out[0].y - out[out.length - 1].y) < DUPLICATE_POINT_EPSILON_MM
+  ) {
+    out.pop();
+  }
+  return out;
+}
+
+function findWorstLocalPinch(rawPoints: Point2[]): LocalPinch | null {
+  const points = dedupeClosedRing(rawPoints);
   const n = points.length;
-  if (n < 2 * THIN_FEATURE_INDEX_WINDOW + 1) return null;
+  if (n < 4) return null;
+
+  // A shape with plenty of points (any real tessellated curve — every
+  // shape this was originally built and tuned against) keeps the exact
+  // FIXED index window this always used: verified directly against a real
+  // multi-shape project that it's already the right amount of exclusion
+  // across a whole mix of tightly-tessellated thin strokes AND coarser,
+  // plainly-round shapes (eyes, ears) alike — those never falsely flagged
+  // before, and an arc-length-derived window (tried first) came out too
+  // narrow for some of them purely from curvature, not any real pinch,
+  // since point spacing on a smooth curve doesn't actually track how
+  // tightly it curves, just how long the original bezier segment was.
+  //
+  // A LOW-point-count shape (a native rectangle's 4 corners; nothing this
+  // ever ran on before, since it never had enough points to pass the old
+  // n>=11 floor at all) gets a much narrower, arc-length-derived window
+  // instead — the fixed window would swallow its only few, widely-spaced
+  // points whole and never compare anything. Arc length alone (excluding
+  // a segment whenever either of ITS OWN endpoints sits within the
+  // exclusion distance of i) was tried and rejected even for this case: a
+  // rectangle's short edges are only ~0.1-few mm long, so the segment
+  // representing the OPPOSITE long edge would get excluded just because
+  // it happens to start at the same corner a short edge ends at — throwing
+  // away the exact comparison (corner vs. opposite edge) that reveals a
+  // thin rectangle at all. An index window instead reduces to "only
+  // exclude a segment from the point that's literally its own endpoint,"
+  // exactly the discrimination a sharp-cornered polygon needs.
+  const indexWindow = (() => {
+    if (n >= FIXED_WINDOW_MIN_POINTS) return FIXED_INDEX_WINDOW;
+    let perimeter = 0;
+    for (let k = 0; k < n; k++) {
+      const a = points[k];
+      const b = points[(k + 1) % n];
+      perimeter += Math.hypot(b.x - a.x, b.y - a.y);
+    }
+    const avgSegmentLength = perimeter / n;
+    return avgSegmentLength > 0 ? Math.max(1, Math.round(THIN_FEATURE_ARC_EXCLUDE_MM / avgSegmentLength)) : 1;
+  })();
 
   const cellSize = MIN_SAFE_LOCAL_WIDTH_MM * 2;
   const cellKey = (x: number, y: number) => `${Math.floor(x / cellSize)},${Math.floor(y / cellSize)}`;
   const grid = new Map<string, number[]>();
-  for (let j = 0; j < n; j++) {
-    const key = cellKey(points[j].x, points[j].y);
+  function addToGrid(j: number, x: number, y: number) {
+    const key = cellKey(x, y);
     const list = grid.get(key);
-    if (list) list.push(j);
-    else grid.set(key, [j]);
+    if (list) {
+      if (list[list.length - 1] !== j) list.push(j);
+    } else grid.set(key, [j]);
+  }
+  for (let j = 0; j < n; j++) {
+    // Indexed by BOTH endpoints, not just the segment's start point — a
+    // segment much longer than cellSize (again, a native polygon's edge,
+    // vs. an imported curve's tiny sub-mm segments) has its two ends in
+    // completely different grid cells, and a point near only the FAR end
+    // must still be able to find it.
+    addToGrid(j, points[j].x, points[j].y);
+    const b = points[(j + 1) % n];
+    addToGrid(j, b.x, b.y);
   }
 
   let best: LocalPinch | null = null;
@@ -666,12 +750,27 @@ function findWorstLocalPinch(points: Point2[]): LocalPinch | null {
         const list = grid.get(`${cx + dx},${cy + dy}`);
         if (!list) continue;
         for (const j of list) {
+          // A segment that literally has i as one of its own two endpoints
+          // is always excluded outright — the distance from i to a segment
+          // that starts or ends AT i is 0 by construction, not a pinch.
+          // This has to be checked directly (not folded into the
+          // symmetric index-distance below): dIndex is undirected, so a
+          // small window can't tell "j ends at i" (must always exclude)
+          // apart from "the NEXT segment after the one starting at i"
+          // (must NOT exclude for a sparse polygon — that's exactly the
+          // opposite-edge comparison a thin rectangle needs) — both land
+          // on the same dIndex.
+          if (j === i || (j + 1) % n === i) continue;
           const dIndex = Math.min((j - i + n) % n, (i - j + n) % n);
-          if (dIndex < THIN_FEATURE_INDEX_WINDOW) continue;
+          if (dIndex < indexWindow) continue;
           const a = points[j];
           const b = points[(j + 1) % n];
-          const d = pointSegmentDistance(p, a, b);
-          if (!best || d < best.width) best = { width: d, i, j };
+          const closest = closestPointOnSegment(p, a, b);
+          const dx = closest.x - p.x;
+          const dy = closest.y - p.y;
+          const d = Math.hypot(dx, dy);
+          if (best && d >= best.width) continue;
+          best = { width: d, i, j };
         }
       }
     }
@@ -681,148 +780,6 @@ function findWorstLocalPinch(points: Point2[]): LocalPinch | null {
 
 function minLocalRingWidth(points: Point2[]): number {
   return findWorstLocalPinch(points)?.width ?? Infinity;
-}
-
-// How many points on each side of a pinch point also move (with a
-// falloff), rather than moving that one point alone — a single point
-// yanked away from its neighbors would leave a sharp kink that's itself
-// liable to self-intersect with whatever's nearby; nudging a small window
-// with the displacement tapering to zero at its edges instead produces a
-// smooth local bulge, the same idea a vector editor's "push" tool uses.
-const THIN_FEATURE_NUDGE_WINDOW = 3;
-// Extra clearance beyond the literal safe minimum, so a fixed spot doesn't
-// land exactly on the boundary (where floating-point rounding could tip
-// it back under the threshold).
-const THIN_FEATURE_NUDGE_MARGIN_MM = 0.03;
-// Each iteration only widens the SINGLE worst remaining pinch, so a shape
-// that's thin along its own entire length (a mustache, a hair-thin line —
-// not just one or two isolated pinch points, like the earlier mane/foliage
-// case this was first built against) needs one iteration per stretch of
-// its outline, not one total. 25 was plenty for a few isolated pinches but
-// left a long thin feature only partially widened — clearing on its own
-// only after "Fix" was clicked a second time. 300 comfortably covers a
-// realistic long, thin, detailed outline (verified against a synthetic
-// 400-point stroke: converges in well under 300 iterations, in ~50ms) while
-// the existing early-exit (`!pinch || pinch.width >= targetWidthMM`) means
-// a shape that's already fixed sooner never pays for the higher cap.
-const THIN_FEATURE_MAX_ITERATIONS = 300;
-
-/**
- * Locally widens a single ring wherever it pinches too close to itself —
- * repeatedly finds the worst remaining pinch (see findWorstLocalPinch) and
- * pushes a small window of points around it directly away from whatever
- * non-adjacent segment it's closest to, until the whole ring clears
- * `targetWidthMM` or a small iteration cap is hit (covers an outline with
- * more than one separate pinch, not just its single worst spot).
- *
- * Deliberately a small, local, surgical edit rather than a global
- * reshaping operation (e.g. a morphological closing/buffer round-trip) —
- * tried that first, and on a real, highly detailed imported outline (400+
- * points, many tight concave turns) a general offset shatters the ring
- * into dozens of stray fragments instead of cleanly widening one spot, a
- * far worse outcome than the original warning. Moving only the points
- * actually involved in each specific pinch keeps the rest of a detailed
- * outline completely untouched.
- */
-function widenThinRing(points: Point2[], targetWidthMM: number): Point2[] {
-  let current = points.map((p) => ({ ...p }));
-  // Nudging the worst pinch away from the ONE segment it's currently
-  // closest to is a purely local, greedy move — on a simple outline (a
-  // single long gentle curve) that's always safe, but on a real, more
-  // convoluted one (a tapered/hooked stroke, several close-together
-  // curves in one path) it can push a point closer to a DIFFERENT nearby
-  // segment than the one it was just pulled away from, making the ring's
-  // own global worst pinch narrower than it started, not wider. Tracking
-  // the best (highest worst-pinch-width) ring seen at any point during
-  // iteration — rather than just returning wherever the loop happens to
-  // end up — means this can never come back worse than what went in, even
-  // if a later iteration wanders into a worse local state chasing a
-  // different pinch; every later iteration is still a legitimate cheap
-  // shot at fully converging, since finding a NEW best only ever replaces
-  // the old one when it's strictly better.
-  let best = current;
-  let bestWidth = findWorstLocalPinch(current)?.width ?? Infinity;
-  for (let iter = 0; iter < THIN_FEATURE_MAX_ITERATIONS; iter++) {
-    const pinch = findWorstLocalPinch(current);
-    const currentWidth = pinch?.width ?? Infinity;
-    if (currentWidth > bestWidth) {
-      best = current;
-      bestWidth = currentWidth;
-    }
-    if (!pinch || pinch.width >= targetWidthMM) break;
-
-    const n = current.length;
-    const { i, j } = pinch;
-    const a = current[j];
-    const b = current[(j + 1) % n];
-    const p = current[i];
-    const abx = b.x - a.x;
-    const aby = b.y - a.y;
-    const len2 = abx * abx + aby * aby;
-    let t = len2 > 0 ? ((p.x - a.x) * abx + (p.y - a.y) * aby) / len2 : 0;
-    t = Math.max(0, Math.min(1, t));
-    const cx = a.x + abx * t;
-    const cy = a.y + aby * t;
-    let dx = p.x - cx;
-    let dy = p.y - cy;
-    let dist = Math.hypot(dx, dy);
-    if (dist < 1e-9) {
-      // p sits essentially ON the segment — push along its normal instead,
-      // since (p - closestPoint) has no meaningful direction here.
-      dx = -aby;
-      dy = abx;
-      dist = Math.hypot(dx, dy) || 1;
-    }
-    const deficit = targetWidthMM - dist + THIN_FEATURE_NUDGE_MARGIN_MM;
-    const ux = dx / dist;
-    const uy = dy / dist;
-
-    const next = current.map((pt) => ({ ...pt }));
-    for (let k = -THIN_FEATURE_NUDGE_WINDOW; k <= THIN_FEATURE_NUDGE_WINDOW; k++) {
-      const idx = (i + k + n) % n;
-      const weight = 1 - Math.abs(k) / (THIN_FEATURE_NUDGE_WINDOW + 1);
-      next[idx] = { x: current[idx].x + ux * deficit * weight, y: current[idx].y + uy * deficit * weight };
-    }
-    current = next;
-  }
-  const finalWidth = findWorstLocalPinch(current)?.width ?? Infinity;
-  if (finalWidth > bestWidth) best = current;
-  return mergeCloseAdjacentPoints(best, THIN_FEATURE_MIN_SEGMENT_MM);
-}
-
-// How close two ADJACENT points on the ring are allowed to end up after
-// nudging before they're merged back into one. This guards a genuinely
-// different failure mode than the pinch this function exists to fix: two
-// points that were already close together on this ring's own fine detail
-// (this outline's own average segment length can be well under 1mm) can
-// end up landing right on top of each other once one of them gets nudged
-// — a near-zero-length edge. A subsequent bevel's own per-vertex offset
-// math divides by each edge's length, so that one degenerate edge is
-// enough to send its movement vector's magnitude toward infinity and
-// blow a huge, wildly misplaced triangle into the mesh (this is exactly
-// what happened the first time this shipped: valid, watertight geometry
-// with a straight, unbeveled extrusion, but the same fixed points fed
-// into an actual bevel produced hundreds of winding conflicts and
-// triangles covering a third of the shape's own area). Comfortably above
-// float precision, comfortably below anything that would visibly move
-// the outline.
-const THIN_FEATURE_MIN_SEGMENT_MM = 0.05;
-
-function mergeCloseAdjacentPoints(points: Point2[], minDistMM: number): Point2[] {
-  if (points.length < 4) return points;
-  const out: Point2[] = [];
-  for (const p of points) {
-    const prev = out[out.length - 1];
-    if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) < minDistMM) continue;
-    out.push(p);
-  }
-  // The wrap-around pair (last, first) needs the same check — the loop
-  // above only ever compares each point against the one immediately
-  // before it in `out`.
-  if (out.length > 3 && Math.hypot(out[0].x - out[out.length - 1].x, out[0].y - out[out.length - 1].y) < minDistMM) {
-    out.pop();
-  }
-  return out.length >= 3 ? out : points;
 }
 
 export interface ThinFeatureWarning {
@@ -863,33 +820,4 @@ export function computeThinFeatureWarnings(
     if (minWidth < minSafeWidthMM) warnings.push({ id, minWidthMM: minWidth });
   }
   return warnings;
-}
-
-/**
- * Widens every locally-too-thin spot on one shape (see
- * computeThinFeatureWarnings/widenThinRing), returning new LOCAL-space
- * regions ready to store directly on that layer. Runs the actual widening
- * in world space (matching the space computeThinFeatureWarnings measures
- * in, so a scaled shape's target width isn't silently wrong) and converts
- * the result back through the shape's own inverse world transform.
- */
-export function widenThinFeatures(
-  layers: Record<string, Layer>,
-  id: string,
-  minSafeWidthMM: number = MIN_SAFE_LOCAL_WIDTH_MM,
-): ShapeRegion[] {
-  const layer = layers[id];
-  if (!isShapeLayer(layer)) return [];
-  const world = getWorldTransform(layers, id);
-  const worldRegions = getWorldRegions(layers, id);
-
-  const fixedWorld = worldRegions.map((region) => ({
-    outer: { points: widenThinRing(region.outer.points, minSafeWidthMM) },
-    holes: region.holes.map((hole) => ({ points: widenThinRing(hole.points, minSafeWidthMM) })),
-  }));
-
-  return fixedWorld.map((region) => ({
-    outer: { points: region.outer.points.map((p) => invertTransform2D(p, world)) },
-    holes: region.holes.map((hole) => ({ points: hole.points.map((p) => invertTransform2D(p, world)) })),
-  }));
 }

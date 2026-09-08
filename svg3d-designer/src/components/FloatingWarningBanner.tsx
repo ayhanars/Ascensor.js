@@ -10,7 +10,6 @@ export function FloatingWarningBanner() {
   const dismissedFloatingIds = useSceneStore((s) => s.dismissedFloatingIds);
   const fixFloatingLayers = useSceneStore((s) => s.fixFloatingLayers);
   const dismissFloatingWarning = useSceneStore((s) => s.dismissFloatingWarning);
-  const fixThinFeatures = useSceneStore((s) => s.fixThinFeatures);
   const setSelection = useSceneStore((s) => s.setSelection);
   const [severities, setSeverities] = useState<{ critical: string[]; partial: string[] }>({
     critical: [],
@@ -103,17 +102,9 @@ export function FloatingWarningBanner() {
             type="button"
             className="floating-warning-select-btn"
             onClick={() => setSelection(thinFeatureIds)}
-            title="Select the shape(s) with a too-thin feature"
+            title="Select the shape(s) with a too-thin feature — widen it in your source file and re-import, or thicken it here"
           >
             Select
-          </button>
-          <button
-            type="button"
-            className="floating-warning-fix-btn"
-            onClick={() => fixThinFeatures(thinFeatureIds)}
-            title="Locally widen just the too-thin spot(s) — the rest of the shape is left untouched"
-          >
-            Fix
           </button>
         </div>
       )}
