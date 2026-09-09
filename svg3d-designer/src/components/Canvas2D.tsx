@@ -118,6 +118,8 @@ export function Canvas2D({ resetSignal }: Props) {
   const penDraftAnchors = useSceneStore((s) => s.penDraftAnchors);
   const addPenAnchor = useSceneStore((s) => s.addPenAnchor);
   const finishPenTool = useSceneStore((s) => s.finishPenTool);
+  const updatePenAnchorPosition = useSceneStore((s) => s.updatePenAnchorPosition);
+  const updatePenAnchorHandle = useSceneStore((s) => s.updatePenAnchorHandle);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const [vb, setVb] = useState<ViewBox>(() => fitView(document_.widthMM, document_.heightMM));
@@ -148,11 +150,25 @@ export function Canvas2D({ resetSignal }: Props) {
   // preview render. Separate from penHoverPoint, which only applies
   // between gestures (idle rubber-band to the next click).
   const [penDragPoint, setPenDragPoint] = useState<{ x: number; y: number } | null>(null);
+  // Dragging the LAST placed anchor's own dot (to reposition it) or one of
+  // its handles (to reshape the curve on either side of it) — the "go back
+  // and adjust the arc you just drew" gesture, distinct from penGestureRef
+  // above (which only ever places a NEW anchor). Only the last anchor is
+  // ever adjustable this way: any earlier one's dot can sit exactly where
+  // a "click to close the path" gesture also hit-tests once there are
+  // enough anchors to close at all, and real pen tools don't let you drag
+  // older anchors around either — that's what the Direct Selection tool is
+  // for. Unlike penGestureRef, this writes straight to the store on every
+  // move (the anchor's already a committed part of the draft, not a
+  // not-yet-real point still being decided), so the render just reads
+  // penDraftAnchors directly — no separate live-preview state needed.
+  const penAdjustRef = useRef<{ index: number; kind: "anchor" | "handleIn" | "handleOut" } | null>(null);
   useEffect(() => {
     if (!penToolActive) {
       setPenHoverPoint(null);
       setPenDragPoint(null);
       penGestureRef.current = null;
+      penAdjustRef.current = null;
     }
   }, [penToolActive]);
   // Smart alignment guides: while dragging shapes, a dashed line highlights
@@ -412,6 +428,15 @@ export function Canvas2D({ resetSignal }: Props) {
     return true;
   }
 
+  /** Starts dragging the last anchor's own dot (reposition) or one of its
+   * handles (reshape). See penAdjustRef's comment for why only the last
+   * anchor gets this. */
+  function beginPenAdjust(e: React.PointerEvent, index: number, kind: "anchor" | "handleIn" | "handleOut") {
+    e.stopPropagation();
+    penAdjustRef.current = { index, kind };
+    (e.target as Element).setPointerCapture(e.pointerId);
+  }
+
   // A native (non-passive) listener is required here: React attaches wheel
   // handlers as passive by default, so e.preventDefault() inside a React
   // onWheel prop is silently ignored — the browser's own pinch-zoom keeps
@@ -659,6 +684,12 @@ export function Canvas2D({ resetSignal }: Props) {
   }
 
   function onPointerUp(e: React.PointerEvent) {
+    if (penAdjustRef.current) {
+      penAdjustRef.current = null;
+      (e.target as Element).releasePointerCapture?.(e.pointerId);
+      return;
+    }
+
     const penGesture = penGestureRef.current;
     if (penGesture) {
       const drop = clientToSvg(e.clientX, e.clientY);
@@ -884,6 +915,12 @@ export function Canvas2D({ resetSignal }: Props) {
         onPointerMove={(e) => {
           if (penToolActive) {
             const p = clientToSvg(e.clientX, e.clientY);
+            const adjust = penAdjustRef.current;
+            if (adjust) {
+              if (adjust.kind === "anchor") updatePenAnchorPosition(adjust.index, p);
+              else updatePenAnchorHandle(adjust.index, adjust.kind, p);
+              return;
+            }
             const gesture = penGestureRef.current;
             if (gesture) {
               const anchorClient = svgPointToClient(gesture.anchorPoint);
@@ -1069,6 +1106,8 @@ export function Canvas2D({ resetSignal }: Props) {
 
           const handleR = Math.max(0.7, vb.w * 0.0035);
           const mirroredHandle = dragging ? mirrorPoint(gesture!.anchorPoint, penDragPoint!) : null;
+          const lastIndex = penDraftAnchors.length - 1;
+          const lastAnchor = penDraftAnchors[lastIndex];
 
           return (
             <>
@@ -1087,8 +1126,47 @@ export function Canvas2D({ resetSignal }: Props) {
                   <circle className="pen-draft-handle" cx={mirroredHandle.x} cy={mirroredHandle.y} r={handleR} pointerEvents="none" />
                 </>
               )}
+              {/* The last-placed anchor's own handles, live and draggable —
+                  the "go back and adjust the arc you just drew" gesture.
+                  Skipped while a new anchor is actively being placed above
+                  (that preview already covers this same spot visually). */}
+              {!gesture && (lastAnchor.handleOut || lastAnchor.handleIn) && (
+                <>
+                  {lastAnchor.handleOut && lastAnchor.handleIn && (
+                    <line
+                      className="pen-draft-handle-line"
+                      x1={lastAnchor.handleIn.x}
+                      y1={lastAnchor.handleIn.y}
+                      x2={lastAnchor.handleOut.x}
+                      y2={lastAnchor.handleOut.y}
+                      pointerEvents="none"
+                    />
+                  )}
+                  {lastAnchor.handleOut && (
+                    <circle
+                      className="pen-draft-handle"
+                      cx={lastAnchor.handleOut.x}
+                      cy={lastAnchor.handleOut.y}
+                      r={handleR * 1.4}
+                      style={{ cursor: "grab" }}
+                      onPointerDown={(e) => beginPenAdjust(e, lastIndex, "handleOut")}
+                    />
+                  )}
+                  {lastAnchor.handleIn && (
+                    <circle
+                      className="pen-draft-handle"
+                      cx={lastAnchor.handleIn.x}
+                      cy={lastAnchor.handleIn.y}
+                      r={handleR * 1.4}
+                      style={{ cursor: "grab" }}
+                      onPointerDown={(e) => beginPenAdjust(e, lastIndex, "handleIn")}
+                    />
+                  )}
+                </>
+              )}
               {penDraftAnchors.map((p, i) => {
                 const isFirst = i === 0;
+                const isLast = i === lastIndex;
                 const closable = isFirst && penDraftAnchors.length >= 3;
                 const r = Math.max(0.9, vb.w * 0.005) * (isFirst ? 1.6 : 1);
                 return (
@@ -1098,7 +1176,9 @@ export function Canvas2D({ resetSignal }: Props) {
                     cx={p.x}
                     cy={p.y}
                     r={r}
-                    pointerEvents="none"
+                    pointerEvents={isLast && !gesture ? "all" : "none"}
+                    style={isLast && !gesture ? { cursor: "move" } : undefined}
+                    onPointerDown={isLast && !gesture ? (e) => beginPenAdjust(e, lastIndex, "anchor") : undefined}
                   />
                 );
               })}

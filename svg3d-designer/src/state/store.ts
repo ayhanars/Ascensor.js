@@ -352,6 +352,18 @@ interface SceneState {
   /** Removes the most recently placed anchor (Backspace while drawing) —
    * cancels the whole tool if that was the only anchor left. */
   undoLastPenAnchor: () => void;
+  /** Moves the anchor at `index` to `point`, carrying its handles along by
+   * the same delta so the curve shape it already has stays put relative
+   * to the anchor — dragging the dot you just placed, not redrawing it.
+   * Canvas2D only ever calls this for the LAST anchor (dragging an
+   * earlier one would collide with the "click the first anchor to close"
+   * hotspot once a path is long enough to close at all). */
+  updatePenAnchorPosition: (index: number, point: Point2) => void;
+  /** Moves one handle of the anchor at `index` to `point`, mirroring the
+   * opposite handle to keep the anchor smooth — the same live re-drag
+   * Illustrator/Figma/Photoshop allow on the anchor you just placed,
+   * before moving on to the next point. */
+  updatePenAnchorHandle: (index: number, which: "handleIn" | "handleOut", point: Point2) => void;
   /**
    * Closes the current draft into a real shape layer and returns to the
    * Select tool. Needs at least 3 anchors to form an outline — with fewer,
@@ -2020,6 +2032,40 @@ export const useSceneStore = create<SceneState>()(
       if (!state.penToolActive) return {};
       if (state.penDraftAnchors.length === 0) return { penToolActive: false };
       return { penDraftAnchors: state.penDraftAnchors.slice(0, -1) };
+    }),
+
+  updatePenAnchorPosition: (index, point) =>
+    set((state) => {
+      if (!state.penToolActive) return {};
+      const anchor = state.penDraftAnchors[index];
+      if (!anchor) return {};
+      const dx = point.x - anchor.x;
+      const dy = point.y - anchor.y;
+      const next: PenAnchor = {
+        x: point.x,
+        y: point.y,
+        handleIn: anchor.handleIn ? { x: anchor.handleIn.x + dx, y: anchor.handleIn.y + dy } : undefined,
+        handleOut: anchor.handleOut ? { x: anchor.handleOut.x + dx, y: anchor.handleOut.y + dy } : undefined,
+      };
+      const penDraftAnchors = [...state.penDraftAnchors];
+      penDraftAnchors[index] = next;
+      return { penDraftAnchors };
+    }),
+
+  updatePenAnchorHandle: (index, which, point) =>
+    set((state) => {
+      if (!state.penToolActive) return {};
+      const anchor = state.penDraftAnchors[index];
+      if (!anchor) return {};
+      const mirrored = { x: 2 * anchor.x - point.x, y: 2 * anchor.y - point.y };
+      const next: PenAnchor = {
+        ...anchor,
+        [which]: point,
+        [which === "handleOut" ? "handleIn" : "handleOut"]: mirrored,
+      };
+      const penDraftAnchors = [...state.penDraftAnchors];
+      penDraftAnchors[index] = next;
+      return { penDraftAnchors };
     }),
 
   finishPenTool: (closingHandleIn) =>
