@@ -8,7 +8,7 @@ import {
   useSceneStore,
   type TrackedSceneSlice,
 } from "../state/store";
-import { collectShapeLayers, getLocalShapeBounds } from "../state/sceneUtils";
+import { collectShapeLayers, getLocalLayerBounds, getLocalShapeBounds } from "../state/sceneUtils";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { canonicalizeColor, ColorPickerButton, normalizeHexColor } from "./ColorPicker";
 import { displayToMM, formatLength, mmToDisplay, UNIT_LABELS } from "../state/units";
@@ -600,7 +600,9 @@ export function Inspector() {
       <div className="sidebar-header">Properties</div>
       <div className="inspector">
         <div className="inspector-section">
-          <div className="inspector-section-title">{layer.type === "group" ? "Group" : "Shape"}</div>
+          <div className="inspector-section-title">
+            {layer.type === "group" ? "Group" : layer.type === "image" ? "Reference Image" : "Shape"}
+          </div>
           <div className="field-row">
             <span className="field-label">Name</span>
             <input
@@ -677,7 +679,7 @@ export function Inspector() {
               Send to Back
             </button>
           </div>
-          {layer.type === "shape" ? (
+          {layer.type === "shape" || layer.type === "image" ? (
             (() => {
               // Real, physical size — Photoshop-style, not a percentage —
               // derived from the shape's own unscaled outline bounds times
@@ -686,7 +688,7 @@ export function Inspector() {
               // scaleX/scaleY the fields below used to expose directly,
               // just in the unit that actually matters when sizing a part
               // for print instead of eyeballing a multiplier.
-              const localBounds = getLocalShapeBounds(layer);
+              const localBounds = getLocalLayerBounds(layer);
               const rawW = localBounds ? localBounds.maxX - localBounds.minX : 0;
               const rawH = localBounds ? localBounds.maxY - localBounds.minY : 0;
               const width = rawW * layer.transform.scaleX;

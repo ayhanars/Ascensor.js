@@ -269,7 +269,7 @@ export function mergeSceneIntoSingleLayer(scene: ParsedScene, name: string): {
         color = layer.color;
         firstColorSet = true;
       }
-    } else {
+    } else if (layer.type === "group") {
       layer.children.forEach(walk);
     }
   }

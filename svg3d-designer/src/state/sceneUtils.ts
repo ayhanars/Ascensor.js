@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { Layer, Point2, ShapeLayer, ShapeRegion, Transform2D } from "../types";
+import type { ImageLayer, Layer, Point2, ShapeLayer, ShapeRegion, Transform2D } from "../types";
 import { differenceRegions, regionsArea, regionsIntersectionArea, unionRegions } from "../geometry/booleanOps";
 import { applyLayerTransform, buildExtrudeGeometry } from "../geometry/extrude";
 import { trueMinRingWidth } from "./thinFeatureTopology";
@@ -159,6 +159,7 @@ export function collectShapeLayers(
   const layer = layers[id];
   if (!layer) return [];
   if (layer.type === "shape") return [layer];
+  if (layer.type !== "group") return [];
   const result: ShapeLayer[] = [];
   for (const childId of layer.children) {
     result.push(...collectShapeLayers(layers, childId));
@@ -260,6 +261,15 @@ export function getLayerWorldBounds(
   layers: Record<string, Layer>,
   id: string,
 ): Bounds | null {
+  const layer = layers[id];
+  if (layer?.type === "image") {
+    const world = getWorldTransform(layers, id);
+    let bounds: Bounds | null = null;
+    for (const pt of imageCorners(layer)) {
+      bounds = expandBounds(bounds, applyTransform2D(pt, world));
+    }
+    return bounds;
+  }
   const shapeLayers = collectShapeLayers(layers, id);
   let bounds: Bounds | null = null;
   for (const shapeLayer of shapeLayers) {
@@ -271,6 +281,15 @@ export function getLayerWorldBounds(
     }
   }
   return bounds;
+}
+
+function imageCorners(layer: ImageLayer): Point2[] {
+  return [
+    { x: 0, y: 0 },
+    { x: layer.width, y: 0 },
+    { x: layer.width, y: layer.height },
+    { x: 0, y: layer.height },
+  ];
 }
 
 /** Union of getLayerWorldBounds across several layers (e.g. the current selection). */
@@ -306,6 +325,17 @@ export function getLocalShapeBounds(shape: ShapeLayer): Bounds | null {
     }
   }
   return bounds;
+}
+
+/** Same untransformed-local-box idea as getLocalShapeBounds, generalized to
+ * any resizable/positionable layer (shape or reference image) — the basis
+ * for the 2D canvas's generic resize-handle math, which only needs a local
+ * box and doesn't care what kind of layer it belongs to. Groups have no
+ * single local box of their own, so this returns null for them. */
+export function getLocalLayerBounds(layer: Layer): Bounds | null {
+  if (layer.type === "shape") return getLocalShapeBounds(layer);
+  if (layer.type === "image") return { minX: 0, minY: 0, maxX: layer.width, maxY: layer.height };
+  return null;
 }
 
 /**

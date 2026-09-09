@@ -274,7 +274,7 @@ function App() {
           )}
           <PlateTabs />
           {viewMode === "2d" && <ShapeToolbar />}
-          {isDragOver && <div className="dropzone-overlay">Drop SVG to import</div>}
+          {isDragOver && <div className="dropzone-overlay">Drop SVG to import, or a JPG/PNG for reference</div>}
           <FloatingWarningBanner />
           <ToastStack />
         </div>

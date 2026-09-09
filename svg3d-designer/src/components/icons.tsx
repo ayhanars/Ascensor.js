@@ -53,6 +53,14 @@ export const ShapeIcon = ({ size = 14 }: IconProps) => (
   </svg>
 );
 
+export const ImageLayerIcon = ({ size = 14 }: IconProps) => (
+  <svg {...base(size)}>
+    <rect x="2" y="2.5" width="12" height="11" rx="1.2" />
+    <circle cx="5.6" cy="6" r="1.3" fill="currentColor" stroke="none" />
+    <path d="M2 11.5l3.6-3.6a1 1 0 0 1 1.4 0L9.8 10.7 11.4 9.1a1 1 0 0 1 1.4 0L14 10.3" />
+  </svg>
+);
+
 export const TrashIcon = ({ size = 14 }: IconProps) => (
   <svg {...base(size)}>
     <path d="M3 4.5h10M6 4.5V3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.5M5 4.5l.6 8.4a1 1 0 0 0 1 .9h2.8a1 1 0 0 0 1-.9l.6-8.4" />

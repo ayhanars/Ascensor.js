@@ -6,6 +6,7 @@ import {
   EyeIcon,
   EyeOffIcon,
   GroupIcon,
+  ImageLayerIcon,
   LockIcon,
   ShapeIcon,
   TrashIcon,
@@ -40,6 +41,9 @@ export function LayerPanel() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
+  // Anchor for Shift-click range-select — the last row clicked without a
+  // modifier, or the row a range select just extended to.
+  const [rangeAnchorId, setRangeAnchorId] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   // Every id being dragged — the whole current selection when the dragged
   // row was already part of it, otherwise just that one row. Fixed at drag
@@ -54,6 +58,34 @@ export function LayerPanel() {
     const name = draftName.trim();
     if (name) renameLayer(id, name);
     setEditingId(null);
+  }
+
+  function handleRowClick(id: string, e: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }) {
+    if (e.shiftKey) {
+      // Figma/Finder-style contiguous range select between the last
+      // anchored row and this one, in on-screen (flattened, nested-aware)
+      // order — not an additive single-row toggle.
+      const anchorId = rangeAnchorId ?? selection[selection.length - 1] ?? id;
+      const anchorIndex = rows.findIndex((r) => r.id === anchorId);
+      const targetIndex = rows.findIndex((r) => r.id === id);
+      if (anchorIndex === -1 || targetIndex === -1) {
+        selectLayer(id, false);
+        setRangeAnchorId(id);
+        return;
+      }
+      const [start, end] = anchorIndex <= targetIndex ? [anchorIndex, targetIndex] : [targetIndex, anchorIndex];
+      setSelection(rows.slice(start, end + 1).map((r) => r.id));
+      // Anchor stays put so repeated shift-clicks keep extending/shrinking
+      // the same range, matching Finder/Figma behavior.
+      return;
+    }
+    if (e.metaKey || e.ctrlKey) {
+      selectLayer(id, true);
+      setRangeAnchorId(id);
+      return;
+    }
+    selectLayer(id, false);
+    setRangeAnchorId(id);
   }
 
   function handleDrop(targetId: string, position: DropPosition) {
@@ -160,10 +192,12 @@ export function LayerPanel() {
                 setDragIds([]);
                 setDropTarget(null);
               }}
-              onClick={(e) => selectLayer(id, e.shiftKey || e.metaKey || e.ctrlKey)}
+              onClick={(e) => handleRowClick(id, e)}
             >
               <span className="layer-type-icon">
-                {layer.type === "group" ? <GroupIcon /> : <ShapeIcon />}
+                {layer.type === "group" ? <GroupIcon />
+                : layer.type === "image" ? <ImageLayerIcon />
+                : <ShapeIcon />}
               </span>
 
               <span

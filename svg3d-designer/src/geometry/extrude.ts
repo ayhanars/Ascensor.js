@@ -166,6 +166,12 @@ export function buildAssemblyGroup(
       return group;
     }
 
+    // Reference images are a 2D-canvas-only drawing aid — never part of the
+    // printable model, so they're simply absent from the 3D scene graph
+    // (and therefore from the STL/3MF exporters, which both build off this
+    // same assembly).
+    if (layer.type === "image") return null;
+
     const geometry = buildExtrudeGeometry(layer);
     const material = new THREE.MeshStandardMaterial({
       color: layer.color,

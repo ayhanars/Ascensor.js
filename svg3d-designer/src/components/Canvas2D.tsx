@@ -3,7 +3,7 @@ import { beginGesture, endGesture, useActivePlateRootIds, useSceneStore, type Tr
 import {
   boundsOverlap,
   getLayerWorldBounds,
-  getLocalShapeBounds,
+  getLocalLayerBounds,
   getMultiLayerWorldBounds,
   getTopLevelId,
   isAncestorOrSelf,
@@ -120,6 +120,7 @@ export function Canvas2D({ resetSignal }: Props) {
   const finishPenTool = useSceneStore((s) => s.finishPenTool);
   const updatePenAnchorPosition = useSceneStore((s) => s.updatePenAnchorPosition);
   const updatePenAnchorHandle = useSceneStore((s) => s.updatePenAnchorHandle);
+  const addImageLayer = useSceneStore((s) => s.addImageLayer);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const [vb, setVb] = useState<ViewBox>(() => fitView(document_.widthMM, document_.heightMM));
@@ -240,6 +241,10 @@ export function Canvas2D({ resetSignal }: Props) {
     dLocal: { x: number; y: number };
     resizesX: boolean;
     resizesY: boolean;
+    /** Original scaleY/scaleX ratio — held while Shift is down during a
+     * corner-handle drag so a reference image resizes proportionally
+     * instead of stretching, matching Figma/Photoshop's Shift-resize. */
+    aspectRatio: number;
     preGestureSnapshot: TrackedSceneSlice;
     moved: boolean;
   } | null>(null);
@@ -268,6 +273,56 @@ export function Canvas2D({ resetSignal }: Props) {
     setVb(fitView(document_.widthMM, document_.heightMM));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetSignal]);
+
+  // A raw phone-camera JPG/PNG can easily be several MB — and the whole
+  // project (this image included) autosaves as one JSON blob into
+  // localStorage, which has only a ~5-10MB origin quota shared by every
+  // saved project. Embedding the source file as-is risks silently
+  // breaking autosave for the entire project, not just this image. Down-
+  // scaling to a still-plenty-sharp-for-tracing size before it ever
+  // becomes a data URL keeps a reference image from being able to do that.
+  const REFERENCE_IMAGE_MAX_DIMENSION = 1600;
+
+  // Dropping a JPG/PNG onto the canvas adds it as a 2D-only reference
+  // layer (see addImageLayer/ImageLayer) — a tracing aid the 3D preview
+  // and every exporter simply never sees. Handled here rather than at the
+  // app-level file-drop handler (which is SVG-import-only) so the drop
+  // lands at the exact point the cursor released, in document mm.
+  function handleImageDrop(e: React.DragEvent) {
+    const file = Array.from(e.dataTransfer.files).find((f) => /^image\/(png|jpe?g)$/i.test(f.type));
+    if (!file) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    const center = clientToSvg(e.clientX, e.clientY);
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const naturalWidth = img.naturalWidth || 1;
+      const naturalHeight = img.naturalHeight || 1;
+      const scale = Math.min(1, REFERENCE_IMAGE_MAX_DIMENSION / Math.max(naturalWidth, naturalHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(naturalHeight * scale));
+      const ctx = canvas.getContext("2d");
+      URL.revokeObjectURL(objectUrl);
+      if (!ctx) return;
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      // PNG stays lossless (reference images are often screenshots/line
+      // art where JPEG artifacting would hurt); anything else compresses
+      // as JPEG, which is far smaller for a photo.
+      const isPng = file.type === "image/png";
+      const src = canvas.toDataURL(isPng ? "image/png" : "image/jpeg", 0.85);
+      addImageLayer({
+        src,
+        naturalWidth,
+        naturalHeight,
+        name: file.name.replace(/\.[^.]+$/, "") || "Reference Image",
+        center,
+      });
+    };
+    img.src = objectUrl;
+    return true;
+  }
 
   function clientToSvg(clientX: number, clientY: number): { x: number; y: number } {
     const svg = svgRef.current;
@@ -562,8 +617,8 @@ export function Canvas2D({ resetSignal }: Props) {
 
   function beginResize(e: React.PointerEvent, id: string, handle: ResizeHandle) {
     const layer = layers[id];
-    if (!layer || layer.type !== "shape") return;
-    const localBounds = getLocalShapeBounds(layer);
+    if (!layer || (layer.type !== "shape" && layer.type !== "image")) return;
+    const localBounds = getLocalLayerBounds(layer);
     if (!localBounds) return;
     e.stopPropagation();
     (e.target as Element).setPointerCapture(e.pointerId);
@@ -578,6 +633,7 @@ export function Canvas2D({ resetSignal }: Props) {
       dLocal: { x: handleLocal.x - anchorLocal.x, y: handleLocal.y - anchorLocal.y },
       resizesX,
       resizesY,
+      aspectRatio: t.scaleX !== 0 ? t.scaleY / t.scaleX : 1,
       preGestureSnapshot: beginGesture(),
       moved: false,
     };
@@ -633,9 +689,16 @@ export function Canvas2D({ resetSignal }: Props) {
       const scaleX = resize.resizesX
         ? Math.max(MIN_RESIZE_SCALE, localDelta.x / resize.dLocal.x)
         : t.scaleX;
-      const scaleY = resize.resizesY
+      let scaleY = resize.resizesY
         ? Math.max(MIN_RESIZE_SCALE, localDelta.y / resize.dLocal.y)
         : t.scaleY;
+      // Shift-held corner drag locks the resize to the shape's original
+      // aspect ratio instead of stretching it — most useful for a
+      // reference image, where you almost always want to keep it in
+      // proportion while scaling it up or down.
+      if (e.shiftKey && resize.resizesX && resize.resizesY) {
+        scaleY = scaleX * resize.aspectRatio;
+      }
       // Solve position from the SAME equation beginResize's anchorWorld
       // came from, just inverted: with the new scale fixed, where must
       // the origin sit so the anchor point still lands exactly on
@@ -854,6 +917,28 @@ export function Canvas2D({ resetSignal }: Props) {
       );
     }
 
+    if (layer.type === "image") {
+      return (
+        <g key={id} transform={transformAttr}>
+          <image
+            href={layer.src}
+            x={0}
+            y={0}
+            width={layer.width}
+            height={layer.height}
+            opacity={layer.opacity}
+            preserveAspectRatio="none"
+            style={{ cursor: isEffectivelyLocked(layers, id) ? "default" : "move" }}
+            onPointerDown={(e) => {
+              if (tryZoomToolClick(e)) return;
+              if (tryPenToolDown(e)) return;
+              if (!isEffectivelyLocked(layers, id)) handleShapeDown(e, id);
+            }}
+          />
+        </g>
+      );
+    }
+
     const pathD = regionsToPathD(roundRegions(layer.regions, layer.cornerRadius));
     return (
       <g key={id} transform={transformAttr}>
@@ -904,6 +989,15 @@ export function Canvas2D({ resetSignal }: Props) {
           (penToolActive ? " pen-tool" : "")
         }
         viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
+        onDragOver={(e) => {
+          if (Array.from(e.dataTransfer.items).some((i) => /^image\//i.test(i.type))) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
+        onDrop={(e) => {
+          handleImageDrop(e);
+        }}
         onPointerDown={(e) => {
           if (tryZoomToolClick(e)) return;
           if (tryPenToolDown(e)) return;
@@ -1015,7 +1109,8 @@ export function Canvas2D({ resetSignal }: Props) {
           if (selection.length !== 1) return null;
           const id = selection[0];
           const layer = layers[id];
-          if (!layer || layer.type !== "shape" || isEffectivelyLocked(layers, id)) return null;
+          if (!layer || (layer.type !== "shape" && layer.type !== "image") || isEffectivelyLocked(layers, id))
+            return null;
           const b = getLayerWorldBounds(layers, id);
           if (!b) return null;
           const size = Math.max(1.2, vb.w * 0.01);

@@ -6,6 +6,7 @@ import type {
   AlignMode,
   DocumentSettings,
   GroupLayer,
+  ImageLayer,
   Layer,
   PenAnchor,
   Plate,
@@ -340,6 +341,18 @@ interface SceneState {
   createShapeLayer: (kind: "rect" | "circle" | "hole" | "polygon" | "star") => void;
   setPolygonSides: (id: string, sides: number) => void;
   setStarParams: (id: string, points: number, innerRatio: number) => void;
+
+  /** Drops a JPG/PNG reference image onto the canvas as its own layer —
+   * a visual tracing aid only, never extruded or exported (see
+   * buildAssemblyGroup, which skips "image" layers entirely). `center` is
+   * where the image's own center should land, in document mm. */
+  addImageLayer: (args: {
+    src: string;
+    naturalWidth: number;
+    naturalHeight: number;
+    name: string;
+    center: { x: number; y: number };
+  }) => void;
 
   /** Arms the Pen tool — a real bezier pen matching Figma/Illustrator/
    * Photoshop's own: click places a straight "corner" anchor, click-and-
@@ -1978,6 +1991,44 @@ export const useSceneStore = create<SceneState>()(
         isHole: kind === "hole",
         ...(kind === "polygon" ? { polygonSides: DEFAULT_POLYGON_SIDES } : {}),
         ...(kind === "star" ? { starPoints: DEFAULT_STAR_POINTS, starInnerRatio: DEFAULT_STAR_INNER_RATIO } : {}),
+      };
+
+      return {
+        layers: { ...state.layers, [id]: layer },
+        rootIds: [...state.rootIds, id],
+        plateOf: { ...state.plateOf, [id]: state.activePlateId },
+        selection: [id],
+      };
+    }),
+
+  addImageLayer: ({ src, naturalWidth, naturalHeight, name, center }) =>
+    set((state) => {
+      const id = nanoid(8);
+      // Reference photos rarely arrive at a print-relevant scale, so drop
+      // them in at a fixed, readable size (the longer side capped to a
+      // third of the document) rather than their raw pixel dimensions,
+      // preserving the source aspect ratio — Shift+resize-handle (see
+      // Canvas2D) locks that ratio for any further scaling.
+      const aspect = naturalWidth / Math.max(1, naturalHeight);
+      const maxSide = Math.max(20, Math.min(state.document.widthMM, state.document.heightMM) / 3);
+      const width = aspect >= 1 ? maxSide : maxSide * aspect;
+      const height = aspect >= 1 ? maxSide / aspect : maxSide;
+
+      const layer: ImageLayer = {
+        id,
+        type: "image",
+        name,
+        visible: true,
+        locked: false,
+        color: "#888888",
+        transform: { ...IDENTITY_TRANSFORM, x: center.x - width / 2, y: center.y - height / 2 },
+        parentId: null,
+        src,
+        naturalWidth,
+        naturalHeight,
+        width,
+        height,
+        opacity: 1,
       };
 
       return {
