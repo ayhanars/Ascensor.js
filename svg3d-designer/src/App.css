@@ -622,13 +622,16 @@
   stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
 }
-.pen-draft-rubber-band {
-  fill: none;
+.pen-draft-handle-line {
   stroke: var(--accent);
   stroke-width: 1;
-  stroke-dasharray: 4 3;
+  stroke-dasharray: 3 2;
   vector-effect: non-scaling-stroke;
-  opacity: 0.7;
+  opacity: 0.8;
+}
+.pen-draft-handle {
+  fill: var(--accent);
+  opacity: 0.8;
 }
 
 .selection-box {

@@ -11,7 +11,7 @@ import {
   stepIntoOnClick,
 } from "../state/sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
-import type { Layer, ShapeRegion, Transform2D } from "../types";
+import type { Layer, PenAnchor, ShapeRegion, Transform2D } from "../types";
 import { InfoIcon } from "./icons";
 
 function isEditableTarget(el: EventTarget | null): boolean {
@@ -41,6 +41,18 @@ function pointsToD(points: { x: number; y: number }[]): string {
   let d = `M ${points[0].x} ${points[0].y} `;
   for (let i = 1; i < points.length; i++) d += `L ${points[i].x} ${points[i].y} `;
   return d + "Z ";
+}
+
+/** One path-data segment from anchor `a` to anchor `b` — a straight `L`
+ * when neither end has a handle, a cubic `C` otherwise. Used only for the
+ * in-progress Pen tool draft preview; the finished shape's own points are
+ * already flattened (see flattenPenAnchors) before they ever become a
+ * ShapeLayer, so nothing downstream of that needs this. */
+function penSegmentD(a: PenAnchor, b: PenAnchor): string {
+  if (!a.handleOut && !b.handleIn) return `L ${b.x} ${b.y} `;
+  const c1 = a.handleOut ?? { x: a.x, y: a.y };
+  const c2 = b.handleIn ?? { x: b.x, y: b.y };
+  return `C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${b.x} ${b.y} `;
 }
 
 function fitView(width: number, height: number): ViewBox {
@@ -103,8 +115,8 @@ export function Canvas2D({ resetSignal }: Props) {
   const setLayerTransform = useSceneStore((s) => s.setLayerTransform);
   const showGrid = useSceneStore((s) => s.showGrid);
   const penToolActive = useSceneStore((s) => s.penToolActive);
-  const penDraftPoints = useSceneStore((s) => s.penDraftPoints);
-  const addPenPoint = useSceneStore((s) => s.addPenPoint);
+  const penDraftAnchors = useSceneStore((s) => s.penDraftAnchors);
+  const addPenAnchor = useSceneStore((s) => s.addPenAnchor);
   const finishPenTool = useSceneStore((s) => s.finishPenTool);
 
   const svgRef = useRef<SVGSVGElement>(null);
@@ -120,8 +132,28 @@ export function Canvas2D({ resetSignal }: Props) {
   // to wherever the pointer currently is, the same live-preview feedback
   // Figma's own pen tool gives before you've clicked the next point.
   const [penHoverPoint, setPenHoverPoint] = useState<{ x: number; y: number } | null>(null);
+  // A real bezier pen gesture, in progress between pointerdown and
+  // pointerup: `anchorPoint` is where the new anchor will land (or, when
+  // closing, the existing first anchor's own position), `closing` is set
+  // if this gesture will finish the path rather than extend it. Committed
+  // to the store's anchor list (or handed to finishPenTool) only on
+  // pointerup, once it's known whether the gesture was a plain click (a
+  // straight "corner" anchor) or a click-and-drag (a curved "smooth" one)
+  // — matches Illustrator/Figma/Photoshop's own pen tool exactly.
+  const penGestureRef = useRef<{ anchorPoint: { x: number; y: number }; closing: boolean; moved: boolean } | null>(
+    null,
+  );
+  // Live drag position for the handle currently being pulled out, while a
+  // pen gesture from penGestureRef is in progress — drives the handle-line
+  // preview render. Separate from penHoverPoint, which only applies
+  // between gestures (idle rubber-band to the next click).
+  const [penDragPoint, setPenDragPoint] = useState<{ x: number; y: number } | null>(null);
   useEffect(() => {
-    if (!penToolActive) setPenHoverPoint(null);
+    if (!penToolActive) {
+      setPenHoverPoint(null);
+      setPenDragPoint(null);
+      penGestureRef.current = null;
+    }
   }, [penToolActive]);
   // Smart alignment guides: while dragging shapes, a dashed line highlights
   // any edge/center that lines up with another shape's, so you can actually
@@ -331,34 +363,52 @@ export function Canvas2D({ resetSignal }: Props) {
     return true;
   }
 
-  /** A click this close (in real screen pixels, not document mm — so it
-   * feels the same at any zoom level) to the path's own first point closes
-   * it, the same "click back on the start" convention every vector pen
-   * tool uses. */
+  /** A gesture starting this close (in real screen pixels, not document mm
+   * — so it feels the same at any zoom level) to the path's own first
+   * anchor closes it, the same "click back on the start" convention every
+   * vector pen tool uses. */
   const PEN_CLOSE_THRESHOLD_PX = 10;
+  /** Below this much real on-screen movement, a pen gesture reads as a
+   * plain click (a straight "corner" anchor) rather than a drag (a curved
+   * "smooth" one) — matches the small dead-zone every other drag-vs-click
+   * gesture in this file already uses, just named for this one. */
+  const PEN_DRAG_THRESHOLD_PX = 3;
 
-  /** Handles a click while the pen tool is armed; returns whether it did
+  function svgPointToClient(p: { x: number; y: number }): { x: number; y: number } | null {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = p.x;
+    pt.y = p.y;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    const t = pt.matrixTransform(ctm);
+    return { x: t.x, y: t.y };
+  }
+
+  /** Reflects `handle` through `anchor` — the symmetric-handle convention
+   * every pen tool uses when you drag a smooth anchor: the incoming and
+   * outgoing tangents point in exactly opposite directions, so the curve
+   * stays smooth (no visible kink) through that anchor. */
+  function mirrorPoint(anchor: { x: number; y: number }, handle: { x: number; y: number }): { x: number; y: number } {
+    return { x: 2 * anchor.x - handle.x, y: 2 * anchor.y - handle.y };
+  }
+
+  /** Starts a pen-tool gesture on pointerdown; returns whether it did
    * (callers should skip their normal select/pan/move handling if so) —
-   * same shape as tryZoomToolClick above. */
-  function tryPenToolClick(e: React.PointerEvent): boolean {
+   * same shape as tryZoomToolClick above. The actual anchor/close commit
+   * happens on pointerup (see onPointerUp below), once it's known whether
+   * this was a click or a click-and-drag. */
+  function tryPenToolDown(e: React.PointerEvent): boolean {
     if (!penToolActive) return false;
     e.stopPropagation();
-    if (penDraftPoints.length >= 3) {
-      const svg = svgRef.current;
-      const first = penDraftPoints[0];
-      if (svg) {
-        const pt = svg.createSVGPoint();
-        pt.x = first.x;
-        pt.y = first.y;
-        const ctm = svg.getScreenCTM();
-        const firstClient = ctm ? pt.matrixTransform(ctm) : null;
-        if (firstClient && Math.hypot(e.clientX - firstClient.x, e.clientY - firstClient.y) <= PEN_CLOSE_THRESHOLD_PX) {
-          finishPenTool();
-          return true;
-        }
-      }
-    }
-    addPenPoint(clientToSvg(e.clientX, e.clientY));
+    const p = clientToSvg(e.clientX, e.clientY);
+    const first = penDraftAnchors[0];
+    const firstClient = penDraftAnchors.length >= 3 && first ? svgPointToClient(first) : null;
+    const closing = !!firstClient && Math.hypot(e.clientX - firstClient.x, e.clientY - firstClient.y) <= PEN_CLOSE_THRESHOLD_PX;
+    penGestureRef.current = { anchorPoint: closing ? first : p, closing, moved: false };
+    setPenDragPoint(null);
+    (e.target as Element).setPointerCapture(e.pointerId);
     return true;
   }
 
@@ -609,6 +659,33 @@ export function Canvas2D({ resetSignal }: Props) {
   }
 
   function onPointerUp(e: React.PointerEvent) {
+    const penGesture = penGestureRef.current;
+    if (penGesture) {
+      const drop = clientToSvg(e.clientX, e.clientY);
+      if (penGesture.closing) {
+        // A drag on the closing click curves the final segment back into
+        // the first anchor — handed to finishPenTool as that anchor's own
+        // handleIn, same as if it had always had that handle.
+        finishPenTool(penGesture.moved ? drop : undefined);
+      } else if (penGesture.moved) {
+        // A smooth anchor: symmetric handles, so the curve stays smooth
+        // (no visible kink) both into and out of this anchor.
+        addPenAnchor({
+          x: penGesture.anchorPoint.x,
+          y: penGesture.anchorPoint.y,
+          handleOut: drop,
+          handleIn: mirrorPoint(penGesture.anchorPoint, drop),
+        });
+      } else {
+        // A plain click: a straight "corner" anchor, no handles at all.
+        addPenAnchor({ x: penGesture.anchorPoint.x, y: penGesture.anchorPoint.y });
+      }
+      penGestureRef.current = null;
+      setPenDragPoint(null);
+      (e.target as Element).releasePointerCapture?.(e.pointerId);
+      return;
+    }
+
     const resize = resizeState.current;
     if (resize) {
       endGesture(resize.preGestureSnapshot, resize.moved);
@@ -666,7 +743,7 @@ export function Canvas2D({ resetSignal }: Props) {
     // The pen tool places a point wherever you click, existing shapes
     // included — the same "draw right through anything" behavior Figma's
     // own pen tool has, rather than selecting/moving whatever's underneath.
-    if (tryPenToolClick(e)) return;
+    if (tryPenToolDown(e)) return;
     // Space+drag pans even when the pointer happens to come down on a
     // shape — without this, the shape's own handler (which runs first and
     // stops the event before it ever reaches the canvas-level pan check)
@@ -769,7 +846,7 @@ export function Canvas2D({ resetSignal }: Props) {
             // it's not a selection action. Same for the pen tool: it draws
             // right through a locked shape rather than being blocked by it.
             if (tryZoomToolClick(e)) return;
-            if (tryPenToolClick(e)) return;
+            if (tryPenToolDown(e)) return;
             // A shape locked directly OR inherited from a locked ancestor
             // group is entirely inert to canvas clicks — matches Figma:
             // locking a group freezes everything inside it too, not just
@@ -798,7 +875,7 @@ export function Canvas2D({ resetSignal }: Props) {
         viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
         onPointerDown={(e) => {
           if (tryZoomToolClick(e)) return;
-          if (tryPenToolClick(e)) return;
+          if (tryPenToolDown(e)) return;
           if (e.target === svgRef.current || (e.target as Element).tagName === "rect") {
             if (spaceHeld) beginPan(e);
             else beginMarquee(e);
@@ -806,7 +883,16 @@ export function Canvas2D({ resetSignal }: Props) {
         }}
         onPointerMove={(e) => {
           if (penToolActive) {
-            setPenHoverPoint(clientToSvg(e.clientX, e.clientY));
+            const p = clientToSvg(e.clientX, e.clientY);
+            const gesture = penGestureRef.current;
+            if (gesture) {
+              const anchorClient = svgPointToClient(gesture.anchorPoint);
+              const clientDist = anchorClient ? Math.hypot(e.clientX - anchorClient.x, e.clientY - anchorClient.y) : 0;
+              if (clientDist > PEN_DRAG_THRESHOLD_PX) gesture.moved = true;
+              setPenDragPoint(p);
+            } else {
+              setPenHoverPoint(p);
+            }
             return;
           }
           onPointerMove(e);
@@ -950,40 +1036,75 @@ export function Canvas2D({ resetSignal }: Props) {
           />
         ))}
 
-        {penToolActive && penDraftPoints.length > 0 && (
-          <>
-            <polyline
-              className="pen-draft-line"
-              points={penDraftPoints.map((p) => `${p.x},${p.y}`).join(" ")}
-              pointerEvents="none"
-            />
-            {penHoverPoint && (
-              <line
-                className="pen-draft-rubber-band"
-                x1={penDraftPoints[penDraftPoints.length - 1].x}
-                y1={penDraftPoints[penDraftPoints.length - 1].y}
-                x2={penHoverPoint.x}
-                y2={penHoverPoint.y}
-                pointerEvents="none"
-              />
-            )}
-            {penDraftPoints.map((p, i) => {
-              const isFirst = i === 0;
-              const closable = isFirst && penDraftPoints.length >= 3;
-              const r = Math.max(0.9, vb.w * 0.005) * (isFirst ? 1.6 : 1);
-              return (
-                <circle
-                  key={i}
-                  className={"pen-draft-point" + (isFirst ? " first-point" : "") + (closable ? " closable" : "")}
-                  cx={p.x}
-                  cy={p.y}
-                  r={r}
-                  pointerEvents="none"
-                />
-              );
-            })}
-          </>
-        )}
+        {penToolActive && penDraftAnchors.length > 0 && (() => {
+          const gesture = penGestureRef.current;
+          const dragging = !!(gesture?.moved && penDragPoint);
+
+          // What the path would look like if the current gesture (or, with
+          // no gesture running, just the hover position) were committed
+          // right now — the same live preview every pen tool gives before
+          // you've actually clicked/released the next anchor.
+          let previewTarget: PenAnchor | null = null;
+          if (gesture) {
+            if (gesture.closing) {
+              previewTarget = dragging ? { ...penDraftAnchors[0], handleIn: penDragPoint! } : penDraftAnchors[0];
+            } else {
+              previewTarget = dragging
+                ? {
+                    x: gesture.anchorPoint.x,
+                    y: gesture.anchorPoint.y,
+                    handleOut: penDragPoint!,
+                    handleIn: mirrorPoint(gesture.anchorPoint, penDragPoint!),
+                  }
+                : { x: gesture.anchorPoint.x, y: gesture.anchorPoint.y };
+            }
+          } else if (penHoverPoint) {
+            previewTarget = { x: penHoverPoint.x, y: penHoverPoint.y };
+          }
+
+          let d = `M ${penDraftAnchors[0].x} ${penDraftAnchors[0].y} `;
+          for (let i = 1; i < penDraftAnchors.length; i++) d += penSegmentD(penDraftAnchors[i - 1], penDraftAnchors[i]);
+          const last = penDraftAnchors[penDraftAnchors.length - 1];
+          if (previewTarget) d += penSegmentD(last, previewTarget);
+
+          const handleR = Math.max(0.7, vb.w * 0.0035);
+          const mirroredHandle = dragging ? mirrorPoint(gesture!.anchorPoint, penDragPoint!) : null;
+
+          return (
+            <>
+              <path className="pen-draft-line" d={d} pointerEvents="none" />
+              {dragging && mirroredHandle && (
+                <>
+                  <line
+                    className="pen-draft-handle-line"
+                    x1={mirroredHandle.x}
+                    y1={mirroredHandle.y}
+                    x2={penDragPoint!.x}
+                    y2={penDragPoint!.y}
+                    pointerEvents="none"
+                  />
+                  <circle className="pen-draft-handle" cx={penDragPoint!.x} cy={penDragPoint!.y} r={handleR} pointerEvents="none" />
+                  <circle className="pen-draft-handle" cx={mirroredHandle.x} cy={mirroredHandle.y} r={handleR} pointerEvents="none" />
+                </>
+              )}
+              {penDraftAnchors.map((p, i) => {
+                const isFirst = i === 0;
+                const closable = isFirst && penDraftAnchors.length >= 3;
+                const r = Math.max(0.9, vb.w * 0.005) * (isFirst ? 1.6 : 1);
+                return (
+                  <circle
+                    key={i}
+                    className={"pen-draft-point" + (isFirst ? " first-point" : "") + (closable ? " closable" : "")}
+                    cx={p.x}
+                    cy={p.y}
+                    r={r}
+                    pointerEvents="none"
+                  />
+                );
+              })}
+            </>
+          );
+        })()}
       </svg>
       <div className="canvas-status-bar" ref={hintRef}>
         <button

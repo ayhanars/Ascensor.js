@@ -19,6 +19,24 @@ export interface ShapeRegion {
   holes: Contour[];
 }
 
+/**
+ * One anchor in an in-progress Pen tool path (see the store's
+ * `penDraftAnchors`), matching how Figma/Illustrator/Photoshop's own pen
+ * tool represents a mixed corner/smooth path: a plain click places a
+ * "corner" anchor (both handles undefined, straight lines on either side);
+ * a click-and-drag places a "smooth" anchor with a real tangent handle in
+ * each direction. `handleIn`/`handleOut` are absolute document-space
+ * control points for the incoming/outgoing bezier segment — undefined
+ * means that side of the anchor is a straight line, not a curve. The
+ * finished path is flattened into an ordinary `ShapeRegion` outline (see
+ * `flattenPenAnchors` in geometry/primitives.ts) once closed, so nothing
+ * past that point needs to know curves were ever involved.
+ */
+export interface PenAnchor extends Point2 {
+  handleIn?: Point2;
+  handleOut?: Point2;
+}
+
 export interface Transform2D {
   x: number; // mm, position of the layer origin on the document
   y: number; // mm

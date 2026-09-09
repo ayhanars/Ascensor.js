@@ -92,10 +92,10 @@ function App() {
       const store = useSceneStore.getState();
 
       // Pen tool's own shortcuts take over Enter/Escape/Backspace while a
-      // path is being drawn — matches Figma's own pen tool (Enter/double-
-      // click to finish, Escape to abandon, Backspace to undo the last
-      // point rather than the delete-selection meaning those keys have the
-      // rest of the time).
+      // path is being drawn — matches every pen tool's own convention
+      // (Enter/double-click to finish, Escape to abandon, Backspace to
+      // undo the last anchor rather than the delete-selection meaning
+      // those keys have the rest of the time).
       if (store.penToolActive) {
         if (e.key === "Escape") {
           e.preventDefault();
@@ -109,7 +109,7 @@ function App() {
         }
         if (e.key === "Backspace" || e.key === "Delete") {
           e.preventDefault();
-          store.undoLastPenPoint();
+          store.undoLastPenAnchor();
           return;
         }
       }

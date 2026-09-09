@@ -109,19 +109,6 @@ export const CircleToolIcon = ({ size = 16 }: IconProps) => (
   </svg>
 );
 
-export const LineToolIcon = ({ size = 16 }: IconProps) => (
-  <svg {...base(size)}>
-    <path d="M3 12 13 4" />
-  </svg>
-);
-
-export const ArrowToolIcon = ({ size = 16 }: IconProps) => (
-  <svg {...base(size)}>
-    <path d="M2.5 8h9.5" />
-    <path d="M8.5 4.5 13 8l-4.5 3.5" />
-  </svg>
-);
-
 export const PolygonToolIcon = ({ size = 16 }: IconProps) => (
   <svg {...base(size)}>
     <path d="M8 2 14 6.5 11.7 13.5H4.3L2 6.5Z" />
