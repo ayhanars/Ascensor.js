@@ -121,6 +121,8 @@ export function Canvas2D({ resetSignal }: Props) {
   const updatePenAnchorPosition = useSceneStore((s) => s.updatePenAnchorPosition);
   const updatePenAnchorHandle = useSceneStore((s) => s.updatePenAnchorHandle);
   const addImageLayer = useSceneStore((s) => s.addImageLayer);
+  const cutToolActive = useSceneStore((s) => s.cutToolActive);
+  const cutShapesByLine = useSceneStore((s) => s.cutShapesByLine);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const [vb, setVb] = useState<ViewBox>(() => fitView(document_.widthMM, document_.heightMM));
@@ -151,6 +153,14 @@ export function Canvas2D({ resetSignal }: Props) {
   // preview render. Separate from penHoverPoint, which only applies
   // between gestures (idle rubber-band to the next click).
   const [penDragPoint, setPenDragPoint] = useState<{ x: number; y: number } | null>(null);
+  // The Cut tool's in-progress knife line, in document (mm) space — set on
+  // pointerdown while cutToolActive, updated on every pointermove, and
+  // resolved into an actual cutShapesByLine call (or discarded, if it
+  // never really moved) on pointerup.
+  const cutGestureRef = useRef<{ start: { x: number; y: number }; moved: boolean } | null>(null);
+  const [cutLine, setCutLine] = useState<{ start: { x: number; y: number }; end: { x: number; y: number } } | null>(
+    null,
+  );
   // Dragging the LAST placed anchor's own dot (to reposition it) or one of
   // its handles (to reshape the curve on either side of it) — the "go back
   // and adjust the arc you just drew" gesture, distinct from penGestureRef
@@ -483,6 +493,20 @@ export function Canvas2D({ resetSignal }: Props) {
     return true;
   }
 
+  /** Starts a Cut-tool knife-line gesture on pointerdown — same
+   * "did I handle it" shape as tryZoomToolClick/tryPenToolDown. The
+   * actual cut is resolved on pointerup, once it's known the line
+   * actually moved (a plain click with no drag cuts nothing). */
+  function tryCutToolDown(e: React.PointerEvent): boolean {
+    if (!cutToolActive) return false;
+    e.stopPropagation();
+    const p = clientToSvg(e.clientX, e.clientY);
+    cutGestureRef.current = { start: p, moved: false };
+    setCutLine({ start: p, end: p });
+    (e.target as Element).setPointerCapture(e.pointerId);
+    return true;
+  }
+
   /** Starts dragging the last anchor's own dot (reposition) or one of its
    * handles (reshape). See penAdjustRef's comment for why only the last
    * anchor gets this. */
@@ -747,6 +771,18 @@ export function Canvas2D({ resetSignal }: Props) {
   }
 
   function onPointerUp(e: React.PointerEvent) {
+    if (cutGestureRef.current) {
+      const { start, moved } = cutGestureRef.current;
+      if (moved) {
+        const end = clientToSvg(e.clientX, e.clientY);
+        cutShapesByLine(start, end);
+      }
+      cutGestureRef.current = null;
+      setCutLine(null);
+      (e.target as Element).releasePointerCapture?.(e.pointerId);
+      return;
+    }
+
     if (penAdjustRef.current) {
       penAdjustRef.current = null;
       (e.target as Element).releasePointerCapture?.(e.pointerId);
@@ -838,6 +874,10 @@ export function Canvas2D({ resetSignal }: Props) {
     // included — the same "draw right through anything" behavior Figma's
     // own pen tool has, rather than selecting/moving whatever's underneath.
     if (tryPenToolDown(e)) return;
+    // Same idea for Cut: the knife line starts wherever you press down,
+    // shape or empty canvas alike — cutShapesByLine figures out on its own
+    // which shapes the finished line actually crosses.
+    if (tryCutToolDown(e)) return;
     // Space+drag pans even when the pointer happens to come down on a
     // shape — without this, the shape's own handler (which runs first and
     // stops the event before it ever reaches the canvas-level pan check)
@@ -928,7 +968,12 @@ export function Canvas2D({ resetSignal }: Props) {
             height={layer.height}
             opacity={layer.opacity}
             preserveAspectRatio="none"
-            style={{ cursor: isEffectivelyLocked(layers, id) ? "default" : "move" }}
+            style={{
+              cursor:
+                penToolActive || cutToolActive ? "crosshair"
+                : isEffectivelyLocked(layers, id) ? "default"
+                : "move",
+            }}
             onPointerDown={(e) => {
               if (tryZoomToolClick(e)) return;
               if (tryPenToolDown(e)) return;
@@ -954,7 +999,7 @@ export function Canvas2D({ resetSignal }: Props) {
           style={{
             cursor: zoomToolArmed
               ? zoomToolOut ? "zoom-out" : "zoom-in"
-              : penToolActive ? "crosshair"
+              : penToolActive || cutToolActive ? "crosshair"
               : isEffectivelyLocked(layers, id) ? "default" : "move",
           }}
           onPointerDown={(e) => {
@@ -986,7 +1031,8 @@ export function Canvas2D({ resetSignal }: Props) {
           (isPanning ? " panning" : "") +
           (spaceHeld ? " space-pan" : "") +
           (zoomToolArmed ? (zoomToolOut ? " zoom-out-tool" : " zoom-in-tool") : "") +
-          (penToolActive ? " pen-tool" : "")
+          (penToolActive ? " pen-tool" : "") +
+          (cutToolActive ? " cut-tool" : "")
         }
         viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
         onDragOver={(e) => {
@@ -1001,12 +1047,22 @@ export function Canvas2D({ resetSignal }: Props) {
         onPointerDown={(e) => {
           if (tryZoomToolClick(e)) return;
           if (tryPenToolDown(e)) return;
+          if (tryCutToolDown(e)) return;
           if (e.target === svgRef.current || (e.target as Element).tagName === "rect") {
             if (spaceHeld) beginPan(e);
             else beginMarquee(e);
           }
         }}
         onPointerMove={(e) => {
+          if (cutGestureRef.current) {
+            const p = clientToSvg(e.clientX, e.clientY);
+            const start = cutGestureRef.current.start;
+            const startClient = svgPointToClient(start);
+            const distClient = startClient ? Math.hypot(e.clientX - startClient.x, e.clientY - startClient.y) : 0;
+            if (distClient > PEN_DRAG_THRESHOLD_PX) cutGestureRef.current.moved = true;
+            setCutLine({ start, end: p });
+            return;
+          }
           if (penToolActive) {
             const p = clientToSvg(e.clientX, e.clientY);
             const adjust = penAdjustRef.current;
@@ -1090,6 +1146,16 @@ export function Canvas2D({ resetSignal }: Props) {
             width={marqueeRect.w}
             height={marqueeRect.h}
             pointerEvents="none"
+          />
+        )}
+
+        {cutLine && (
+          <line
+            className="cut-line"
+            x1={cutLine.start.x}
+            y1={cutLine.start.y}
+            x2={cutLine.end.x}
+            y2={cutLine.end.y}
           />
         )}
 

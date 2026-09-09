@@ -44,6 +44,7 @@ import {
   intersectionRegions,
   regionsArea,
   regionsIntersectionArea,
+  splitRegionsByLine,
   unionRegions,
   xorRegions,
 } from "../geometry/booleanOps";
@@ -269,6 +270,11 @@ interface SceneState {
    * only the finished shape this eventually produces is a real, trackable
    * edit. See PenAnchor for what a corner vs. smooth (curved) anchor is. */
   penDraftAnchors: PenAnchor[];
+  /** Whether the Cut tool is armed — same view-state convention as
+   * penToolActive. While active, a click-drag on the canvas draws a
+   * straight knife line (see cutShapesByLine) instead of selecting or
+   * marqueeing. */
+  cutToolActive: boolean;
 
   addPlate: () => void;
   renamePlate: (id: string, name: string) => void;
@@ -391,6 +397,17 @@ interface SceneState {
    */
   finishPenTool: (closingHandleIn?: Point2) => void;
   cancelPenTool: () => void;
+
+  /** Arms/disarms the Cut (knife) tool. */
+  setCutToolActive: (active: boolean) => void;
+  /** Draws a straight knife line from p1 to p2 (document mm space) and
+   * splits every visible, unlocked, non-hole top-level shape on the
+   * active plate that the line actually crosses into two separate shape
+   * layers along that line — Figma's knife/Cut tool, scoped to this app's
+   * filled-solid shape model rather than open bezier paths. A shape whose
+   * bounds the line merely passes near, without truly crossing its
+   * outline, is left untouched (see splitRegionsByLine). */
+  cutShapesByLine: (p1: Point2, p2: Point2) => void;
 }
 
 /**
@@ -439,6 +456,7 @@ export const useSceneStore = create<SceneState>()(
   wireframe: false,
   penToolActive: false,
   penDraftAnchors: [],
+  cutToolActive: false,
 
   addPlate: () =>
     set((state) => {
@@ -2174,6 +2192,60 @@ export const useSceneStore = create<SceneState>()(
     }),
 
   cancelPenTool: () => set(() => ({ penToolActive: false, penDraftAnchors: [] })),
+
+  setCutToolActive: (active) => set({ cutToolActive: active }),
+
+  cutShapesByLine: (p1, p2) =>
+    set((state) => {
+      const lineBounds: Bounds = {
+        minX: Math.min(p1.x, p2.x),
+        minY: Math.min(p1.y, p2.y),
+        maxX: Math.max(p1.x, p2.x),
+        maxY: Math.max(p1.y, p2.y),
+      };
+      const candidateIds = getRootIdsForPlate(state, state.activePlateId);
+      const layers = { ...state.layers };
+      const rootIds = [...state.rootIds];
+      const plateOf = { ...state.plateOf };
+      const selection: string[] = [];
+      let cutCount = 0;
+
+      for (const id of candidateIds) {
+        const layer = state.layers[id];
+        if (!layer || layer.type !== "shape" || layer.isHole || !layer.visible || layer.locked) continue;
+        const worldBounds = getLayerWorldBounds(state.layers, id);
+        if (!worldBounds || !boundsOverlap(worldBounds, lineBounds)) continue;
+
+        // The knife line is drawn in document space; each shape's own
+        // regions live in its LOCAL (untransformed) space, so the line
+        // has to travel through the same inverse the shape's own
+        // rendering/hit-testing already uses before the split math (which
+        // only understands a shape's own local coordinates) can touch it.
+        const worldT = getWorldTransform(state.layers, id);
+        const localP1 = invertTransform2D(p1, worldT);
+        const localP2 = invertTransform2D(p2, worldT);
+        const split = splitRegionsByLine(layer.regions, localP1, localP2);
+        if (!split) continue;
+
+        const [regionsA, regionsB] = split;
+        const idA = nanoid(8);
+        const idB = nanoid(8);
+        const base = { ...layer, polygonSides: undefined, starPoints: undefined, starInnerRatio: undefined };
+        layers[idA] = { ...base, id: idA, name: `${layer.name} 1`, regions: regionsA };
+        layers[idB] = { ...base, id: idB, name: `${layer.name} 2`, regions: regionsB };
+        delete layers[id];
+        const idx = rootIds.indexOf(id);
+        rootIds.splice(idx, 1, idA, idB);
+        delete plateOf[id];
+        plateOf[idA] = state.activePlateId;
+        plateOf[idB] = state.activePlateId;
+        selection.push(idA, idB);
+        cutCount++;
+      }
+
+      if (cutCount === 0) return {};
+      return { layers, rootIds, plateOf, selection };
+    }),
     }),
     {
       partialize: partializeScene,

@@ -129,6 +129,14 @@ export const PenToolIcon = ({ size = 16 }: IconProps) => (
   </svg>
 );
 
+export const CutToolIcon = ({ size = 16 }: IconProps) => (
+  <svg {...base(size)}>
+    <circle cx="4.2" cy="4.2" r="1.9" />
+    <circle cx="4.2" cy="11.8" r="1.9" />
+    <path d="M5.6 5.6 13.5 12M5.6 10.4 13.5 4" />
+  </svg>
+);
+
 export const StarToolIcon = ({ size = 16 }: IconProps) => (
   <svg {...base(size)}>
     <path d="M8 1.8 9.7 6h4.5l-3.6 2.7 1.4 4.4L8 10.4l-3.9 2.7 1.4-4.4L1.8 6h4.5Z" strokeLinejoin="round" />

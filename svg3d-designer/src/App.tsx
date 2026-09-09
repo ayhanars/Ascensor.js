@@ -105,6 +105,12 @@ function App() {
       // a scene redo, since there's no pen-anchor redo to give them
       // instead — a scene redo mid-draft would be just as surprising as
       // the undo case above.
+      if (store.cutToolActive && e.key === "Escape") {
+        e.preventDefault();
+        store.setCutToolActive(false);
+        return;
+      }
+
       if (store.penToolActive) {
         if (e.key === "Escape") {
           e.preventDefault();

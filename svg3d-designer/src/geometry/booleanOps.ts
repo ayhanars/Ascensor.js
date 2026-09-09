@@ -1,6 +1,6 @@
 import * as polygonClipping from "polygon-clipping";
 import type { MultiPolygon as PCMultiPolygon, Ring as PCRing } from "polygon-clipping";
-import type { ShapeRegion } from "../types";
+import type { Point2, ShapeRegion } from "../types";
 
 export function regionsToMultiPolygon(regions: ShapeRegion[]): PCMultiPolygon {
   return regions.map((region) => [
@@ -100,4 +100,55 @@ export function unionRegions(regions: ShapeRegion[]): ShapeRegion[] {
   if (regions.length <= 1) return regions;
   const result = polygonClipping.union(regionsToMultiPolygon(regions));
   return multiPolygonToRegions(result);
+}
+
+/**
+ * Splits `regions` into the two pieces lying on either side of the
+ * infinite line through `p1`/`p2` — the Cut tool's actual geometry,
+ * reusing the same boolean-intersection machinery as the Boolean ops
+ * panel rather than a bespoke polygon-splitting algorithm: each side is
+ * just "this shape intersected with a huge half-plane rectangle." Returns
+ * null if the line doesn't really pass through the shape (one side comes
+ * back with ~zero area), so a near-miss cut leaves the shape alone
+ * instead of "cutting" it into one real piece and one sliver/nothing.
+ */
+export function splitRegionsByLine(
+  regions: ShapeRegion[],
+  p1: Point2,
+  p2: Point2,
+): [ShapeRegion[], ShapeRegion[]] | null {
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-9) return null;
+  const ux = dx / len;
+  const uy = dy / len;
+  const nx = -uy;
+  const ny = ux;
+
+  // Large enough to fully cover any shape's local bounds regardless of
+  // its own scale — only which side of the line each half-plane
+  // rectangle sits on matters, not its exact size.
+  const BIG = 1e6;
+  const farA = { x: p1.x - ux * BIG, y: p1.y - uy * BIG };
+  const farB = { x: p2.x + ux * BIG, y: p2.y + uy * BIG };
+
+  const halfPlane = (sign: 1 | -1): ShapeRegion => ({
+    outer: {
+      points: [
+        farA,
+        farB,
+        { x: farB.x + nx * BIG * sign, y: farB.y + ny * BIG * sign },
+        { x: farA.x + nx * BIG * sign, y: farA.y + ny * BIG * sign },
+      ],
+    },
+    holes: [],
+  });
+
+  const sideA = intersectionRegions([regions, [halfPlane(1)]]);
+  const sideB = intersectionRegions([regions, [halfPlane(-1)]]);
+
+  const AREA_EPSILON = 1e-6;
+  if (regionsArea(sideA) < AREA_EPSILON || regionsArea(sideB) < AREA_EPSILON) return null;
+  return [sideA, sideB];
 }
