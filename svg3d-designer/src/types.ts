@@ -73,6 +73,19 @@ export interface ShapeLayer extends LayerCommon {
    * appears as its own geometry in the STL export.
    */
   isHole: boolean;
+  /** Side count for a shape created with the Polygon tool (a regular
+   * N-gon) — undefined for every other shape, including one made with a
+   * different tool. Only present so the Inspector's Sides field can
+   * regenerate the outline in place; the points themselves are the real
+   * geometry regardless of whether this is set. */
+  polygonSides?: number;
+  /** Point count for a shape created with the Star tool — same
+   * undefined-elsewhere, editable-back-into-existence convention as
+   * polygonSides. */
+  starPoints?: number;
+  /** Inner-vertex radius as a fraction of the outer radius, for a Star
+   * tool shape. Only meaningful alongside starPoints. */
+  starInnerRatio?: number;
 }
 
 export type Layer = GroupLayer | ShapeLayer;

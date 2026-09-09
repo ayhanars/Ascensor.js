@@ -8,6 +8,7 @@ import type {
   GroupLayer,
   Layer,
   Plate,
+  Point2,
   PrintBed,
   ShapeLayer,
   ShapeRegion,
@@ -23,6 +24,7 @@ import {
   boundsOverlap,
   type Bounds,
   getLayerWorldBounds,
+  getLocalShapeBounds,
   getLocalShapeZRange,
   getMultiLayerWorldBounds,
   getShapeWorldZRange,
@@ -34,6 +36,7 @@ import {
   invertTransform2D,
 } from "./sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
+import { arrowPoints, normalizeToBounds, regularPolygonPoints, starPolygonPoints } from "../geometry/primitives";
 import {
   differenceRegions,
   intersectionRegions,
@@ -254,6 +257,15 @@ interface SceneState {
   viewMode: ViewMode2D3D;
   showGrid: boolean;
   wireframe: boolean;
+  /** Whether the Pen tool is currently armed — a view/interaction concern
+   * like `selection`, not undo-tracked. Canvas2D reads this to switch its
+   * own click handling over to placing points instead of selecting/
+   * marqueeing, and to render the in-progress outline. */
+  penToolActive: boolean;
+  /** Points placed so far in the current in-progress pen path, in document
+   * (mm) space — cleared on finish/cancel. Also not undo-tracked; only the
+   * finished shape this eventually produces is a real, trackable edit. */
+  penDraftPoints: Point2[];
 
   addPlate: () => void;
   renamePlate: (id: string, name: string) => void;
@@ -323,7 +335,25 @@ interface SceneState {
   setUnits: (units: Units) => void;
   fitDocumentToSelection: () => void;
   matchDocumentToBed: () => void;
-  createShapeLayer: (kind: "rect" | "circle" | "hole") => void;
+  createShapeLayer: (kind: "rect" | "circle" | "hole" | "line" | "arrow" | "polygon" | "star") => void;
+  setPolygonSides: (id: string, sides: number) => void;
+  setStarParams: (id: string, points: number, innerRatio: number) => void;
+
+  /** Arms the Pen tool — click points on the canvas to build a custom
+   * outline, the same click-to-place/click-near-start-to-close/Enter-to-
+   * finish/Escape-to-cancel flow as Figma's own pen tool, ending in one
+   * ordinary closed-polygon ShapeLayer (see finishPenTool). */
+  beginPenTool: () => void;
+  addPenPoint: (p: Point2) => void;
+  /** Removes the most recently placed point (Backspace while drawing) —
+   * cancels the whole tool if that was the only point left. */
+  undoLastPenPoint: () => void;
+  /** Closes the current draft into a real shape layer and returns to the
+   * Select tool. Needs at least 3 points to form an outline — with fewer,
+   * behaves like cancelPenTool instead (there's no sensible shape to make
+   * out of one or two points, so there's nothing to leave half-drawn). */
+  finishPenTool: () => void;
+  cancelPenTool: () => void;
 }
 
 /**
@@ -370,6 +400,8 @@ export const useSceneStore = create<SceneState>()(
   viewMode: "2d",
   showGrid: true,
   wireframe: false,
+  penToolActive: false,
+  penDraftPoints: [],
 
   addPlate: () =>
     set((state) => {
@@ -733,7 +765,7 @@ export const useSceneStore = create<SceneState>()(
       let layers = state.layers;
       for (let pass = 0; pass < MAX_STACK_PASSES; pass++) {
         const nextLayers = { ...layers };
-        const placed: { parentId: string | null; regions: ReturnType<typeof getWorldRegions>; topZ: number }[] = [];
+        const placed: { regions: ReturnType<typeof getWorldRegions>; topZ: number }[] = [];
         let anyChanged = false;
 
         for (const { id, regions, area } of withRegions) {
@@ -762,23 +794,21 @@ export const useSceneStore = create<SceneState>()(
           // hanging over empty space) is left for the persistent
           // floating-shape banner to catch and offer a targeted fix for.
           //
-          // A shape nested in a group only ever rests on a SIBLING under
-          // that same immediate parent — grouping shapes together is the
-          // user deliberately assembling them relative to EACH OTHER, so
-          // members of one group settle against their own group siblings
-          // the same way top-level shapes settle against each other (this
-          // is what makes Auto-Stack actually do something for, say, a
-          // face group's eyes/nose/mustache), but never against some
-          // unrelated top-level shape or another group's members, which
-          // would blow apart a deliberately assembled sub-structure. A
-          // TOP-LEVEL shape has no such restriction — it can still land on
-          // top of a group's tallest member (or any other top-level
-          // shape), which is the one-directional half of this that keeps
-          // "rest a decorative piece on top of an assembled group" working.
+          // Grouping is an organizational device, not a physics boundary —
+          // a shape rests on whichever already-placed shape it genuinely
+          // overlaps most, whether that support is a sibling under the
+          // same group, a completely different group's member, or a
+          // top-level shape. This used to be restricted to same-group-only
+          // support (so a group's members would settle against each other
+          // but never against anything outside the group), which broke the
+          // ordinary case of a few decorative pieces grouped together for
+          // organization while still physically sitting on top of an
+          // ungrouped base shape — Auto-Stack silently sank them back to
+          // the group's own local floor instead of resting them on what
+          // they actually overlap, every time it ran.
           const MEANINGFUL_OVERLAP_FRACTION = 0.05;
           let baseZ = 0;
           for (const p of placed) {
-            if (layer.parentId !== null && p.parentId !== layer.parentId) continue;
             if (p.topZ <= baseZ) continue; // can't raise baseZ any further
             if (regionsIntersectionArea(regions, p.regions) > area * MEANINGFUL_OVERLAP_FRACTION) baseZ = p.topZ;
           }
@@ -802,7 +832,7 @@ export const useSceneStore = create<SceneState>()(
             const topZ = parentWorldZ + localZ + localZRange.max;
             // A hole cut into it removes it from what's usable as landing
             // surface for anything else — see getWorldSupportRegions.
-            placed.push({ parentId: layer.parentId, regions: getWorldSupportRegions(layers, id, topZ), topZ });
+            placed.push({ regions: getWorldSupportRegions(layers, id, topZ), topZ });
           }
         }
 
@@ -1444,9 +1474,17 @@ export const useSceneStore = create<SceneState>()(
         parentId: topLayer.parentId,
         regions,
         extrusionDepth: frontMost.extrusionDepth,
+        // Corner rounding already bakes into the outline itself (see
+        // roundRegions above, applied to each source before the union), so
+        // there's no separate rounding left for the merged shape's own
+        // cornerRadius to apply. Bevel is a distinct top/bottom chamfer the
+        // extrude geometry generates per-region generically — it has no
+        // problem with the multi-region, holed, or concave outlines a union
+        // routinely produces, so there's no reason to throw away whatever
+        // edge treatment the front-most source had, unlike corner rounding.
         cornerRadius: 0,
-        bevelBottom: 0,
-        bevelTop: 0,
+        bevelBottom: frontMost.bevelBottom,
+        bevelTop: frontMost.bevelTop,
         isHole: false,
       };
 
@@ -1591,9 +1629,15 @@ export const useSceneStore = create<SceneState>()(
         parentId: topLayer.parentId,
         regions,
         extrusionDepth: frontMost.extrusionDepth,
+        // See the identical comment in mergeLayers above: corner rounding
+        // is already baked into each operand's outline before the boolean
+        // op runs, but bevel is a distinct top/bottom chamfer the extrude
+        // geometry generates per-region regardless of how complex the
+        // resulting outline is, so there's no reason to discard whatever
+        // edge treatment the front-most operand had.
         cornerRadius: 0,
-        bevelBottom: 0,
-        bevelTop: 0,
+        bevelBottom: frontMost.bevelBottom,
+        bevelTop: frontMost.bevelTop,
         isHole: false,
       };
 
@@ -1833,6 +1877,9 @@ export const useSceneStore = create<SceneState>()(
       let w: number;
       let h: number;
       let regions: ShapeRegion[];
+      const DEFAULT_POLYGON_SIDES = 6;
+      const DEFAULT_STAR_POINTS = 5;
+      const DEFAULT_STAR_INNER_RATIO = 0.45;
 
       if (kind === "rect") {
         w = 30;
@@ -1847,6 +1894,42 @@ export const useSceneStore = create<SceneState>()(
                 { x: 0, y: h },
               ],
             },
+            holes: [],
+          },
+        ];
+      } else if (kind === "line") {
+        // A straight line has no fillable area of its own — give it a
+        // real, thin rectangular strip so it's an ordinary extrudable
+        // shape, not a special case anywhere else in the pipeline.
+        w = 40;
+        h = 3;
+        regions = [
+          {
+            outer: {
+              points: [
+                { x: 0, y: 0 },
+                { x: w, y: 0 },
+                { x: w, y: h },
+                { x: 0, y: h },
+              ],
+            },
+            holes: [],
+          },
+        ];
+      } else if (kind === "arrow") {
+        w = 40;
+        h = 16;
+        regions = [{ outer: { points: normalizeToBounds(arrowPoints(), w, h) }, holes: [] }];
+      } else if (kind === "polygon") {
+        w = 20;
+        h = 20;
+        regions = [{ outer: { points: normalizeToBounds(regularPolygonPoints(DEFAULT_POLYGON_SIDES), w, h) }, holes: [] }];
+      } else if (kind === "star") {
+        w = 20;
+        h = 20;
+        regions = [
+          {
+            outer: { points: normalizeToBounds(starPolygonPoints(DEFAULT_STAR_POINTS, DEFAULT_STAR_INNER_RATIO), w, h) },
             holes: [],
           },
         ];
@@ -1866,10 +1949,19 @@ export const useSceneStore = create<SceneState>()(
         regions = [{ outer: { points }, holes: [] }];
       }
 
+      const name =
+        kind === "rect" ? "Rectangle"
+        : kind === "hole" ? "Hole"
+        : kind === "circle" ? "Circle"
+        : kind === "line" ? "Line"
+        : kind === "arrow" ? "Arrow"
+        : kind === "polygon" ? "Polygon"
+        : "Star";
+
       const layer: ShapeLayer = {
         id,
         type: "shape",
-        name: kind === "rect" ? "Rectangle" : kind === "hole" ? "Hole" : "Circle",
+        name,
         visible: true,
         locked: false,
         color: "#4f46e5",
@@ -1885,6 +1977,8 @@ export const useSceneStore = create<SceneState>()(
         bevelBottom: 0,
         bevelTop: 0,
         isHole: kind === "hole",
+        ...(kind === "polygon" ? { polygonSides: DEFAULT_POLYGON_SIDES } : {}),
+        ...(kind === "star" ? { starPoints: DEFAULT_STAR_POINTS, starInnerRatio: DEFAULT_STAR_INNER_RATIO } : {}),
       };
 
       return {
@@ -1894,6 +1988,100 @@ export const useSceneStore = create<SceneState>()(
         selection: [id],
       };
     }),
+
+  setPolygonSides: (id, sides) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape") return {};
+      const clamped = Math.max(3, Math.min(24, Math.round(sides)));
+      const bounds = getLocalShapeBounds(layer);
+      const w = bounds ? bounds.maxX - bounds.minX : 20;
+      const h = bounds ? bounds.maxY - bounds.minY : 20;
+      const regions: ShapeRegion[] = [{ outer: { points: normalizeToBounds(regularPolygonPoints(clamped), w, h) }, holes: [] }];
+      return {
+        layers: { ...state.layers, [id]: { ...layer, regions, polygonSides: clamped } },
+      };
+    }),
+
+  setStarParams: (id, points, innerRatio) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape") return {};
+      const clampedPoints = Math.max(3, Math.min(24, Math.round(points)));
+      const clampedRatio = Math.max(0.05, Math.min(0.95, innerRatio));
+      const bounds = getLocalShapeBounds(layer);
+      const w = bounds ? bounds.maxX - bounds.minX : 20;
+      const h = bounds ? bounds.maxY - bounds.minY : 20;
+      const regions: ShapeRegion[] = [
+        { outer: { points: normalizeToBounds(starPolygonPoints(clampedPoints, clampedRatio), w, h) }, holes: [] },
+      ];
+      return {
+        layers: {
+          ...state.layers,
+          [id]: { ...layer, regions, starPoints: clampedPoints, starInnerRatio: clampedRatio },
+        },
+      };
+    }),
+
+  beginPenTool: () => set(() => ({ penToolActive: true, penDraftPoints: [], selection: [] })),
+
+  addPenPoint: (p) =>
+    set((state) => (state.penToolActive ? { penDraftPoints: [...state.penDraftPoints, p] } : {})),
+
+  undoLastPenPoint: () =>
+    set((state) => {
+      if (!state.penToolActive) return {};
+      if (state.penDraftPoints.length === 0) return { penToolActive: false };
+      return { penDraftPoints: state.penDraftPoints.slice(0, -1) };
+    }),
+
+  finishPenTool: () =>
+    set((state) => {
+      if (!state.penToolActive) return {};
+      if (state.penDraftPoints.length < 3) return { penToolActive: false, penDraftPoints: [] };
+
+      // Re-anchor to the drawn points' own bounding-box corner, same as
+      // every other shape's local-origin convention (see mergeLayers'
+      // identical re-anchoring, and its comment on why transform.x/y has
+      // to actually equal the shape's real corner for X/Y edits, align,
+      // and drag to keep working correctly afterward).
+      let minX = Infinity;
+      let minY = Infinity;
+      for (const p of state.penDraftPoints) {
+        minX = Math.min(minX, p.x);
+        minY = Math.min(minY, p.y);
+      }
+      const points = state.penDraftPoints.map((p) => ({ x: p.x - minX, y: p.y - minY }));
+
+      const id = nanoid(8);
+      const layer: ShapeLayer = {
+        id,
+        type: "shape",
+        name: "Pen shape",
+        visible: true,
+        locked: false,
+        color: "#4f46e5",
+        transform: { ...IDENTITY_TRANSFORM, x: minX, y: minY },
+        parentId: null,
+        regions: [{ outer: { points }, holes: [] }],
+        extrusionDepth: 1.2,
+        cornerRadius: 0,
+        bevelBottom: 0,
+        bevelTop: 0,
+        isHole: false,
+      };
+
+      return {
+        layers: { ...state.layers, [id]: layer },
+        rootIds: [...state.rootIds, id],
+        plateOf: { ...state.plateOf, [id]: state.activePlateId },
+        selection: [id],
+        penToolActive: false,
+        penDraftPoints: [],
+      };
+    }),
+
+  cancelPenTool: () => set(() => ({ penToolActive: false, penDraftPoints: [] })),
     }),
     {
       partialize: partializeScene,

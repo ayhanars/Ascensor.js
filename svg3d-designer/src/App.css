@@ -605,6 +605,31 @@
 .canvas2d.space-pan.panning { cursor: grabbing; }
 .canvas2d.zoom-in-tool { cursor: zoom-in; }
 .canvas2d.zoom-out-tool { cursor: zoom-out; }
+.canvas2d.pen-tool { cursor: crosshair; }
+
+.pen-draft-point {
+  fill: var(--bg-canvas);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.pen-draft-point.first-point.closable {
+  fill: var(--accent);
+}
+.pen-draft-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.pen-draft-rubber-band {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.7;
+}
 
 .selection-box {
   fill: none;

@@ -109,6 +109,38 @@ export const CircleToolIcon = ({ size = 16 }: IconProps) => (
   </svg>
 );
 
+export const LineToolIcon = ({ size = 16 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M3 12 13 4" />
+  </svg>
+);
+
+export const ArrowToolIcon = ({ size = 16 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M2.5 8h9.5" />
+    <path d="M8.5 4.5 13 8l-4.5 3.5" />
+  </svg>
+);
+
+export const PolygonToolIcon = ({ size = 16 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M8 2 14 6.5 11.7 13.5H4.3L2 6.5Z" />
+  </svg>
+);
+
+export const PenToolIcon = ({ size = 16 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M4 12 11.5 4.5a1.4 1.4 0 0 1 2 2L6 14l-3 1 1-3Z" />
+    <circle cx="4" cy="12" r="1" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+export const StarToolIcon = ({ size = 16 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M8 1.8 9.7 6h4.5l-3.6 2.7 1.4 4.4L8 10.4l-3.9 2.7 1.4-4.4L1.8 6h4.5Z" strokeLinejoin="round" />
+  </svg>
+);
+
 export const MoonIcon = ({ size = 14 }: IconProps) => (
   <svg {...base(size)}>
     <path d="M13.5 9.8A5.8 5.8 0 0 1 6.2 2.5a5.8 5.8 0 1 0 7.3 7.3Z" />
