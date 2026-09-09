@@ -1,4 +1,4 @@
-import type { PenAnchor, Point2 } from "../types";
+import type { PenAnchor, PenAnchorType, Point2 } from "../types";
 
 /** Regular N-gon, point-up, in an arbitrary local unit circle of radius 1
  * centered at the origin. Normalize with `normalizeToBounds` before use —
@@ -115,4 +115,126 @@ export function flattenPenAnchors(anchors: PenAnchor[]): Point2[] {
   // convention every other shape's points already follow.
   pts.pop();
   return pts;
+}
+
+/**
+ * Applies a handle drag to one side of an anchor, mirroring onto the other
+ * side according to the anchor's type — the single place this math lives so
+ * both the in-progress draft (updatePenAnchorHandle) and a finished path's
+ * Edit Path mode (updatePenShapeAnchorHandle) behave identically:
+ *  - `independent` (Alt/Option held): the dragged handle moves completely on
+ *    its own and the anchor is demoted to "corner" (the classic Illustrator/
+ *    Figma "break the handles apart" gesture).
+ *  - type "corner": handles are already independent, so just move the one
+ *    being dragged — no mirroring.
+ *  - type "smooth": the other handle stays collinear (opposite angle through
+ *    the anchor) but keeps ITS OWN existing length.
+ *  - type "symmetric": the other handle stays collinear AND matches the
+ *    dragged handle's length exactly.
+ */
+export function applyPenHandleDrag(
+  anchor: PenAnchor,
+  which: "handleIn" | "handleOut",
+  point: Point2,
+  independent: boolean,
+): PenAnchor {
+  const other = which === "handleOut" ? "handleIn" : "handleOut";
+  if (independent) {
+    return { ...anchor, type: "corner", [which]: point };
+  }
+  if (anchor.type === "corner") {
+    return { ...anchor, [which]: point };
+  }
+  const dx = point.x - anchor.x;
+  const dy = point.y - anchor.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  let otherLen = len;
+  if (anchor.type === "smooth") {
+    const existing = anchor[other];
+    otherLen = existing ? Math.hypot(existing.x - anchor.x, existing.y - anchor.y) : len;
+  }
+  const mirrored = { x: anchor.x - ux * otherLen, y: anchor.y - uy * otherLen };
+  return { ...anchor, [which]: point, [other]: mirrored };
+}
+
+/**
+ * Converts anchor `index` of `anchors` to `type`, deriving new handle
+ * positions when switching TO a curved type ("smooth"/"symmetric") from an
+ * anchor that doesn't have both handles collinear yet:
+ *  - Switching to "corner" never moves anything — corner just means
+ *    "handles are allowed to disagree," not "handles are removed," so
+ *    whatever handleIn/handleOut already exist (including neither) are
+ *    left exactly as they are.
+ *  - Switching to "smooth"/"symmetric" with both handles already present
+ *    keeps their existing lengths (smooth) or averages them (symmetric),
+ *    and re-aims them along the bisector direction so they end up
+ *    collinear through the anchor.
+ *  - With only one handle (or neither), the tangent direction is taken
+ *    from whichever handle exists, or else from the line between this
+ *    anchor's neighbors — the same "curve should roughly follow the path"
+ *    default a freshly click-dragged anchor gets — at a modest default
+ *    length (a third of the shorter adjacent segment) so the new handles
+ *    are visible and adjustable rather than zero-length.
+ */
+export function applySetAnchorType(anchors: PenAnchor[], index: number, type: PenAnchorType): PenAnchor[] {
+  const anchor = anchors[index];
+  if (!anchor || anchor.type === type) {
+    if (!anchor) return anchors;
+    const next = [...anchors];
+    next[index] = { ...anchor, type };
+    return next;
+  }
+  if (type === "corner") {
+    const next = [...anchors];
+    next[index] = { ...anchor, type };
+    return next;
+  }
+
+  const prev = anchors[(index - 1 + anchors.length) % anchors.length];
+  const nextAnchor = anchors[(index + 1) % anchors.length];
+
+  let ux: number;
+  let uy: number;
+  let lenIn: number;
+  let lenOut: number;
+
+  if (anchor.handleOut || anchor.handleIn) {
+    const outVec = anchor.handleOut
+      ? { x: anchor.handleOut.x - anchor.x, y: anchor.handleOut.y - anchor.y }
+      : anchor.handleIn
+        ? { x: anchor.x - anchor.handleIn.x, y: anchor.y - anchor.handleIn.y }
+        : { x: 1, y: 0 };
+    const outLen = Math.hypot(outVec.x, outVec.y) || 1;
+    ux = outVec.x / outLen;
+    uy = outVec.y / outLen;
+    lenOut = anchor.handleOut ? Math.hypot(anchor.handleOut.x - anchor.x, anchor.handleOut.y - anchor.y) : outLen;
+    lenIn = anchor.handleIn ? Math.hypot(anchor.handleIn.x - anchor.x, anchor.handleIn.y - anchor.y) : outLen;
+  } else {
+    const dx = nextAnchor.x - prev.x;
+    const dy = nextAnchor.y - prev.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    ux = dx / dist;
+    uy = dy / dist;
+    const segOut = Math.hypot(nextAnchor.x - anchor.x, nextAnchor.y - anchor.y);
+    const segIn = Math.hypot(anchor.x - prev.x, anchor.y - prev.y);
+    lenOut = Math.min(segOut, segIn) / 3 || 1;
+    lenIn = lenOut;
+  }
+
+  if (type === "symmetric") {
+    const avgLen = (lenIn + lenOut) / 2;
+    lenIn = avgLen;
+    lenOut = avgLen;
+  }
+
+  const next = [...anchors];
+  next[index] = {
+    ...anchor,
+    type,
+    handleOut: { x: anchor.x + ux * lenOut, y: anchor.y + uy * lenOut },
+    handleIn: { x: anchor.x - ux * lenIn, y: anchor.y - uy * lenIn },
+  };
+  return next;
 }

@@ -9,6 +9,7 @@ import type {
   ImageLayer,
   Layer,
   PenAnchor,
+  PenAnchorType,
   Plate,
   Point2,
   PrintBed,
@@ -38,7 +39,14 @@ import {
   invertTransform2D,
 } from "./sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
-import { flattenPenAnchors, normalizeToBounds, regularPolygonPoints, starPolygonPoints } from "../geometry/primitives";
+import {
+  applyPenHandleDrag,
+  applySetAnchorType,
+  flattenPenAnchors,
+  normalizeToBounds,
+  regularPolygonPoints,
+  starPolygonPoints,
+} from "../geometry/primitives";
 import {
   differenceRegions,
   intersectionRegions,
@@ -285,6 +293,13 @@ interface SceneState {
    * only the finished shape this eventually produces is a real, trackable
    * edit. See PenAnchor for what a corner vs. smooth (curved) anchor is. */
   penDraftAnchors: PenAnchor[];
+  /** Id of the shape currently in Pen tool "Edit Path" mode (its persistent
+   * `penAnchors` are being shown/dragged directly on the canvas instead of
+   * the normal bounding-box resize handles) — null when no shape is being
+   * edited this way. Same not-undo-tracked view-state convention as
+   * `penToolActive`; the individual anchor/handle edits made while this is
+   * set ARE tracked (see updatePenShapeAnchorPosition/Handle). */
+  editingPenShapeId: string | null;
   /** Whether the Cut tool is armed — same view-state convention as
    * penToolActive. While active, a click-drag on the canvas draws a
    * straight knife line (see cutShapesByLine) instead of selecting or
@@ -421,7 +436,12 @@ interface SceneState {
    * opposite handle to keep the anchor smooth — the same live re-drag
    * Illustrator/Figma/Photoshop allow on the anchor you just placed,
    * before moving on to the next point. */
-  updatePenAnchorHandle: (index: number, which: "handleIn" | "handleOut", point: Point2) => void;
+  updatePenAnchorHandle: (
+    index: number,
+    which: "handleIn" | "handleOut",
+    point: Point2,
+    independent?: boolean,
+  ) => void;
   /**
    * Closes the current draft into a real shape layer and returns to the
    * Select tool. Needs at least 3 anchors to form an outline — with fewer,
@@ -436,6 +456,41 @@ interface SceneState {
    */
   finishPenTool: (closingHandleIn?: Point2) => void;
   cancelPenTool: () => void;
+
+  /**
+   * Re-opens a finished Pen shape's real anchor/handle structure for
+   * editing (double-click it on the canvas) — Figma's own "the Pen tool
+   * never really stops being available on a vector path" model, instead of
+   * a one-shot draw-then-forget tool. No-op if the layer has no
+   * `penAnchors` (anything not originally drawn with the Pen tool).
+   */
+  beginEditPenShape: (id: string) => void;
+  /** Leaves Edit Path mode (Escape, or clicking elsewhere) — the edits
+   * already made are already live on the layer, so this only clears which
+   * shape is being edited. */
+  endEditPenShape: () => void;
+  /** Moves anchor `index` of shape `id`'s persistent path to `point`
+   * (shape-local space), carrying its handles along by the same delta, and
+   * regenerates `regions` from the updated anchors so the rendered/
+   * extruded outline stays in sync. */
+  updatePenShapeAnchorPosition: (id: string, index: number, point: Point2) => void;
+  /** Moves one handle of anchor `index` on shape `id`'s persistent path,
+   * mirroring per the anchor's type (see applyPenHandleDrag), and
+   * regenerates `regions`. */
+  updatePenShapeAnchorHandle: (
+    id: string,
+    index: number,
+    which: "handleIn" | "handleOut",
+    point: Point2,
+    independent?: boolean,
+  ) => void;
+  /** Converts anchor `index` of shape `id`'s persistent path between
+   * corner/smooth/symmetric, deriving sensible handle positions when
+   * switching to a curved type from a corner that has none yet. */
+  setPenShapeAnchorType: (id: string, index: number, type: PenAnchorType) => void;
+  /** Removes anchor `index` from shape `id`'s persistent path (no-op below
+   * 3 remaining anchors, matching the minimum a real outline needs). */
+  deletePenShapeAnchor: (id: string, index: number) => void;
 
   /** Arms/disarms the Cut (knife) tool. */
   setCutToolActive: (active: boolean) => void;
@@ -498,6 +553,7 @@ export const useSceneStore = create<SceneState>()(
   wireframe: false,
   penToolActive: false,
   penDraftAnchors: [],
+  editingPenShapeId: null,
   cutToolActive: false,
   shapeToolActive: null,
 
@@ -2160,6 +2216,7 @@ export const useSceneStore = create<SceneState>()(
       const next: PenAnchor = {
         x: point.x,
         y: point.y,
+        type: anchor.type,
         handleIn: anchor.handleIn ? { x: anchor.handleIn.x + dx, y: anchor.handleIn.y + dy } : undefined,
         handleOut: anchor.handleOut ? { x: anchor.handleOut.x + dx, y: anchor.handleOut.y + dy } : undefined,
       };
@@ -2168,17 +2225,12 @@ export const useSceneStore = create<SceneState>()(
       return { penDraftAnchors };
     }),
 
-  updatePenAnchorHandle: (index, which, point) =>
+  updatePenAnchorHandle: (index, which, point, independent = false) =>
     set((state) => {
       if (!state.penToolActive) return {};
       const anchor = state.penDraftAnchors[index];
       if (!anchor) return {};
-      const mirrored = { x: 2 * anchor.x - point.x, y: 2 * anchor.y - point.y };
-      const next: PenAnchor = {
-        ...anchor,
-        [which]: point,
-        [which === "handleOut" ? "handleIn" : "handleOut"]: mirrored,
-      };
+      const next = applyPenHandleDrag(anchor, which, point, independent);
       const penDraftAnchors = [...state.penDraftAnchors];
       penDraftAnchors[index] = next;
       return { penDraftAnchors };
@@ -2210,6 +2262,18 @@ export const useSceneStore = create<SceneState>()(
       }
       const points = flatPoints.map((p) => ({ x: p.x - minX, y: p.y - minY }));
 
+      // Carry the real anchor/handle structure onto the layer too (offset
+      // into the same local space `points` just moved into) so Edit Path
+      // mode can re-open the actual curves instead of only ever seeing the
+      // flattened, already-tessellated `regions` outline.
+      const penAnchors: PenAnchor[] = anchors.map((a) => ({
+        x: a.x - minX,
+        y: a.y - minY,
+        type: a.type,
+        handleIn: a.handleIn ? { x: a.handleIn.x - minX, y: a.handleIn.y - minY } : undefined,
+        handleOut: a.handleOut ? { x: a.handleOut.x - minX, y: a.handleOut.y - minY } : undefined,
+      }));
+
       const id = nanoid(8);
       const layer: ShapeLayer = {
         id,
@@ -2226,6 +2290,7 @@ export const useSceneStore = create<SceneState>()(
         bevelBottom: 0,
         bevelTop: 0,
         isHole: false,
+        penAnchors,
       };
 
       return {
@@ -2239,6 +2304,80 @@ export const useSceneStore = create<SceneState>()(
     }),
 
   cancelPenTool: () => set(() => ({ penToolActive: false, penDraftAnchors: [] })),
+
+  beginEditPenShape: (id) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape" || !layer.penAnchors || layer.penAnchors.length < 3) return {};
+      return { editingPenShapeId: id, selection: [id] };
+    }),
+
+  endEditPenShape: () => set(() => ({ editingPenShapeId: null })),
+
+  updatePenShapeAnchorPosition: (id, index, point) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape" || !layer.penAnchors) return {};
+      const anchor = layer.penAnchors[index];
+      if (!anchor) return {};
+      const dx = point.x - anchor.x;
+      const dy = point.y - anchor.y;
+      const next: PenAnchor = {
+        x: point.x,
+        y: point.y,
+        type: anchor.type,
+        handleIn: anchor.handleIn ? { x: anchor.handleIn.x + dx, y: anchor.handleIn.y + dy } : undefined,
+        handleOut: anchor.handleOut ? { x: anchor.handleOut.x + dx, y: anchor.handleOut.y + dy } : undefined,
+      };
+      const penAnchors = [...layer.penAnchors];
+      penAnchors[index] = next;
+      const regions: ShapeRegion[] = [
+        { outer: { points: flattenPenAnchors(penAnchors) }, holes: layer.regions[0]?.holes ?? [] },
+        ...layer.regions.slice(1),
+      ];
+      return { layers: { ...state.layers, [id]: { ...layer, penAnchors, regions } } };
+    }),
+
+  updatePenShapeAnchorHandle: (id, index, which, point, independent = false) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape" || !layer.penAnchors) return {};
+      const anchor = layer.penAnchors[index];
+      if (!anchor) return {};
+      const nextAnchor = applyPenHandleDrag(anchor, which, point, independent);
+      const penAnchors = [...layer.penAnchors];
+      penAnchors[index] = nextAnchor;
+      const regions: ShapeRegion[] = [
+        { outer: { points: flattenPenAnchors(penAnchors) }, holes: layer.regions[0]?.holes ?? [] },
+        ...layer.regions.slice(1),
+      ];
+      return { layers: { ...state.layers, [id]: { ...layer, penAnchors, regions } } };
+    }),
+
+  setPenShapeAnchorType: (id, index, type) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape" || !layer.penAnchors) return {};
+      const penAnchors = applySetAnchorType(layer.penAnchors, index, type);
+      const regions: ShapeRegion[] = [
+        { outer: { points: flattenPenAnchors(penAnchors) }, holes: layer.regions[0]?.holes ?? [] },
+        ...layer.regions.slice(1),
+      ];
+      return { layers: { ...state.layers, [id]: { ...layer, penAnchors, regions } } };
+    }),
+
+  deletePenShapeAnchor: (id, index) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape" || !layer.penAnchors) return {};
+      if (layer.penAnchors.length <= 3) return {};
+      const penAnchors = layer.penAnchors.filter((_, i) => i !== index);
+      const regions: ShapeRegion[] = [
+        { outer: { points: flattenPenAnchors(penAnchors) }, holes: layer.regions[0]?.holes ?? [] },
+        ...layer.regions.slice(1),
+      ];
+      return { layers: { ...state.layers, [id]: { ...layer, penAnchors, regions } } };
+    }),
 
   setCutToolActive: (active) => set({ cutToolActive: active }),
 

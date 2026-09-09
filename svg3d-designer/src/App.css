@@ -654,6 +654,26 @@
   opacity: 0.8;
 }
 
+/* Edit Path mode (a finished Pen shape's anchors/handles, re-opened for
+   direct editing) reuses the draft-drawing anchor/handle/dashed-line looks
+   above so the two states read as "the same kind of thing," but the
+   outline itself gets its own class — it isn't the in-progress preview
+   line, it's the real path, so it stays solid instead of matching
+   pen-draft-line's usual dashed/live-preview feel. */
+.pen-edit-path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+.pen-edit-point {
+  cursor: move;
+}
+.pen-edit-point.curved {
+  fill: var(--accent);
+}
+
 .selection-box {
   fill: none;
   stroke: var(--accent);
