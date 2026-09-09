@@ -189,6 +189,77 @@ function CollapsibleSection({
   );
 }
 
+/**
+ * One bevel-amount slider (Top or Bottom face). Deliberately a stable,
+ * module-level component rather than one declared inline inside
+ * Inspector's render body: a function component redeclared on every
+ * render gets a NEW identity each time, so React can't tell it's "the
+ * same" component across renders and remounts its whole subtree —
+ * including the `<input type="range">` the pointer is captured on mid-
+ * drag — on every single re-render. That silently defeated the RAF
+ * throttling below (the drag itself kept restarting, throttled or not)
+ * and was the actual cause of the bevel sliders staying laggy even after
+ * the same class of bug was fixed for CollapsibleSection.
+ */
+function FaceRow({
+  label,
+  bevelValue,
+  bevelMax,
+  unit,
+  setBevel,
+  targetIds,
+  applyToAll,
+  bevelGestureRef,
+  rafRef,
+}: {
+  label: string;
+  bevelValue: number;
+  bevelMax: number;
+  unit: Units;
+  setBevel: (id: string, mm: number) => void;
+  targetIds: string[];
+  applyToAll: (ids: string[], fn: (id: string) => void) => void;
+  bevelGestureRef: MutableRefObject<TrackedSceneSlice | null>;
+  rafRef: MutableRefObject<RafThrottleState>;
+}) {
+  return (
+    <div className="field-row" style={{ marginBottom: 10 }}>
+      <span className="field-label">{label}</span>
+      <input
+        className="field-input"
+        type="range"
+        min={0}
+        max={bevelMax}
+        step={0.05}
+        value={Math.min(bevelMax, bevelValue)}
+        onPointerDown={() => {
+          bevelGestureRef.current = beginGesture();
+        }}
+        onPointerUp={() => {
+          flushRafUpdate(rafRef, (value) => targetIds.forEach((id) => setBevel(id, value)));
+          if (bevelGestureRef.current) {
+            endGesture(bevelGestureRef.current, true);
+            bevelGestureRef.current = null;
+          }
+        }}
+        onChange={(e) => {
+          const v = parseFloat(e.target.value);
+          scheduleRafUpdate(rafRef, v, (value) => targetIds.forEach((id) => setBevel(id, value)));
+        }}
+        style={{ flex: "1 1 auto" }}
+      />
+      <NumberField
+        value={bevelValue}
+        min={0}
+        step={0.05}
+        unit={unit}
+        style={{ flex: "0 0 60px" }}
+        onChange={(v) => applyToAll(targetIds, (id) => setBevel(id, v))}
+      />
+    </div>
+  );
+}
+
 /** Left/center/right + top/middle/bottom align buttons — aligns to the
  * artboard for a single selection, or the selection's own combined
  * bounding box for several, matching Figma. */
@@ -872,7 +943,7 @@ export function Inspector() {
               </div>
 
               <CollapsibleSection
-                key={targets.map((t) => t.id).join(",")}
+                key={`corners:${targets.map((t) => t.id).join(",")}`}
                 title={`Corners${isBatch ? " (all shapes in group)" : ""}`}
                 active={display.cornerRadius > 0}
                 onAdd={() => applyToAll(targets.map((t) => t.id), (id) => setCornerRadius(id, 2))}
@@ -916,60 +987,9 @@ export function Inspector() {
                 const bevelDefault = Math.min(0.3, bevelMax);
                 const ids = targets.map((t) => t.id);
 
-                function FaceRow({
-                  label,
-                  bevelValue,
-                  setBevel,
-                  bevelGestureRef,
-                  rafRef,
-                }: {
-                  label: string;
-                  bevelValue: number;
-                  setBevel: (id: string, mm: number) => void;
-                  bevelGestureRef: MutableRefObject<TrackedSceneSlice | null>;
-                  rafRef: MutableRefObject<RafThrottleState>;
-                }) {
-                  return (
-                    <div className="field-row" style={{ marginBottom: 10 }}>
-                      <span className="field-label">{label}</span>
-                      <input
-                        className="field-input"
-                        type="range"
-                        min={0}
-                        max={bevelMax}
-                        step={0.05}
-                        value={Math.min(bevelMax, bevelValue)}
-                        onPointerDown={() => {
-                          bevelGestureRef.current = beginGesture();
-                        }}
-                        onPointerUp={() => {
-                          flushRafUpdate(rafRef, (value) => targets.forEach((t) => setBevel(t.id, value)));
-                          if (bevelGestureRef.current) {
-                            endGesture(bevelGestureRef.current, true);
-                            bevelGestureRef.current = null;
-                          }
-                        }}
-                        onChange={(e) => {
-                          const v = parseFloat(e.target.value);
-                          scheduleRafUpdate(rafRef, v, (value) => targets.forEach((t) => setBevel(t.id, value)));
-                        }}
-                        style={{ flex: "1 1 auto" }}
-                      />
-                      <NumberField
-                        value={bevelValue}
-                        min={0}
-                        step={0.05}
-                        unit={unit}
-                        style={{ flex: "0 0 60px" }}
-                        onChange={(v) => applyToAll(ids, (id) => setBevel(id, v))}
-                      />
-                    </div>
-                  );
-                }
-
                 return (
                   <CollapsibleSection
-                    key={ids.join(",")}
+                    key={`edge-shaping:${ids.join(",")}`}
                     title={`Edge shaping${isBatch ? " (all shapes in group)" : ""}`}
                     active={display.bevelTop > 0 || display.bevelBottom > 0}
                     onAdd={() =>
@@ -986,8 +1006,28 @@ export function Inspector() {
                     }
                   >
                     <p className="hole-hint">Rounds the rim of the top and/or bottom face.</p>
-                    <FaceRow label="Top" bevelValue={display.bevelTop} setBevel={setBevelTop} bevelGestureRef={bevelTopGesture} rafRef={bevelTopRaf} />
-                    <FaceRow label="Bottom" bevelValue={display.bevelBottom} setBevel={setBevelBottom} bevelGestureRef={bevelBottomGesture} rafRef={bevelBottomRaf} />
+                    <FaceRow
+                      label="Top"
+                      bevelValue={display.bevelTop}
+                      bevelMax={bevelMax}
+                      unit={unit}
+                      setBevel={setBevelTop}
+                      targetIds={ids}
+                      applyToAll={applyToAll}
+                      bevelGestureRef={bevelTopGesture}
+                      rafRef={bevelTopRaf}
+                    />
+                    <FaceRow
+                      label="Bottom"
+                      bevelValue={display.bevelBottom}
+                      bevelMax={bevelMax}
+                      unit={unit}
+                      setBevel={setBevelBottom}
+                      targetIds={ids}
+                      applyToAll={applyToAll}
+                      bevelGestureRef={bevelBottomGesture}
+                      rafRef={bevelBottomRaf}
+                    />
                   </CollapsibleSection>
                 );
               })()}
