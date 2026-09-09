@@ -111,6 +111,12 @@ function App() {
         return;
       }
 
+      if (store.shapeToolActive && e.key === "Escape") {
+        e.preventDefault();
+        store.setShapeToolActive(null);
+        return;
+      }
+
       if (store.penToolActive) {
         if (e.key === "Escape") {
           e.preventDefault();
@@ -219,9 +225,19 @@ function App() {
         e.preventDefault();
         dragCounter.current = 0;
         setIsDragOver(false);
-        const file = Array.from(e.dataTransfer.files).find((f) => /\.svg$/i.test(f.name));
-        if (file) handleImportFile(file);
-        else setImportError("Drop a .svg file to import it.");
+        const files = Array.from(e.dataTransfer.files);
+        const svgFile = files.find((f) => /\.svg$/i.test(f.name));
+        if (svgFile) {
+          handleImportFile(svgFile);
+          return;
+        }
+        // A JPG/PNG reference-image drop is handled by Canvas2D itself
+        // (it needs the exact drop point, in document space, to place the
+        // image) — this handler only owns resetting the drag-over overlay
+        // above, not re-processing the file a second time or erroring on
+        // it just because it isn't an SVG.
+        const isImageDrop = files.some((f) => /^image\/(png|jpe?g)$/i.test(f.type));
+        if (!isImageDrop) setImportError("Drop a .svg file to import it.");
       }}
     >
       <TopToolbar

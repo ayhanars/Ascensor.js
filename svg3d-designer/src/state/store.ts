@@ -290,6 +290,15 @@ interface SceneState {
    * straight knife line (see cutShapesByLine) instead of selecting or
    * marqueeing. */
   cutToolActive: boolean;
+  /** Which stamp tool (rect/circle/polygon/star/hole) is currently armed
+   * for click-or-drag creation — null when none is. Same view-state
+   * convention as penToolActive/cutToolActive: while set, a drag on the
+   * canvas draws the new shape's own position/size interactively instead
+   * of selecting or marqueeing; a plain click (no real drag) places it at
+   * a default size centered under the cursor. Auto-clears back to null
+   * once a shape is actually placed, matching Figma's own "draw one,
+   * back to Select" default. */
+  shapeToolActive: "rect" | "circle" | "polygon" | "star" | "hole" | null;
 
   addPlate: () => void;
   renamePlate: (id: string, name: string) => void;
@@ -362,7 +371,19 @@ interface SceneState {
   setUnits: (units: Units) => void;
   fitDocumentToSelection: () => void;
   matchDocumentToBed: () => void;
-  createShapeLayer: (kind: "rect" | "circle" | "hole" | "polygon" | "star") => void;
+  /** Arms/disarms a stamp tool for click-or-drag creation on the canvas.
+   * Pass null to disarm (return to Select). */
+  setShapeToolActive: (kind: "rect" | "circle" | "polygon" | "star" | "hole" | null) => void;
+  /** Creates a new shape layer of the given kind sized/positioned exactly
+   * to `bounds` (document mm) — the Canvas2D drag-to-draw gesture's own
+   * commit action. `bounds.width`/`height` are floored to a small minimum
+   * so a near-zero drag (or a plain click, which Canvas2D turns into a
+   * small bounds box centered on the cursor) never produces a degenerate,
+   * effectively invisible shape. */
+  createShapeLayerAt: (
+    kind: "rect" | "circle" | "polygon" | "star" | "hole",
+    bounds: { x: number; y: number; width: number; height: number },
+  ) => void;
   setPolygonSides: (id: string, sides: number) => void;
   setStarParams: (id: string, points: number, innerRatio: number) => void;
 
@@ -478,6 +499,7 @@ export const useSceneStore = create<SceneState>()(
   penToolActive: false,
   penDraftAnchors: [],
   cutToolActive: false,
+  shapeToolActive: null,
 
   addPlate: () =>
     set((state) => {
@@ -1957,19 +1979,24 @@ export const useSceneStore = create<SceneState>()(
       },
     })),
 
-  createShapeLayer: (kind) =>
+  setShapeToolActive: (kind) => set({ shapeToolActive: kind }),
+
+  createShapeLayerAt: (kind, bounds) =>
     set((state) => {
       const id = nanoid(8);
-      let w: number;
-      let h: number;
+      // A drag that never really moved (or a plain click, which Canvas2D
+      // turns into a tiny bounds box centered on the cursor) would
+      // otherwise produce a shape too small to see or select — floor
+      // both dimensions the same way an accidental near-zero resize
+      // already is elsewhere in this store.
+      const w = Math.max(1, bounds.width);
+      const h = Math.max(1, bounds.height);
       let regions: ShapeRegion[];
       const DEFAULT_POLYGON_SIDES = 6;
       const DEFAULT_STAR_POINTS = 5;
       const DEFAULT_STAR_INNER_RATIO = 0.45;
 
       if (kind === "rect") {
-        w = 30;
-        h = 20;
         regions = [
           {
             outer: {
@@ -1984,12 +2011,8 @@ export const useSceneStore = create<SceneState>()(
           },
         ];
       } else if (kind === "polygon") {
-        w = 20;
-        h = 20;
         regions = [{ outer: { points: normalizeToBounds(regularPolygonPoints(DEFAULT_POLYGON_SIDES), w, h) }, holes: [] }];
       } else if (kind === "star") {
-        w = 20;
-        h = 20;
         regions = [
           {
             outer: { points: normalizeToBounds(starPolygonPoints(DEFAULT_STAR_POINTS, DEFAULT_STAR_INNER_RATIO), w, h) },
@@ -1997,17 +2020,14 @@ export const useSceneStore = create<SceneState>()(
           },
         ];
       } else {
-        // "hole" reuses the circle path — a round negative-space cutout
-        // (screw holes, magnet pockets) is by far the common case, and the
-        // Inspector's own hole tools (shape presets, recessed-pocket snap)
-        // already assume that starting point.
-        const r = kind === "hole" ? 4 : 10;
-        w = r * 2;
-        h = r * 2;
+        // circle/hole: an ellipse inscribed in w x h — a Shift-constrained
+        // drag (equal w/h, see Canvas2D) still gives a perfect circle.
+        const rx = w / 2;
+        const ry = h / 2;
         const segments = 64;
         const points = Array.from({ length: segments }, (_, i) => {
           const a = (i / segments) * Math.PI * 2;
-          return { x: r + Math.cos(a) * r, y: r + Math.sin(a) * r };
+          return { x: rx + Math.cos(a) * rx, y: ry + Math.sin(a) * ry };
         });
         regions = [{ outer: { points }, holes: [] }];
       }
@@ -2026,11 +2046,7 @@ export const useSceneStore = create<SceneState>()(
         visible: true,
         locked: false,
         color: "#4f46e5",
-        transform: {
-          ...IDENTITY_TRANSFORM,
-          x: (state.document.widthMM - w) / 2,
-          y: (state.document.heightMM - h) / 2,
-        },
+        transform: { ...IDENTITY_TRANSFORM, x: bounds.x, y: bounds.y },
         parentId: null,
         regions,
         extrusionDepth: 1.2,
