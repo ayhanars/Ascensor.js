@@ -11,6 +11,7 @@ import {
   stepIntoOnClick,
 } from "../state/sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
+import { normalizeToBounds, regularPolygonPoints, starPolygonPoints } from "../geometry/primitives";
 import type { Layer, PenAnchor, ShapeRegion, Transform2D } from "../types";
 import { InfoIcon } from "./icons";
 
@@ -123,6 +124,9 @@ export function Canvas2D({ resetSignal }: Props) {
   const addImageLayer = useSceneStore((s) => s.addImageLayer);
   const cutToolActive = useSceneStore((s) => s.cutToolActive);
   const cutShapesByLine = useSceneStore((s) => s.cutShapesByLine);
+  const shapeToolActive = useSceneStore((s) => s.shapeToolActive);
+  const setShapeToolActive = useSceneStore((s) => s.setShapeToolActive);
+  const createShapeLayerAt = useSceneStore((s) => s.createShapeLayerAt);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const [vb, setVb] = useState<ViewBox>(() => fitView(document_.widthMM, document_.heightMM));
@@ -159,6 +163,16 @@ export function Canvas2D({ resetSignal }: Props) {
   // never really moved) on pointerup.
   const cutGestureRef = useRef<{ start: { x: number; y: number }; moved: boolean } | null>(null);
   const [cutLine, setCutLine] = useState<{ start: { x: number; y: number }; end: { x: number; y: number } } | null>(
+    null,
+  );
+  // The shape tool's in-progress drag-to-draw box, in document (mm) space
+  // — set on pointerdown while shapeToolActive, updated on every
+  // pointermove (Shift constrains it to a square/circle), and resolved
+  // into an actual createShapeLayerAt call on pointerup. A gesture that
+  // never really moved (a plain click) still creates a shape, at a
+  // default size centered on the click point, rather than doing nothing.
+  const shapeGestureRef = useRef<{ start: { x: number; y: number }; moved: boolean } | null>(null);
+  const [shapeDrawBounds, setShapeDrawBounds] = useState<{ x: number; y: number; width: number; height: number } | null>(
     null,
   );
   // Dragging the LAST placed anchor's own dot (to reposition it) or one of
@@ -302,7 +316,13 @@ export function Canvas2D({ resetSignal }: Props) {
     const file = Array.from(e.dataTransfer.files).find((f) => /^image\/(png|jpe?g)$/i.test(f.type));
     if (!file) return false;
     e.preventDefault();
-    e.stopPropagation();
+    // Deliberately NOT stopPropagation()'d: the app-level drop handler
+    // owns the "Drop SVG/image to import" overlay's on/off state
+    // (dragCounter/isDragOver) and only resets it from its own onDrop —
+    // stopping the event here left that overlay stuck on screen after
+    // every successful image drop. App's own onDrop already knows to
+    // treat an image file as "handled here, nothing further to do"
+    // rather than showing its SVG-only error for it.
     const center = clientToSvg(e.clientX, e.clientY);
     const objectUrl = URL.createObjectURL(file);
     const img = new Image();
@@ -503,6 +523,60 @@ export function Canvas2D({ resetSignal }: Props) {
     const p = clientToSvg(e.clientX, e.clientY);
     cutGestureRef.current = { start: p, moved: false };
     setCutLine({ start: p, end: p });
+    (e.target as Element).setPointerCapture(e.pointerId);
+    return true;
+  }
+
+  /** Default size (mm) for a plain click with no real drag — a shape
+   * tool's own fallback, so clicking without dragging still places
+   * something useful instead of nothing. */
+  const SHAPE_DEFAULT_SIZE: Record<"rect" | "circle" | "polygon" | "star" | "hole", { w: number; h: number }> = {
+    rect: { w: 30, h: 20 },
+    circle: { w: 20, h: 20 },
+    polygon: { w: 20, h: 20 },
+    star: { w: 20, h: 20 },
+    hole: { w: 8, h: 8 },
+  };
+
+  /** Turns a drag's start/current point into a normalized (positive
+   * width/height) bounds box — the same "opposite corners, either
+   * direction" math a resize handle already needs. `constrainSquare`
+   * (Shift held) forces width===height, extending the shorter axis to
+   * match the longer one's drag distance rather than cropping it, so the
+   * box always grows from the same fixed start corner. */
+  function computeShapeDragBounds(
+    start: { x: number; y: number },
+    current: { x: number; y: number },
+    constrainSquare: boolean,
+  ): { x: number; y: number; width: number; height: number } {
+    let x1 = current.x;
+    let y1 = current.y;
+    if (constrainSquare) {
+      const dx = x1 - start.x;
+      const dy = y1 - start.y;
+      const size = Math.max(Math.abs(dx), Math.abs(dy));
+      x1 = start.x + (dx < 0 ? -size : size);
+      y1 = start.y + (dy < 0 ? -size : size);
+    }
+    return {
+      x: Math.min(start.x, x1),
+      y: Math.min(start.y, y1),
+      width: Math.abs(x1 - start.x),
+      height: Math.abs(y1 - start.y),
+    };
+  }
+
+  /** Starts a shape-tool drag-to-draw gesture on pointerdown — same
+   * "did I handle it" shape as tryZoomToolClick/tryPenToolDown/
+   * tryCutToolDown. The actual shape is created on pointerup, once it's
+   * known whether this was a plain click (default size) or a real drag
+   * (custom size/position). */
+  function tryShapeToolDown(e: React.PointerEvent): boolean {
+    if (!shapeToolActive) return false;
+    e.stopPropagation();
+    const p = clientToSvg(e.clientX, e.clientY);
+    shapeGestureRef.current = { start: p, moved: false };
+    setShapeDrawBounds({ x: p.x, y: p.y, width: 0, height: 0 });
     (e.target as Element).setPointerCapture(e.pointerId);
     return true;
   }
@@ -783,6 +857,28 @@ export function Canvas2D({ resetSignal }: Props) {
       return;
     }
 
+    if (shapeGestureRef.current) {
+      const { start, moved } = shapeGestureRef.current;
+      const kind = shapeToolActive;
+      if (kind) {
+        const bounds = moved
+          ? computeShapeDragBounds(start, clientToSvg(e.clientX, e.clientY), e.shiftKey)
+          : (() => {
+              const { w, h } = SHAPE_DEFAULT_SIZE[kind];
+              return { x: start.x - w / 2, y: start.y - h / 2, width: w, height: h };
+            })();
+        createShapeLayerAt(kind, bounds);
+      }
+      // Draw one shape, then back to Select — matches Figma's own default
+      // (and every other armed tool this app already returns from after
+      // a single use, e.g. finishing a Cut).
+      setShapeToolActive(null);
+      shapeGestureRef.current = null;
+      setShapeDrawBounds(null);
+      (e.target as Element).releasePointerCapture?.(e.pointerId);
+      return;
+    }
+
     if (penAdjustRef.current) {
       penAdjustRef.current = null;
       (e.target as Element).releasePointerCapture?.(e.pointerId);
@@ -878,6 +974,10 @@ export function Canvas2D({ resetSignal }: Props) {
     // shape or empty canvas alike — cutShapesByLine figures out on its own
     // which shapes the finished line actually crosses.
     if (tryCutToolDown(e)) return;
+    // A shape tool draws right on top of whatever's under the cursor too
+    // — you're placing a brand-new shape, not interacting with what's
+    // already there.
+    if (tryShapeToolDown(e)) return;
     // Space+drag pans even when the pointer happens to come down on a
     // shape — without this, the shape's own handler (which runs first and
     // stops the event before it ever reaches the canvas-level pan check)
@@ -970,7 +1070,7 @@ export function Canvas2D({ resetSignal }: Props) {
             preserveAspectRatio="none"
             style={{
               cursor:
-                penToolActive || cutToolActive ? "crosshair"
+                penToolActive || cutToolActive || shapeToolActive ? "crosshair"
                 : isEffectivelyLocked(layers, id) ? "default"
                 : "move",
             }}
@@ -999,7 +1099,7 @@ export function Canvas2D({ resetSignal }: Props) {
           style={{
             cursor: zoomToolArmed
               ? zoomToolOut ? "zoom-out" : "zoom-in"
-              : penToolActive || cutToolActive ? "crosshair"
+              : penToolActive || cutToolActive || shapeToolActive ? "crosshair"
               : isEffectivelyLocked(layers, id) ? "default" : "move",
           }}
           onPointerDown={(e) => {
@@ -1032,7 +1132,8 @@ export function Canvas2D({ resetSignal }: Props) {
           (spaceHeld ? " space-pan" : "") +
           (zoomToolArmed ? (zoomToolOut ? " zoom-out-tool" : " zoom-in-tool") : "") +
           (penToolActive ? " pen-tool" : "") +
-          (cutToolActive ? " cut-tool" : "")
+          (cutToolActive ? " cut-tool" : "") +
+          (shapeToolActive ? " shape-draw-tool" : "")
         }
         viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
         onDragOver={(e) => {
@@ -1048,6 +1149,7 @@ export function Canvas2D({ resetSignal }: Props) {
           if (tryZoomToolClick(e)) return;
           if (tryPenToolDown(e)) return;
           if (tryCutToolDown(e)) return;
+          if (tryShapeToolDown(e)) return;
           if (e.target === svgRef.current || (e.target as Element).tagName === "rect") {
             if (spaceHeld) beginPan(e);
             else beginMarquee(e);
@@ -1061,6 +1163,15 @@ export function Canvas2D({ resetSignal }: Props) {
             const distClient = startClient ? Math.hypot(e.clientX - startClient.x, e.clientY - startClient.y) : 0;
             if (distClient > PEN_DRAG_THRESHOLD_PX) cutGestureRef.current.moved = true;
             setCutLine({ start, end: p });
+            return;
+          }
+          if (shapeGestureRef.current) {
+            const p = clientToSvg(e.clientX, e.clientY);
+            const start = shapeGestureRef.current.start;
+            const startClient = svgPointToClient(start);
+            const distClient = startClient ? Math.hypot(e.clientX - startClient.x, e.clientY - startClient.y) : 0;
+            if (distClient > PEN_DRAG_THRESHOLD_PX) shapeGestureRef.current.moved = true;
+            setShapeDrawBounds(computeShapeDragBounds(start, p, e.shiftKey));
             return;
           }
           if (penToolActive) {
@@ -1158,6 +1269,22 @@ export function Canvas2D({ resetSignal }: Props) {
             y2={cutLine.end.y}
           />
         )}
+
+        {shapeDrawBounds && shapeToolActive && (() => {
+          const { x, y, width: w, height: h } = shapeDrawBounds;
+          if (shapeToolActive === "rect") {
+            return <rect className="shape-draw-preview" x={x} y={y} width={w} height={h} />;
+          }
+          if (shapeToolActive === "circle" || shapeToolActive === "hole") {
+            return <ellipse className="shape-draw-preview" cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} />;
+          }
+          const localPoints =
+            shapeToolActive === "polygon"
+              ? normalizeToBounds(regularPolygonPoints(6), w, h)
+              : normalizeToBounds(starPolygonPoints(5, 0.45), w, h);
+          const pointsAttr = localPoints.map((p) => `${x + p.x},${y + p.y}`).join(" ");
+          return <polygon className="shape-draw-preview" points={pointsAttr} />;
+        })()}
 
         {(() => {
           // Photoshop-style drag-to-resize handles — only for a single,

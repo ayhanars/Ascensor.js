@@ -607,11 +607,22 @@
 .canvas2d.zoom-out-tool { cursor: zoom-out; }
 .canvas2d.pen-tool { cursor: crosshair; }
 .canvas2d.cut-tool { cursor: crosshair; }
+.canvas2d.shape-draw-tool { cursor: crosshair; }
 
 .cut-line {
   stroke: #ef4444;
   stroke-width: 1.2;
   stroke-dasharray: 4 2.5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.shape-draw-preview {
+  fill: var(--accent);
+  fill-opacity: 0.12;
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
 }
