@@ -204,4 +204,19 @@ export function subtractHoles(
       hole.mesh.removeFromParent();
     }
   }
+
+  // Every resultMesh above got its position/quaternion/scale set directly
+  // from a decomposed matrixWorld, but a fresh THREE.Mesh's own matrixWorld
+  // starts as identity and is only ever recomputed by an updateMatrixWorld
+  // walk — setting position/quaternion/scale alone does not touch it. The
+  // caller's own updateMatrixWorld(true) already ran BEFORE this function,
+  // so it never sees any node added or replaced in here. Left uncorrected,
+  // every solid that had a hole cut through it exports (STL/3MF) sitting at
+  // the scene origin's own local Y-flip — no translation, no rotation —
+  // while the live 3D viewport still looks right (its own render loop
+  // updates world matrices on every frame, independent of this tree).
+  // That's the exact "some objects, not all, in the wrong place only after
+  // export" bug this call closes: only shapes with a hole cut through them
+  // go through the replacement path above at all.
+  root.updateMatrixWorld(true);
 }
