@@ -7,6 +7,7 @@ import type {
   DocumentSettings,
   GroupLayer,
   Layer,
+  PenAnchor,
   Plate,
   Point2,
   PrintBed,
@@ -36,7 +37,7 @@ import {
   invertTransform2D,
 } from "./sceneUtils";
 import { roundRegions } from "../geometry/roundCorners";
-import { arrowPoints, normalizeToBounds, regularPolygonPoints, starPolygonPoints } from "../geometry/primitives";
+import { flattenPenAnchors, normalizeToBounds, regularPolygonPoints, starPolygonPoints } from "../geometry/primitives";
 import {
   differenceRegions,
   intersectionRegions,
@@ -259,13 +260,14 @@ interface SceneState {
   wireframe: boolean;
   /** Whether the Pen tool is currently armed — a view/interaction concern
    * like `selection`, not undo-tracked. Canvas2D reads this to switch its
-   * own click handling over to placing points instead of selecting/
+   * own click handling over to placing anchors instead of selecting/
    * marqueeing, and to render the in-progress outline. */
   penToolActive: boolean;
-  /** Points placed so far in the current in-progress pen path, in document
-   * (mm) space — cleared on finish/cancel. Also not undo-tracked; only the
-   * finished shape this eventually produces is a real, trackable edit. */
-  penDraftPoints: Point2[];
+  /** Anchors placed so far in the current in-progress pen path, in
+   * document (mm) space — cleared on finish/cancel. Also not undo-tracked;
+   * only the finished shape this eventually produces is a real, trackable
+   * edit. See PenAnchor for what a corner vs. smooth (curved) anchor is. */
+  penDraftAnchors: PenAnchor[];
 
   addPlate: () => void;
   renamePlate: (id: string, name: string) => void;
@@ -335,24 +337,34 @@ interface SceneState {
   setUnits: (units: Units) => void;
   fitDocumentToSelection: () => void;
   matchDocumentToBed: () => void;
-  createShapeLayer: (kind: "rect" | "circle" | "hole" | "line" | "arrow" | "polygon" | "star") => void;
+  createShapeLayer: (kind: "rect" | "circle" | "hole" | "polygon" | "star") => void;
   setPolygonSides: (id: string, sides: number) => void;
   setStarParams: (id: string, points: number, innerRatio: number) => void;
 
-  /** Arms the Pen tool — click points on the canvas to build a custom
-   * outline, the same click-to-place/click-near-start-to-close/Enter-to-
-   * finish/Escape-to-cancel flow as Figma's own pen tool, ending in one
-   * ordinary closed-polygon ShapeLayer (see finishPenTool). */
+  /** Arms the Pen tool — a real bezier pen matching Figma/Illustrator/
+   * Photoshop's own: click places a straight "corner" anchor, click-and-
+   * drag places a "smooth" anchor with a curve handle, click near the
+   * first anchor (or press Enter) closes the path into one ordinary
+   * ShapeLayer (see finishPenTool), Escape cancels, Backspace undoes the
+   * last anchor. */
   beginPenTool: () => void;
-  addPenPoint: (p: Point2) => void;
-  /** Removes the most recently placed point (Backspace while drawing) —
-   * cancels the whole tool if that was the only point left. */
-  undoLastPenPoint: () => void;
-  /** Closes the current draft into a real shape layer and returns to the
-   * Select tool. Needs at least 3 points to form an outline — with fewer,
+  addPenAnchor: (a: PenAnchor) => void;
+  /** Removes the most recently placed anchor (Backspace while drawing) —
+   * cancels the whole tool if that was the only anchor left. */
+  undoLastPenAnchor: () => void;
+  /**
+   * Closes the current draft into a real shape layer and returns to the
+   * Select tool. Needs at least 3 anchors to form an outline — with fewer,
    * behaves like cancelPenTool instead (there's no sensible shape to make
-   * out of one or two points, so there's nothing to leave half-drawn). */
-  finishPenTool: () => void;
+   * out of one or two anchors, so there's nothing to leave half-drawn).
+   *
+   * `closingHandleIn`, when given, is the drag endpoint of a click-and-
+   * drag gesture used to CLOSE the path (dragging on the first anchor to
+   * curve the final closing segment) — it's applied as the first anchor's
+   * own handleIn before flattening, the same as it would be if the anchor
+   * had been created with that handle to begin with.
+   */
+  finishPenTool: (closingHandleIn?: Point2) => void;
   cancelPenTool: () => void;
 }
 
@@ -401,7 +413,7 @@ export const useSceneStore = create<SceneState>()(
   showGrid: true,
   wireframe: false,
   penToolActive: false,
-  penDraftPoints: [],
+  penDraftAnchors: [],
 
   addPlate: () =>
     set((state) => {
@@ -1897,29 +1909,6 @@ export const useSceneStore = create<SceneState>()(
             holes: [],
           },
         ];
-      } else if (kind === "line") {
-        // A straight line has no fillable area of its own — give it a
-        // real, thin rectangular strip so it's an ordinary extrudable
-        // shape, not a special case anywhere else in the pipeline.
-        w = 40;
-        h = 3;
-        regions = [
-          {
-            outer: {
-              points: [
-                { x: 0, y: 0 },
-                { x: w, y: 0 },
-                { x: w, y: h },
-                { x: 0, y: h },
-              ],
-            },
-            holes: [],
-          },
-        ];
-      } else if (kind === "arrow") {
-        w = 40;
-        h = 16;
-        regions = [{ outer: { points: normalizeToBounds(arrowPoints(), w, h) }, holes: [] }];
       } else if (kind === "polygon") {
         w = 20;
         h = 20;
@@ -1953,8 +1942,6 @@ export const useSceneStore = create<SceneState>()(
         kind === "rect" ? "Rectangle"
         : kind === "hole" ? "Hole"
         : kind === "circle" ? "Circle"
-        : kind === "line" ? "Line"
-        : kind === "arrow" ? "Arrow"
         : kind === "polygon" ? "Polygon"
         : "Star";
 
@@ -2023,35 +2010,43 @@ export const useSceneStore = create<SceneState>()(
       };
     }),
 
-  beginPenTool: () => set(() => ({ penToolActive: true, penDraftPoints: [], selection: [] })),
+  beginPenTool: () => set(() => ({ penToolActive: true, penDraftAnchors: [], selection: [] })),
 
-  addPenPoint: (p) =>
-    set((state) => (state.penToolActive ? { penDraftPoints: [...state.penDraftPoints, p] } : {})),
+  addPenAnchor: (a) =>
+    set((state) => (state.penToolActive ? { penDraftAnchors: [...state.penDraftAnchors, a] } : {})),
 
-  undoLastPenPoint: () =>
+  undoLastPenAnchor: () =>
     set((state) => {
       if (!state.penToolActive) return {};
-      if (state.penDraftPoints.length === 0) return { penToolActive: false };
-      return { penDraftPoints: state.penDraftPoints.slice(0, -1) };
+      if (state.penDraftAnchors.length === 0) return { penToolActive: false };
+      return { penDraftAnchors: state.penDraftAnchors.slice(0, -1) };
     }),
 
-  finishPenTool: () =>
+  finishPenTool: (closingHandleIn) =>
     set((state) => {
       if (!state.penToolActive) return {};
-      if (state.penDraftPoints.length < 3) return { penToolActive: false, penDraftPoints: [] };
+      if (state.penDraftAnchors.length < 3) return { penToolActive: false, penDraftAnchors: [] };
 
-      // Re-anchor to the drawn points' own bounding-box corner, same as
-      // every other shape's local-origin convention (see mergeLayers'
+      // A drag on the closing click curves the final segment back into the
+      // first anchor — apply it as that anchor's own handleIn, exactly as
+      // if it had been drawn with that handle from the start.
+      const anchors = closingHandleIn
+        ? state.penDraftAnchors.map((a, i) => (i === 0 ? { ...a, handleIn: closingHandleIn } : a))
+        : state.penDraftAnchors;
+      const flatPoints = flattenPenAnchors(anchors);
+
+      // Re-anchor to the flattened outline's own bounding-box corner, same
+      // as every other shape's local-origin convention (see mergeLayers'
       // identical re-anchoring, and its comment on why transform.x/y has
       // to actually equal the shape's real corner for X/Y edits, align,
       // and drag to keep working correctly afterward).
       let minX = Infinity;
       let minY = Infinity;
-      for (const p of state.penDraftPoints) {
+      for (const p of flatPoints) {
         minX = Math.min(minX, p.x);
         minY = Math.min(minY, p.y);
       }
-      const points = state.penDraftPoints.map((p) => ({ x: p.x - minX, y: p.y - minY }));
+      const points = flatPoints.map((p) => ({ x: p.x - minX, y: p.y - minY }));
 
       const id = nanoid(8);
       const layer: ShapeLayer = {
@@ -2077,11 +2072,11 @@ export const useSceneStore = create<SceneState>()(
         plateOf: { ...state.plateOf, [id]: state.activePlateId },
         selection: [id],
         penToolActive: false,
-        penDraftPoints: [],
+        penDraftAnchors: [],
       };
     }),
 
-  cancelPenTool: () => set(() => ({ penToolActive: false, penDraftPoints: [] })),
+  cancelPenTool: () => set(() => ({ penToolActive: false, penDraftAnchors: [] })),
     }),
     {
       partialize: partializeScene,

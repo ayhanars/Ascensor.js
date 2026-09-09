@@ -1,10 +1,8 @@
 import { useSceneStore } from "../state/store";
 import {
-  ArrowToolIcon,
   CircleToolIcon,
   CursorToolIcon,
   HoleToolIcon,
-  LineToolIcon,
   PenToolIcon,
   PolygonToolIcon,
   RectangleToolIcon,
@@ -50,7 +48,7 @@ export function ShapeToolbar() {
       </button>
       <button
         className={"shape-tool-btn" + (penToolActive ? " active" : "")}
-        title="Pen — click to place points, click the first point (or press Enter) to close the shape, Escape to cancel, Backspace to undo the last point"
+        title="Pen — click for a straight corner point, click-and-drag for a curved (smooth) point, click the first point (or press Enter) to close the shape, Escape to cancel, Backspace to undo the last point"
         onClick={() => (penToolActive ? cancelPenTool() : beginPenTool())}
       >
         <PenToolIcon />
@@ -83,20 +81,6 @@ export function ShapeToolbar() {
         onClick={() => addShape("star")}
       >
         <StarToolIcon />
-      </button>
-      <button
-        className="shape-tool-btn"
-        title="Add line (a thin printable strip, not a bare stroke)"
-        onClick={() => addShape("line")}
-      >
-        <LineToolIcon />
-      </button>
-      <button
-        className="shape-tool-btn"
-        title="Add arrow"
-        onClick={() => addShape("arrow")}
-      >
-        <ArrowToolIcon />
       </button>
       <div className="shape-toolbar-divider" />
       <button
