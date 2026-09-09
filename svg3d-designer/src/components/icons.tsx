@@ -116,9 +116,12 @@ export const PolygonToolIcon = ({ size = 16 }: IconProps) => (
 );
 
 export const PenToolIcon = ({ size = 16 }: IconProps) => (
-  <svg {...base(size)}>
-    <path d="M4 12 11.5 4.5a1.4 1.4 0 0 1 2 2L6 14l-3 1 1-3Z" />
-    <circle cx="4" cy="12" r="1" fill="currentColor" stroke="none" />
+  <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor">
+    <path
+      fillRule="evenodd"
+      clipRule="evenodd"
+      d="M3.7 3h8.6l1.4 3.6L8 15 2.3 6.6Zm4.3 4.1a1.15 1.15 0 1 0 0-2.3 1.15 1.15 0 0 0 0 2.3Z"
+    />
   </svg>
 );
 
