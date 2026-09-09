@@ -2,6 +2,7 @@ import { useSceneStore } from "../state/store";
 import {
   CircleToolIcon,
   CursorToolIcon,
+  CutToolIcon,
   HoleToolIcon,
   PenToolIcon,
   PolygonToolIcon,
@@ -24,6 +25,8 @@ export function ShapeToolbar() {
   const penToolActive = useSceneStore((s) => s.penToolActive);
   const beginPenTool = useSceneStore((s) => s.beginPenTool);
   const cancelPenTool = useSceneStore((s) => s.cancelPenTool);
+  const cutToolActive = useSceneStore((s) => s.cutToolActive);
+  const setCutToolActive = useSceneStore((s) => s.setCutToolActive);
 
   // Switching to a stamp tool mid-draw should abandon the in-progress pen
   // path rather than leave it dangling behind the new shape — Canvas2D
@@ -31,16 +34,18 @@ export function ShapeToolbar() {
   // no longer shows as active.
   function addShape(kind: Parameters<typeof createShapeLayer>[0]) {
     if (penToolActive) cancelPenTool();
+    if (cutToolActive) setCutToolActive(false);
     createShapeLayer(kind);
   }
 
   return (
     <div className="shape-toolbar">
       <button
-        className={"shape-tool-btn" + (selection.length === 0 && !penToolActive ? " active" : "")}
+        className={"shape-tool-btn" + (selection.length === 0 && !penToolActive && !cutToolActive ? " active" : "")}
         title="Select (click empty canvas, drag to marquee-select, or press Escape)"
         onClick={() => {
           if (penToolActive) cancelPenTool();
+          if (cutToolActive) setCutToolActive(false);
           clearSelection();
         }}
       >
@@ -49,9 +54,23 @@ export function ShapeToolbar() {
       <button
         className={"shape-tool-btn" + (penToolActive ? " active" : "")}
         title="Pen — click for a straight corner point, click-and-drag for a curved (smooth) point, click the first point (or press Enter) to close the shape, Escape to cancel, Backspace to undo the last point"
-        onClick={() => (penToolActive ? cancelPenTool() : beginPenTool())}
+        onClick={() => {
+          if (cutToolActive) setCutToolActive(false);
+          if (penToolActive) cancelPenTool();
+          else beginPenTool();
+        }}
       >
         <PenToolIcon />
+      </button>
+      <button
+        className={"shape-tool-btn" + (cutToolActive ? " active" : "")}
+        title="Cut — drag a straight line across a shape to split it into two separate shapes along that line. Escape to switch back to Select."
+        onClick={() => {
+          if (penToolActive) cancelPenTool();
+          setCutToolActive(!cutToolActive);
+        }}
+      >
+        <CutToolIcon />
       </button>
       <div className="shape-toolbar-divider" />
       <button

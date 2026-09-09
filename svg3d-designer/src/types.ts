@@ -106,7 +106,29 @@ export interface ShapeLayer extends LayerCommon {
   starInnerRatio?: number;
 }
 
-export type Layer = GroupLayer | ShapeLayer;
+/**
+ * A raster (JPG/PNG) reference image dropped onto the 2D canvas for
+ * visual tracing — never extruded, never part of the 3D preview, and
+ * never written to STL/3MF exports (see buildAssemblyGroup, which simply
+ * skips this layer type). Purely a drawing aid.
+ */
+export interface ImageLayer extends LayerCommon {
+  type: "image";
+  /** Data URL of the source raster — kept inline so a saved project stays
+   * a single self-contained JSON file. */
+  src: string;
+  /** Natural pixel dimensions of the source file, for aspect-ratio-locked resizing. */
+  naturalWidth: number;
+  naturalHeight: number;
+  /** On-canvas display size, in mm. */
+  width: number;
+  height: number;
+  /** Display opacity (0-1) so a reference image can be dimmed without
+   * hiding it, to trace over more easily. */
+  opacity: number;
+}
+
+export type Layer = GroupLayer | ShapeLayer | ImageLayer;
 
 export interface PrintBed {
   name: string;

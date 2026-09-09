@@ -105,6 +105,12 @@ function App() {
       // a scene redo, since there's no pen-anchor redo to give them
       // instead — a scene redo mid-draft would be just as surprising as
       // the undo case above.
+      if (store.cutToolActive && e.key === "Escape") {
+        e.preventDefault();
+        store.setCutToolActive(false);
+        return;
+      }
+
       if (store.penToolActive) {
         if (e.key === "Escape") {
           e.preventDefault();
@@ -274,7 +280,7 @@ function App() {
           )}
           <PlateTabs />
           {viewMode === "2d" && <ShapeToolbar />}
-          {isDragOver && <div className="dropzone-overlay">Drop SVG to import</div>}
+          {isDragOver && <div className="dropzone-overlay">Drop SVG to import, or a JPG/PNG for reference</div>}
           <FloatingWarningBanner />
           <ToastStack />
         </div>
