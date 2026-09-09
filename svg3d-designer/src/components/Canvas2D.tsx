@@ -124,6 +124,7 @@ export function Canvas2D({ resetSignal }: Props) {
   const finishPenTool = useSceneStore((s) => s.finishPenTool);
   const updatePenAnchorPosition = useSceneStore((s) => s.updatePenAnchorPosition);
   const updatePenAnchorHandle = useSceneStore((s) => s.updatePenAnchorHandle);
+  const setPenAnchorCurve = useSceneStore((s) => s.setPenAnchorCurve);
   const editingPenShapeId = useSceneStore((s) => s.editingPenShapeId);
   const beginEditPenShape = useSceneStore((s) => s.beginEditPenShape);
   const endEditPenShape = useSceneStore((s) => s.endEditPenShape);
@@ -1367,8 +1368,21 @@ export function Canvas2D({ resetSignal }: Props) {
             const adjust = penAdjustRef.current;
             if (adjust) {
               if (adjust.kind === "anchor") {
-                const prev = penDraftAnchors[adjust.index - 1];
-                updatePenAnchorPosition(adjust.index, e.shiftKey && prev ? snapAngle(prev, p) : p);
+                const isLastAnchor = adjust.index === penDraftAnchors.length - 1;
+                const directSelect = e.ctrlKey || e.metaKey;
+                if (isLastAnchor && !directSelect) {
+                  // A plain drag directly on the tip you just placed pulls
+                  // a fresh curve handle out of it (Figma/Illustrator's own
+                  // "give this point a new angle" gesture) instead of
+                  // moving the point — Ctrl/Cmd+drag still repositions it
+                  // (see the direct-select branch below), matching the
+                  // same passthrough used for older anchors.
+                  const anchor = penDraftAnchors[adjust.index];
+                  setPenAnchorCurve(adjust.index, e.shiftKey && anchor ? snapAngle(anchor, p) : p);
+                } else {
+                  const prev = penDraftAnchors[adjust.index - 1];
+                  updatePenAnchorPosition(adjust.index, e.shiftKey && prev ? snapAngle(prev, p) : p);
+                }
               } else {
                 const anchor = penDraftAnchors[adjust.index];
                 updatePenAnchorHandle(adjust.index, adjust.kind, e.shiftKey && anchor ? snapAngle(anchor, p) : p, e.altKey);
@@ -1587,7 +1601,7 @@ export function Canvas2D({ resetSignal }: Props) {
           const last = penDraftAnchors[penDraftAnchors.length - 1];
           if (previewTarget) d += penSegmentD(last, previewTarget);
 
-          const handleR = pxToMM(3.5);
+          const handleR = pxToMM(2.5);
           const mirroredHandle = dragging ? mirrorPoint(gesture!.anchorPoint, penDragPoint!) : null;
           const lastIndex = penDraftAnchors.length - 1;
 
@@ -1659,7 +1673,18 @@ export function Canvas2D({ resetSignal }: Props) {
                 const isLast = i === lastIndex;
                 const closable = isFirst && penDraftAnchors.length >= 3;
                 const adjustable = (isLast || penCtrlHeld) && !gesture;
-                const r = pxToMM(4) * (isFirst ? 1.6 : 1);
+                // Small enough that the dot marks the point without
+                // hiding it underneath — the first anchor still reads as
+                // the "close here" target via a modest size bump, not a
+                // big solid blob sitting on top of exactly where you
+                // clicked.
+                const r = pxToMM(2.75) * (isFirst ? 1.35 : 1);
+                // Cursor communicates which of the two very different
+                // things a drag on this dot is about to do: reposition
+                // (Ctrl/Cmd held — the direct-selection passthrough) vs.
+                // pull a fresh curve handle out of the tip you just placed
+                // (plain drag, last anchor only — see setPenAnchorCurve).
+                const cursor = penCtrlHeld ? "move" : isLast ? "crosshair" : "move";
                 return (
                   <circle
                     key={i}
@@ -1668,7 +1693,7 @@ export function Canvas2D({ resetSignal }: Props) {
                     cy={p.y}
                     r={r}
                     pointerEvents={adjustable ? "all" : "none"}
-                    style={adjustable ? { cursor: "move" } : undefined}
+                    style={adjustable ? { cursor } : undefined}
                     onPointerDown={adjustable ? (e) => beginPenAdjust(e, i, "anchor") : undefined}
                   />
                 );
@@ -1700,8 +1725,8 @@ export function Canvas2D({ resetSignal }: Props) {
             d += penSegmentD(anchorsWorld[i], anchorsWorld[(i + 1) % anchorsWorld.length]);
           }
 
-          const handleR = pxToMM(3.5);
-          const anchorR = pxToMM(4);
+          const handleR = pxToMM(2.5);
+          const anchorR = pxToMM(2.75);
 
           return (
             <>

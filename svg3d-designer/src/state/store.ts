@@ -427,10 +427,13 @@ interface SceneState {
   undoLastPenAnchor: () => void;
   /** Moves the anchor at `index` to `point`, carrying its handles along by
    * the same delta so the curve shape it already has stays put relative
-   * to the anchor — dragging the dot you just placed, not redrawing it.
-   * Canvas2D only ever calls this for the LAST anchor (dragging an
-   * earlier one would collide with the "click the first anchor to close"
-   * hotspot once a path is long enough to close at all). */
+   * to the anchor — repositioning an already-placed point rather than
+   * redrawing it. Canvas2D calls this for any anchor while Ctrl/Cmd is
+   * held (the direct-selection passthrough — see penCtrlHeld) or for the
+   * last anchor when the drag ISN'T pulling a fresh curve out of it (see
+   * setPenAnchorCurve); a plain, non-Ctrl drag directly on the last
+   * anchor's own dot means something different (a fresh angle), not a
+   * reposition. */
   updatePenAnchorPosition: (index: number, point: Point2) => void;
   /** Moves one handle of the anchor at `index` to `point`, mirroring the
    * opposite handle to keep the anchor smooth — the same live re-drag
@@ -442,6 +445,15 @@ interface SceneState {
     point: Point2,
     independent?: boolean,
   ) => void;
+  /** Presses-and-drags directly on the anchor at `index` (not one of its
+   * handles) to pull a brand new symmetric curve handle out of it — the
+   * "give the point I just placed a fresh angle" gesture Figma/
+   * Illustrator give when you drag on a just-placed anchor's own dot
+   * instead of one of its (possibly not-yet-existing) handles, without
+   * having to close the path first. Overwrites whatever handles the
+   * anchor already had, same as re-placing it as a smooth anchor from
+   * scratch. */
+  setPenAnchorCurve: (index: number, dropPoint: Point2) => void;
   /**
    * Closes the current draft into a real shape layer and returns to the
    * Select tool. Needs at least 3 anchors to form an outline — with fewer,
@@ -2231,6 +2243,29 @@ export const useSceneStore = create<SceneState>()(
       const anchor = state.penDraftAnchors[index];
       if (!anchor) return {};
       const next = applyPenHandleDrag(anchor, which, point, independent);
+      const penDraftAnchors = [...state.penDraftAnchors];
+      penDraftAnchors[index] = next;
+      return { penDraftAnchors };
+    }),
+
+  setPenAnchorCurve: (index, dropPoint) =>
+    set((state) => {
+      if (!state.penToolActive) return {};
+      const anchor = state.penDraftAnchors[index];
+      if (!anchor) return {};
+      // Same construction as a click-and-drag placing a brand new smooth
+      // anchor (see the pen-gesture commit in Canvas2D) — a symmetric
+      // handle pair mirrored through the anchor — just applied
+      // retroactively to an anchor that's already on the path, so
+      // pressing and dragging directly on the tip you just placed can
+      // still pull a fresh curve out of it before you move on.
+      const next: PenAnchor = {
+        x: anchor.x,
+        y: anchor.y,
+        type: "symmetric",
+        handleOut: dropPoint,
+        handleIn: { x: 2 * anchor.x - dropPoint.x, y: 2 * anchor.y - dropPoint.y },
+      };
       const penDraftAnchors = [...state.penDraftAnchors];
       penDraftAnchors[index] = next;
       return { penDraftAnchors };
