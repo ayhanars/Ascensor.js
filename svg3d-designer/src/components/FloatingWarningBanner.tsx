@@ -8,8 +8,10 @@ export function FloatingWarningBanner() {
   const layers = useSceneStore((s) => s.layers);
   const rootIds = useActivePlateRootIds();
   const dismissedFloatingIds = useSceneStore((s) => s.dismissedFloatingIds);
+  const dismissedThinFeatureIds = useSceneStore((s) => s.dismissedThinFeatureIds);
   const fixFloatingLayers = useSceneStore((s) => s.fixFloatingLayers);
   const dismissFloatingWarning = useSceneStore((s) => s.dismissFloatingWarning);
+  const dismissThinFeatureWarning = useSceneStore((s) => s.dismissThinFeatureWarning);
   const setSelection = useSceneStore((s) => s.setSelection);
   const [severities, setSeverities] = useState<{ critical: string[]; partial: string[] }>({
     critical: [],
@@ -27,7 +29,7 @@ export function FloatingWarningBanner() {
 
   const criticalIds = severities.critical.filter((id) => layers[id]);
   const partialIds = severities.partial.filter((id) => layers[id] && !dismissedFloatingIds.includes(id));
-  const thinFeatureWarnings = thinFeatures.filter((w) => layers[w.id]);
+  const thinFeatureWarnings = thinFeatures.filter((w) => layers[w.id] && !dismissedThinFeatureIds.includes(w.id));
   const thinFeatureIds = thinFeatureWarnings.map((w) => w.id);
   const narrowestThinFeatureMM = thinFeatureWarnings.reduce(
     (min, w) => Math.min(min, w.minWidthMM),
@@ -91,7 +93,7 @@ export function FloatingWarningBanner() {
         </div>
       )}
       {thinFeatureIds.length > 0 && (
-        <div className="floating-warning-banner floating-warning-banner--critical">
+        <div className="floating-warning-banner">
           <span className="floating-warning-icon">⚠</span>
           <span className="floating-warning-text">
             {thinFeatureIds.length === 1
@@ -105,6 +107,14 @@ export function FloatingWarningBanner() {
             title="Select the shape(s) with a too-thin feature — widen it in your source file and re-import, or thicken it here"
           >
             Select
+          </button>
+          <button
+            type="button"
+            className="floating-warning-dismiss-btn"
+            onClick={() => dismissThinFeatureWarning(thinFeatureIds)}
+            title="Meant to be this thin — dismiss this warning for these shape(s)"
+          >
+            Dismiss
           </button>
         </div>
       )}

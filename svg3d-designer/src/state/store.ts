@@ -180,7 +180,15 @@ function defaultDocument(): DocumentSettings {
 function buildBlankProjectContent(): { content: TrackedSceneSlice; activePlateId: string } {
   const { plates, activePlateId } = defaultPlates();
   return {
-    content: { document: defaultDocument(), layers: {}, rootIds: [], plates, plateOf: {}, dismissedFloatingIds: [] },
+    content: {
+      document: defaultDocument(),
+      layers: {},
+      rootIds: [],
+      plates,
+      plateOf: {},
+      dismissedFloatingIds: [],
+      dismissedThinFeatureIds: [],
+    },
     activePlateId,
   };
 }
@@ -221,8 +229,9 @@ function resolveInitialState(): TrackedSceneSlice & { activePlateId: string; act
       return {
         ...content,
         layers: normalizeLoadedLayers(content.layers),
-        // Older saved projects predate this field entirely.
+        // Older saved projects predate these fields entirely.
         dismissedFloatingIds: content.dismissedFloatingIds ?? [],
+        dismissedThinFeatureIds: content.dismissedThinFeatureIds ?? [],
         activePlateId: content.plates[0]?.id ?? defaultPlates().activePlateId,
         activeProjectId: activeId,
       };
@@ -249,6 +258,12 @@ interface SceneState {
    * it changes position again. Purely floating (no real contact at all)
    * shapes are never dismissible this way. */
   dismissedFloatingIds: string[];
+  /** Ids the user has explicitly acknowledged from the thin-feature
+   * warning — a deliberately fine detail (text, a thin divider) that's
+   * narrower than what a standard nozzle can reliably print but is meant
+   * to be that way. Suppresses that warning for this shape from here on,
+   * the same dismiss-and-forget pattern as dismissedFloatingIds. */
+  dismissedThinFeatureIds: string[];
   /** Which plate the canvas/viewport/layer panel currently show — a view
    * concern like `selection`/`viewMode`, not undo-tracked. */
   activePlateId: string;
@@ -322,6 +337,9 @@ interface SceneState {
   autoStackLayers: () => void;
   fixFloatingLayers: (ids: string[]) => void;
   dismissFloatingWarning: (ids: string[]) => void;
+  /** Acknowledges the thin-feature warning for these shapes — for a
+   * deliberately fine detail that's meant to stay that thin. */
+  dismissThinFeatureWarning: (ids: string[]) => void;
   deleteLayer: (id: string) => void;
   deleteSelection: () => void;
   duplicateLayer: (id: string) => void;
@@ -424,6 +442,7 @@ export interface TrackedSceneSlice {
   plates: Plate[];
   plateOf: Record<string, string>;
   dismissedFloatingIds: string[];
+  dismissedThinFeatureIds: string[];
 }
 
 function partializeScene(state: SceneState): TrackedSceneSlice {
@@ -434,6 +453,7 @@ function partializeScene(state: SceneState): TrackedSceneSlice {
     plates: state.plates,
     plateOf: state.plateOf,
     dismissedFloatingIds: state.dismissedFloatingIds,
+    dismissedThinFeatureIds: state.dismissedThinFeatureIds,
   };
 }
 
@@ -450,6 +470,7 @@ export const useSceneStore = create<SceneState>()(
   activeProjectId: initialState.activeProjectId,
   plateOf: initialState.plateOf,
   dismissedFloatingIds: initialState.dismissedFloatingIds,
+  dismissedThinFeatureIds: initialState.dismissedThinFeatureIds,
   selection: [],
   viewMode: "2d",
   showGrid: true,
@@ -556,6 +577,7 @@ export const useSceneStore = create<SceneState>()(
       ...content,
       layers: normalizeLoadedLayers(content.layers),
       dismissedFloatingIds: content.dismissedFloatingIds ?? [],
+      dismissedThinFeatureIds: content.dismissedThinFeatureIds ?? [],
       activePlateId: content.plates[0]?.id ?? defaultPlates().activePlateId,
       activeProjectId: id,
       selection: [],
@@ -973,6 +995,11 @@ export const useSceneStore = create<SceneState>()(
       dismissedFloatingIds: Array.from(new Set([...state.dismissedFloatingIds, ...ids])),
     })),
 
+  dismissThinFeatureWarning: (ids) =>
+    set((state) => ({
+      dismissedThinFeatureIds: Array.from(new Set([...state.dismissedThinFeatureIds, ...ids])),
+    })),
+
   deleteLayer: (id) =>
     set((state) => {
       const layer = state.layers[id];
@@ -1002,12 +1029,16 @@ export const useSceneStore = create<SceneState>()(
       const dismissedFloatingIds = state.dismissedFloatingIds.some((did) => toRemove.has(did))
         ? state.dismissedFloatingIds.filter((did) => !toRemove.has(did))
         : state.dismissedFloatingIds;
+      const dismissedThinFeatureIds = state.dismissedThinFeatureIds.some((did) => toRemove.has(did))
+        ? state.dismissedThinFeatureIds.filter((did) => !toRemove.has(did))
+        : state.dismissedThinFeatureIds;
 
       return {
         layers,
         rootIds,
         plateOf,
         dismissedFloatingIds,
+        dismissedThinFeatureIds,
         selection: state.selection.filter((s) => !toRemove.has(s)),
       };
     }),
@@ -2256,7 +2287,8 @@ export const useSceneStore = create<SceneState>()(
         a.document === b.document &&
         a.plates === b.plates &&
         a.plateOf === b.plateOf &&
-        a.dismissedFloatingIds === b.dismissedFloatingIds,
+        a.dismissedFloatingIds === b.dismissedFloatingIds &&
+        a.dismissedThinFeatureIds === b.dismissedThinFeatureIds,
     },
   ),
 );
