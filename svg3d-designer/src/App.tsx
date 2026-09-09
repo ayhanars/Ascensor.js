@@ -91,11 +91,20 @@ function App() {
       const mod = e.metaKey || e.ctrlKey;
       const store = useSceneStore.getState();
 
-      // Pen tool's own shortcuts take over Enter/Escape/Backspace while a
-      // path is being drawn — matches every pen tool's own convention
-      // (Enter/double-click to finish, Escape to abandon, Backspace to
-      // undo the last anchor rather than the delete-selection meaning
-      // those keys have the rest of the time).
+      // Pen tool's own shortcuts take over Enter/Escape/Backspace/Cmd+Z
+      // while a path is being drawn — matches every pen tool's own
+      // convention (Enter/double-click to finish, Escape to abandon,
+      // Backspace/Cmd+Z to undo the last anchor rather than the delete-
+      // selection/scene-undo meaning those keys have the rest of the
+      // time). Without this, Cmd+Z during a draft fell through to the
+      // global scene undo below — which has no idea a pen path is even in
+      // progress, so it silently undid the last FINISHED edit instead
+      // (possibly something unrelated from before the draft started)
+      // while leaving the in-progress anchors completely untouched.
+      // Cmd+Shift+Z/Cmd+Y are swallowed too rather than falling through to
+      // a scene redo, since there's no pen-anchor redo to give them
+      // instead — a scene redo mid-draft would be just as surprising as
+      // the undo case above.
       if (store.penToolActive) {
         if (e.key === "Escape") {
           e.preventDefault();
@@ -110,6 +119,15 @@ function App() {
         if (e.key === "Backspace" || e.key === "Delete") {
           e.preventDefault();
           store.undoLastPenAnchor();
+          return;
+        }
+        if (mod && e.key.toLowerCase() === "z") {
+          e.preventDefault();
+          if (!e.shiftKey) store.undoLastPenAnchor();
+          return;
+        }
+        if (mod && e.key.toLowerCase() === "y") {
+          e.preventDefault();
           return;
         }
       }

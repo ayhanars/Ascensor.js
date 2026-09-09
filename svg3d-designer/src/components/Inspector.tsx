@@ -145,11 +145,24 @@ function CollapsibleSection({
   children,
 }: {
   title: string;
+  /** Whether the underlying value is currently non-default (nonzero) —
+   * only used to seed whether this starts open. Pass a `key` derived from
+   * the selected layer id(s) at the call site so this re-seeds correctly
+   * when the selection changes to a shape with a different value, instead
+   * of carrying over whatever was open for the previous one. */
   active: boolean;
   onAdd: () => void;
   onRemove: () => void;
   children: React.ReactNode;
 }) {
+  // Deliberately separate from `active`: a slider inside this section
+  // dragged down to exactly 0 makes `active` false mid-drag (0 IS the
+  // "unset" value this section hides by default), but the section itself
+  // must stay open through that — collapsing here means `{open && children}`
+  // unmounts the very `<input type="range">` the user's pointer is still
+  // captured on, killing the drag outright. Only the explicit "−" button
+  // closes it now; a value merely passing through 0 no longer does.
+  const [open, setOpen] = useState(active);
   return (
     <div className="inspector-section">
       <div className="inspector-section-title-row">
@@ -157,13 +170,21 @@ function CollapsibleSection({
         <button
           type="button"
           className="section-toggle-btn"
-          title={active ? "Remove" : "Add"}
-          onClick={active ? onRemove : onAdd}
+          title={open ? "Remove" : "Add"}
+          onClick={() => {
+            if (open) {
+              onRemove();
+              setOpen(false);
+            } else {
+              onAdd();
+              setOpen(true);
+            }
+          }}
         >
-          {active ? "−" : "+"}
+          {open ? "−" : "+"}
         </button>
       </div>
-      {active && children}
+      {open && children}
     </div>
   );
 }
@@ -849,6 +870,7 @@ export function Inspector() {
               </div>
 
               <CollapsibleSection
+                key={targets.map((t) => t.id).join(",")}
                 title={`Corners${isBatch ? " (all shapes in group)" : ""}`}
                 active={display.cornerRadius > 0}
                 onAdd={() => applyToAll(targets.map((t) => t.id), (id) => setCornerRadius(id, 2))}
@@ -945,6 +967,7 @@ export function Inspector() {
 
                 return (
                   <CollapsibleSection
+                    key={ids.join(",")}
                     title={`Edge shaping${isBatch ? " (all shapes in group)" : ""}`}
                     active={display.bevelTop > 0 || display.bevelBottom > 0}
                     onAdd={() =>
