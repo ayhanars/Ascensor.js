@@ -1370,16 +1370,30 @@ export function Canvas2D({ resetSignal }: Props) {
               if (adjust.kind === "anchor") {
                 const isLastAnchor = adjust.index === penDraftAnchors.length - 1;
                 const directSelect = e.ctrlKey || e.metaKey;
+                const anchor = penDraftAnchors[adjust.index];
                 if (isLastAnchor && !directSelect) {
-                  // A plain drag directly on the tip you just placed pulls
-                  // a fresh curve handle out of it (Figma/Illustrator's own
-                  // "give this point a new angle" gesture) instead of
-                  // moving the point — Ctrl/Cmd+drag still repositions it
-                  // (see the direct-select branch below), matching the
-                  // same passthrough used for older anchors.
-                  const anchor = penDraftAnchors[adjust.index];
-                  setPenAnchorCurve(adjust.index, e.shiftKey && anchor ? snapAngle(anchor, p) : p);
+                  const target = e.shiftKey && anchor ? snapAngle(anchor, p) : p;
+                  if (anchor && (anchor.handleOut || anchor.handleIn)) {
+                    // The current anchor already carries curvature (state
+                    // this tool must not throw away just because you
+                    // pressed on it again) — dragging its dot adjusts the
+                    // OUTGOING handle that determines the next segment's
+                    // tangent, exactly like dragging the dedicated handle
+                    // nub would, rather than replacing its whole curve
+                    // with a brand new one from scratch.
+                    updatePenAnchorHandle(adjust.index, "handleOut", target, e.altKey);
+                  } else {
+                    // No curvature yet on this anchor: a plain drag
+                    // directly on the tip you just placed pulls a fresh
+                    // curve handle out of it (Figma/Illustrator's own
+                    // "give this point a new angle" gesture) instead of
+                    // moving the point.
+                    setPenAnchorCurve(adjust.index, target);
+                  }
                 } else {
+                  // Ctrl/Cmd+drag (any anchor) or a non-last anchor
+                  // (only reachable via that same passthrough) always
+                  // repositions instead — see penCtrlHeld.
                   const prev = penDraftAnchors[adjust.index - 1];
                   updatePenAnchorPosition(adjust.index, e.shiftKey && prev ? snapAngle(prev, p) : p);
                 }
