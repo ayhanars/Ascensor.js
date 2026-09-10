@@ -101,23 +101,31 @@ export function buildExtrudeGeometry(layer: ShapeLayer): THREE.BufferGeometry {
     return cached.geometry;
   }
 
-  // Smart Polish (sharpness-adaptive corner softening) runs first, on the
-  // shape's own outline — before the uniform corner-radius pass, which
-  // still applies on top if the user also set one. Independent of edge
-  // bevel entirely: this softens the OUTLINE's own sharp points regardless
-  // of whether the rim is beveled at all.
-  const polishedRegions = smartPolish > 0 ? smartRoundRegions(layer.regions, smartPolish) : layer.regions;
+  const hasBevel = bevelBottom > 0 || bevelTop > 0;
+
+  // Smart Polish (sharpness-adaptive corner softening) runs on the shape's
+  // own outline before the uniform corner-radius pass, which still applies
+  // on top if the user also set one. Without an edge bevel, it's simply
+  // pre-baked into the contour here. WITH a bevel, it's instead threaded
+  // through to buildBeveledExtrudeGeometry so it can compete for the same
+  // per-vertex radius as the bevel's own corner-assist rounding, rather
+  // than pre-baking a small, fixed fillet the bevel then has to inset
+  // through — pre-baking it collapsed a real ring shape's 10mm top bevel
+  // down to ~0.3mm once Smart Polish was also turned on (the bevel's own
+  // self-intersection safety check correctly refusing to inset a tight
+  // polish fillet that far, just not in a way that reads as "safe" to a
+  // user who only sees the bevel vanish).
+  const polishedRegions = smartPolish > 0 && !hasBevel ? smartRoundRegions(layer.regions, smartPolish) : layer.regions;
   const shapes = regionsToThreeShapes(roundRegions(polishedRegions, layer.cornerRadius));
   const depth = Math.max(0.05, layer.extrusionDepth);
 
-  const geometry =
-    bevelBottom > 0 || bevelTop > 0
-      ? buildBeveledExtrudeGeometry(shapes, depth, bevelBottom, bevelTop)
-      : (() => {
-          const g = new THREE.ExtrudeGeometry(shapes, { depth, bevelEnabled: false, curveSegments: 1 });
-          g.computeVertexNormals();
-          return g;
-        })();
+  const geometry = hasBevel
+    ? buildBeveledExtrudeGeometry(shapes, depth, bevelBottom, bevelTop, smartPolish)
+    : (() => {
+        const g = new THREE.ExtrudeGeometry(shapes, { depth, bevelEnabled: false, curveSegments: 1 });
+        g.computeVertexNormals();
+        return g;
+      })();
 
   geometryCache.set(layer.id, {
     regions: layer.regions,

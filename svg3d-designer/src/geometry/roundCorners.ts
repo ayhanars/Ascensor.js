@@ -183,3 +183,33 @@ export function smartRoundRegions(regions: ShapeRegion[], intensityMM: number): 
     holes: region.holes.map(round),
   }));
 }
+
+/**
+ * Combines a uniform baseline radius with Smart Polish's sharpness-adaptive
+ * radius, per vertex, taking whichever is larger — used where a caller
+ * (bevelExtrude's own corner-assist) already has its own reason to round a
+ * corner by some baseline amount and Smart Polish should only ever ADD
+ * softening on top of that, never work against it. Critically: unlike
+ * pre-rounding a shape's contour with `smartRoundContour` and handing the
+ * (now tightly-curved) result to a caller that then insets it much further,
+ * this lets the baseline and the adaptive radius compete for the SAME
+ * vertex and produces one single, larger fillet there — a small Smart
+ * Polish radius can never create a curve tighter than the baseline already
+ * calls for, which is exactly what made a beveled shape's own corner-safety
+ * check clamp its bevel down to near-nothing when Smart Polish pre-baked an
+ * incompatibly tight fillet before the bevel ever saw the contour (verified
+ * directly against a real ring shape with a 10mm top bevel: Smart Polish at
+ * intensity 5mm collapsed the safe bevel to ~0.3mm; using this instead
+ * keeps the full bevel intact while still visibly softening the same
+ * corners).
+ */
+export function adaptiveRoundContour(
+  points: Point2[],
+  baselineRadius: number,
+  smartIntensityMM: number,
+  segments: number,
+): Point2[] {
+  if (baselineRadius <= 0 && smartIntensityMM <= 0) return points;
+  if (points.length < 3) return points;
+  return roundContourCore(points, (theta) => Math.max(baselineRadius, smartIntensityMM * smartPolishFactor(theta)), segments);
+}

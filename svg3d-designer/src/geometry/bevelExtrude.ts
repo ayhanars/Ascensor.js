@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import * as polygonClipping from "polygon-clipping";
-import { roundContour } from "./roundCorners";
+import { adaptiveRoundContour } from "./roundCorners";
 
 /**
  * Independent top/bottom edge bevels for an extruded shape — distinct from
@@ -352,13 +352,23 @@ function isRingSimpleFull(points: THREE.Vector2[]): boolean {
  * steps if that fails) against the expensive `isRingSimpleFull` — seeing
  * isRingSimpleFull.doc for why: with the full triangulation check inside
  * the bisection itself, this ran the O(n^3) ear-clipper up to 32 times per
- * shape and froze the tab for 30+ seconds on a real beveled crescent. */
-function maxSafeInset(rawContour: THREE.Vector2[], candidateMax: number): number {
+ * shape and froze the tab for 30+ seconds on a real beveled crescent.
+ *
+ * `smartPolishMM` (Smart Polish's own intensity, separate from this
+ * function's own corner-assist) is folded into the SAME adaptive-radius
+ * corner rounding here rather than being pre-applied to `rawContour`
+ * before this ever sees it: a small Smart Polish radius pre-baked into the
+ * contour can be tighter than this amount can safely inset through, which
+ * used to collapse the safe bevel to near-zero on a real ring shape.
+ * Blending the two into one call lets them compete for the same vertex —
+ * whichever wants more rounding there wins — so Smart Polish can only add
+ * softening on top of what this already needed, never work against it. */
+function maxSafeInset(rawContour: THREE.Vector2[], candidateMax: number, smartPolishMM: number): number {
   function ringAt(amount: number): THREE.Vector2[] {
     const radius = amount * BEVEL_CORNER_ROUNDING_FRACTION;
     const contour =
-      radius > 0
-        ? roundContour(rawContour, radius, BEVEL_CORNER_SEGMENTS).map((p) => new THREE.Vector2(p.x, p.y))
+      radius > 0 || smartPolishMM > 0
+        ? adaptiveRoundContour(rawContour, radius, smartPolishMM, BEVEL_CORNER_SEGMENTS).map((p) => new THREE.Vector2(p.x, p.y))
         : rawContour;
     const movements = computeMovements(contour);
     return offsetRing(contour, movements, -amount);
@@ -407,6 +417,7 @@ export function buildBeveledExtrudeGeometry(
   depth: number,
   bevelBottom: number,
   bevelTop: number,
+  smartPolishMM = 0,
 ): THREE.BufferGeometry {
   let bottomMag = Math.max(0, bevelBottom);
   let topMag = Math.max(0, bevelTop);
@@ -471,8 +482,8 @@ export function buildBeveledExtrudeGeometry(
     const contour = forceWinding(extracted.shape, true);
     mergeOverlappingPoints(contour);
     if (contour.length < 3) continue;
-    bottomMag = Math.min(bottomMag, maxSafeInset(contour, bottomMag));
-    topMag = Math.min(topMag, maxSafeInset(contour, topMag));
+    bottomMag = Math.min(bottomMag, maxSafeInset(contour, bottomMag, smartPolishMM));
+    topMag = Math.min(topMag, maxSafeInset(contour, topMag, smartPolishMM));
   }
 
   const bottom = bottomMag;
@@ -546,11 +557,16 @@ export function buildBeveledExtrudeGeometry(
     if (contour.length < 3) continue;
 
     // See BEVEL_CORNER_ROUNDING_FRACTION above — gives sharp corners a real
-    // curve to sweep through instead of one mitered point.
+    // curve to sweep through instead of one mitered point. Smart Polish's
+    // own intensity competes for the same per-vertex radius here (see
+    // adaptiveRoundContour) rather than being pre-baked into the contour
+    // before this ever runs, so it can only add extra softening on top of
+    // whatever this bevel already needed — never a tighter, incompatible
+    // curve the bevel's own safety check would have to fight.
     const cornerAssistRadius = Math.max(bottom, top) * BEVEL_CORNER_ROUNDING_FRACTION;
-    if (cornerAssistRadius > 0) {
+    if (cornerAssistRadius > 0 || smartPolishMM > 0) {
       const toVec2 = (pts: THREE.Vector2[]) =>
-        roundContour(pts, cornerAssistRadius, BEVEL_CORNER_SEGMENTS).map((p) => new THREE.Vector2(p.x, p.y));
+        adaptiveRoundContour(pts, cornerAssistRadius, smartPolishMM, BEVEL_CORNER_SEGMENTS).map((p) => new THREE.Vector2(p.x, p.y));
       contour = toVec2(contour);
       holes = holes.map(toVec2);
     }
