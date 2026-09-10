@@ -251,6 +251,21 @@ function shoelaceArea(points: THREE.Vector2[]): number {
  * they match for a clean offset, and diverge once folding has happened
  * (the folded-over region's signed area cancels against itself in the raw
  * sum but not in the unioned result).
+ *
+ * That area check alone still isn't enough: a ring can be a perfectly
+ * valid simple polygon by that test and still break the specific
+ * triangulator the real caps are built with (`THREE.ShapeUtils.
+ * triangulateShape`, an ear-clipper) once two non-adjacent stretches of
+ * the outline pinch close enough together without literally crossing —
+ * exactly what a crescent's own inward-offset waist does. Verified
+ * directly against that real shape: the union-area check above reported
+ * its offset ring simple, and `triangulateShape` then produced a single
+ * "ear" bigger than the ring's own total area — only possible if some of
+ * its output triangles overlap, which is invalid regardless of whether
+ * the boundary itself self-intersects. Re-deriving the ring's area a
+ * SECOND way — summing the actual triangles the real cap-building code
+ * will use — catches that failure mode directly instead of trusting a
+ * proxy that doesn't fully cover it.
  */
 function isRingSimple(points: THREE.Vector2[]): boolean {
   if (points.length < 3) return true;
@@ -265,21 +280,65 @@ function isRingSimple(points: THREE.Vector2[]): boolean {
   }
   let repairedArea = 0;
   for (const polygon of repaired) repairedArea += shoelaceArea(polygon[0].map(([x, y]) => new THREE.Vector2(x, y)));
-  return Math.abs(repairedArea - raw) < raw * 0.01;
+  if (Math.abs(repairedArea - raw) >= raw * 0.01) return false;
+
+  let triangulated: number[][];
+  try {
+    triangulated = THREE.ShapeUtils.triangulateShape(points, []);
+  } catch {
+    return false;
+  }
+  let triSum = 0;
+  for (const [ia, ib, ic] of triangulated) {
+    const a = points[ia];
+    const b = points[ib];
+    const c = points[ic];
+    triSum += Math.abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / 2;
+  }
+  return Math.abs(triSum - raw) < raw * 0.01;
 }
 
 /** Binary-searches the largest inset in [0, candidateMax] that still keeps
- * `contour` offset by that amount a simple, non-self-intersecting ring —
- * see isRingSimple. Monotonic: a smaller inset is never less safe than a
- * larger one, so a plain binary search converges directly on the boundary. */
-function maxSafeInset(contour: THREE.Vector2[], movements: THREE.Vector2[], candidateMax: number): number {
+ * `rawContour` offset by that amount a simple, non-self-intersecting ring —
+ * see isRingSimple. Tests the actual INWARD chamfer direction a bevel cap
+ * is built with (a negative offset — see `Ring.offset`'s doc below), not
+ * an outward grow: an outward offset of a cusp or thin spike is nearly
+ * always safe (the ring only gets bigger), so testing that direction
+ * instead of the inward shrink a cap ring actually uses left this check
+ * passing amounts that then folded the ring in on itself once actually
+ * built — verified directly against a real crescent-shaped design, whose
+ * inward -1.5mm inset self-intersects at both cusps despite the (wrongly
+ * signed) old check reporting a full 1.5mm as safe.
+ *
+ * Also re-rounds `rawContour` at each candidate amount's own corresponding
+ * `BEVEL_CORNER_ROUNDING_FRACTION` radius before testing it, rather than
+ * validating the raw, unrounded outline and then actually building from a
+ * rounded one this check never looked at — the same real design's cusps
+ * still self-intersect at 1.5mm once its own corner-assist rounding is
+ * applied first, so skipping that step here was independently enough to
+ * let the same failure through even with the sign fixed. Monotonic: a
+ * smaller candidate is never less safe than a larger one (a smaller inset
+ * folds a ring no more than a bigger one does, and its own smaller
+ * corner-assist radius only ever blunts a corner further, which can only
+ * help), so a plain binary search converges directly on the boundary. */
+function maxSafeInset(rawContour: THREE.Vector2[], candidateMax: number): number {
+  function safeAt(amount: number): boolean {
+    if (amount <= 0) return true;
+    const radius = amount * BEVEL_CORNER_ROUNDING_FRACTION;
+    const contour =
+      radius > 0
+        ? roundContour(rawContour, radius, BEVEL_CORNER_SEGMENTS).map((p) => new THREE.Vector2(p.x, p.y))
+        : rawContour;
+    const movements = computeMovements(contour);
+    return isRingSimple(offsetRing(contour, movements, -amount));
+  }
   if (candidateMax <= 0) return candidateMax;
-  if (isRingSimple(offsetRing(contour, movements, candidateMax))) return candidateMax;
+  if (safeAt(candidateMax)) return candidateMax;
   let lo = 0;
   let hi = candidateMax;
   for (let i = 0; i < 16; i++) {
     const mid = (lo + hi) / 2;
-    if (isRingSimple(offsetRing(contour, movements, mid))) lo = mid;
+    if (safeAt(mid)) lo = mid;
     else hi = mid;
   }
   return lo;
@@ -367,9 +426,8 @@ export function buildBeveledExtrudeGeometry(
     const contour = forceWinding(extracted.shape, true);
     mergeOverlappingPoints(contour);
     if (contour.length < 3) continue;
-    const movements = computeMovements(contour);
-    bottomMag = Math.min(bottomMag, maxSafeInset(contour, movements, bottomMag));
-    topMag = Math.min(topMag, maxSafeInset(contour, movements, topMag));
+    bottomMag = Math.min(bottomMag, maxSafeInset(contour, bottomMag));
+    topMag = Math.min(topMag, maxSafeInset(contour, topMag));
   }
 
   const bottom = bottomMag;
