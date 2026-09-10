@@ -267,7 +267,7 @@ function shoelaceArea(points: THREE.Vector2[]): number {
  * will use — catches that failure mode directly instead of trusting a
  * proxy that doesn't fully cover it.
  */
-function isRingSimple(points: THREE.Vector2[]): boolean {
+function isRingSimpleFast(points: THREE.Vector2[]): boolean {
   if (points.length < 3) return true;
   const raw = shoelaceArea(points);
   if (raw < 1e-9) return true; // already collapsed either way — nothing further to protect here
@@ -280,7 +280,32 @@ function isRingSimple(points: THREE.Vector2[]): boolean {
   }
   let repairedArea = 0;
   for (const polygon of repaired) repairedArea += shoelaceArea(polygon[0].map(([x, y]) => new THREE.Vector2(x, y)));
-  if (Math.abs(repairedArea - raw) >= raw * 0.01) return false;
+  return Math.abs(repairedArea - raw) < raw * 0.01;
+}
+
+/**
+ * `isRingSimpleFast` alone still isn't enough: a ring can be a perfectly
+ * valid simple polygon by that test and still break the specific
+ * triangulator the real caps are built with (`THREE.ShapeUtils.
+ * triangulateShape`, an ear-clipper) once two non-adjacent stretches of the
+ * outline pinch close enough together without literally crossing — exactly
+ * what a crescent's own inward-offset waist does. This is the direct,
+ * conclusive check for that: re-derive the ring's area a SECOND way (sum
+ * the actual triangles the real cap-building code will use) and compare.
+ *
+ * Deliberately kept separate from (and only run after) the fast check: this
+ * one is expensive — `triangulateShape` is a naive ear-clipper (no spatial
+ * index), roughly O(n^3) on a contour with n points — and a boolean-op- or
+ * corner-rounding-derived contour can easily have several hundred points.
+ * Running this inside the same binary search that used to call it on every
+ * one of ~16 iterations x 2 sides froze the whole tab for 30+ seconds on a
+ * real beveled crescent (an actual regression, caught live) — see
+ * `maxSafeInset`, which now only calls this a handful of times total.
+ */
+function isRingSimpleFull(points: THREE.Vector2[]): boolean {
+  if (!isRingSimpleFast(points)) return false;
+  const raw = shoelaceArea(points);
+  if (raw < 1e-9) return true;
 
   let triangulated: number[][];
   try {
@@ -300,7 +325,7 @@ function isRingSimple(points: THREE.Vector2[]): boolean {
 
 /** Binary-searches the largest inset in [0, candidateMax] that still keeps
  * `rawContour` offset by that amount a simple, non-self-intersecting ring —
- * see isRingSimple. Tests the actual INWARD chamfer direction a bevel cap
+ * see isRingSimpleFast/isRingSimpleFull below. Tests the actual INWARD chamfer direction a bevel cap
  * is built with (a negative offset — see `Ring.offset`'s doc below), not
  * an outward grow: an outward offset of a cusp or thin spike is nearly
  * always safe (the ring only gets bigger), so testing that direction
@@ -320,28 +345,48 @@ function isRingSimple(points: THREE.Vector2[]): boolean {
  * smaller candidate is never less safe than a larger one (a smaller inset
  * folds a ring no more than a bigger one does, and its own smaller
  * corner-assist radius only ever blunts a corner further, which can only
- * help), so a plain binary search converges directly on the boundary. */
+ * help), so a plain binary search converges directly on the boundary.
+ *
+ * Runs the 16-step bisection against `isRingSimpleFast` only, then
+ * validates just the winning amount (plus a handful of bounded backoff
+ * steps if that fails) against the expensive `isRingSimpleFull` — seeing
+ * isRingSimpleFull.doc for why: with the full triangulation check inside
+ * the bisection itself, this ran the O(n^3) ear-clipper up to 32 times per
+ * shape and froze the tab for 30+ seconds on a real beveled crescent. */
 function maxSafeInset(rawContour: THREE.Vector2[], candidateMax: number): number {
-  function safeAt(amount: number): boolean {
-    if (amount <= 0) return true;
+  function ringAt(amount: number): THREE.Vector2[] {
     const radius = amount * BEVEL_CORNER_ROUNDING_FRACTION;
     const contour =
       radius > 0
         ? roundContour(rawContour, radius, BEVEL_CORNER_SEGMENTS).map((p) => new THREE.Vector2(p.x, p.y))
         : rawContour;
     const movements = computeMovements(contour);
-    return isRingSimple(offsetRing(contour, movements, -amount));
+    return offsetRing(contour, movements, -amount);
+  }
+  function fastSafeAt(amount: number): boolean {
+    return amount <= 0 || isRingSimpleFast(ringAt(amount));
   }
   if (candidateMax <= 0) return candidateMax;
-  if (safeAt(candidateMax)) return candidateMax;
+
   let lo = 0;
   let hi = candidateMax;
-  for (let i = 0; i < 16; i++) {
-    const mid = (lo + hi) / 2;
-    if (safeAt(mid)) lo = mid;
-    else hi = mid;
+  if (fastSafeAt(candidateMax)) {
+    lo = candidateMax;
+  } else {
+    for (let i = 0; i < 16; i++) {
+      const mid = (lo + hi) / 2;
+      if (fastSafeAt(mid)) lo = mid;
+      else hi = mid;
+    }
   }
-  return lo;
+
+  // Back the winning amount off in a few monotonically-safer steps until
+  // the expensive, conclusive check also passes (see isRingSimpleFull).
+  let amount = lo;
+  for (let i = 0; i < 8 && amount > 0 && !isRingSimpleFull(ringAt(amount)); i++) {
+    amount *= 0.85;
+  }
+  return amount;
 }
 
 interface Ring {

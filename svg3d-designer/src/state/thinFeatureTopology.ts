@@ -145,27 +145,40 @@ function isConnectedThroughGap(
   const goal = nearestOpen(bc, br);
   if (!start || !goal) return false;
 
-  const goalKey = `${goal[0]},${goal[1]}`;
-  const visited = new Set<string>([`${start[0]},${start[1]}`]);
-  let frontier: Array<[number, number]> = [start];
+  // A `Set<string>` keyed by template-literal "c,r" strings used to track
+  // visited cells here — for a fine raster (RASTER_CELL_SIZE_MM=0.03mm) over
+  // even a modest shape, that's millions of string allocations/hashes per
+  // flood fill, called up to ~13x per candidate pinch point (the fast test
+  // plus a 12-step binary search). Measured directly: this alone froze the
+  // tab for 30+ seconds on a single real beveled crescent. A flat
+  // `Uint8Array` indexed exactly like `field.inside` (same `cellIndex`) does
+  // the identical visited-tracking with plain integer arithmetic instead —
+  // same algorithm, same result, no allocation-per-cell cost.
+  const visited = new Uint8Array(cols * rows);
+  const startIdx = cellIndex(field, start[0], start[1]);
+  const goalIdx = cellIndex(field, goal[0], goal[1]);
+  visited[startIdx] = 1;
+  let frontier: number[] = [startIdx];
   let steps = 0;
   while (frontier.length && steps < maxSteps) {
-    const next: Array<[number, number]> = [];
-    for (const [c, r] of frontier) {
-      if (`${c},${r}` === goalKey) return true;
+    const next: number[] = [];
+    for (const idx of frontier) {
+      if (idx === goalIdx) return true;
+      const c = idx % cols;
+      const r = (idx - c) / cols;
       for (const [dc, dr] of NEIGHBORS_4) {
         const nc = c + dc, nr = r + dr;
         if (!isOpen(nc, nr)) continue;
-        const k = `${nc},${nr}`;
-        if (visited.has(k)) continue;
-        visited.add(k);
-        next.push([nc, nr]);
+        const nIdx = cellIndex(field, nc, nr);
+        if (visited[nIdx]) continue;
+        visited[nIdx] = 1;
+        next.push(nIdx);
       }
     }
     frontier = next;
     steps++;
   }
-  return visited.has(goalKey);
+  return visited[goalIdx] === 1;
 }
 
 interface Candidate {
