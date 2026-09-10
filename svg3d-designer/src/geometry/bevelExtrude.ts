@@ -362,8 +362,43 @@ function isRingSimpleFull(points: THREE.Vector2[]): boolean {
  * used to collapse the safe bevel to near-zero on a real ring shape.
  * Blending the two into one call lets them compete for the same vertex —
  * whichever wants more rounding there wins — so Smart Polish can only add
- * softening on top of what this already needed, never work against it. */
+ * softening on top of what this already needed, never work against it.
+ *
+ * `isRingSimpleFast`/`Full` alone aren't sufficient here: they only verify
+ * the offset ring is internally self-consistent (its own self-union area
+ * matches its raw area) — a ring whose per-vertex movement vectors have
+ * gone globally wrong at a concave vertex (an over-large or wrong-direction
+ * miter from getBevelVec) can still pass that check while representing a
+ * shape that's flared/inverted relative to what an inward inset must
+ * produce, since polygon-clipping's self-union has no notion of what the
+ * ring "should" look like — only whether it's simple. An inward offset of
+ * a simple polygon must strictly shrink its enclosed area as the inset
+ * amount grows (standard polygon erosion), so checking the offset ring's
+ * area against the ORIGINAL contour's own area catches this directly.
+ * Caught live against a real crescent: a 15mm bottom bevel passed both
+ * simplicity checks untouched (`bottomMag` came back exactly 15, fully
+ * unclamped) while the offset ring's area had actually GROWN to 1432mm²
+ * from the raw contour's 950mm² — an inward inset that grew is only
+ * possible if the offset folded/flared outward somewhere, which is exactly
+ * the "torn, flared skirt" the built mesh showed at the bottom.
+ *
+ * Also NOT actually monotonic on a real concave shape, despite the
+ * "smaller is never less safe" reasoning above: scanning that same
+ * crescent's top bevel densely from 0 to candidateMax in 0.5mm steps,
+ * `isRingSimpleFast` correctly flagged every amount from 1.5mm through
+ * 7.5mm as unsafe (the ring is genuinely folded there) but then flipped
+ * back to reporting "safe" from 8mm onward — a folded-over region's area
+ * can coincidentally re-match its self-union's area once the fold grows
+ * large enough, a false negative in that check's own area-comparison
+ * method. A binary search (or the candidateMax-first shortcut this used
+ * to have) can land entirely inside that later false-safe region and never
+ * sample the genuinely-unsafe amounts in between at all — which is exactly
+ * how a raw 10.35mm bevel came back fully unclamped. Sweeping up from 0
+ * and stopping at the FIRST unsafe amount finds the boundary that's
+ * actually continuously valid from zero, regardless of what a later,
+ * spuriously-"safe"-looking amount reports. */
 function maxSafeInset(rawContour: THREE.Vector2[], candidateMax: number, smartPolishMM: number): number {
+  const rawArea = shoelaceArea(rawContour);
   function ringAt(amount: number): THREE.Vector2[] {
     const radius = amount * BEVEL_CORNER_ROUNDING_FRACTION;
     const contour =
@@ -373,16 +408,40 @@ function maxSafeInset(rawContour: THREE.Vector2[], candidateMax: number, smartPo
     const movements = computeMovements(contour);
     return offsetRing(contour, movements, -amount);
   }
+  function shrankProperly(ring: THREE.Vector2[]): boolean {
+    return rawArea < 1e-9 || shoelaceArea(ring) <= rawArea * 1.001;
+  }
   function fastSafeAt(amount: number): boolean {
-    return amount <= 0 || isRingSimpleFast(ringAt(amount));
+    if (amount <= 0) return true;
+    const ring = ringAt(amount);
+    return shrankProperly(ring) && isRingSimpleFast(ring);
   }
   if (candidateMax <= 0) return candidateMax;
 
+  // Coarse sweep up from 0, stopping at the first unsafe sample — cheap
+  // (isRingSimpleFast only) and robust to the non-monotonicity above,
+  // since it never looks past the first real failure. 20 steps is enough
+  // resolution to reliably land the follow-up bisection in the right
+  // bracket without materially adding to this function's cost.
+  const SWEEP_STEPS = 20;
   let lo = 0;
   let hi = candidateMax;
-  if (fastSafeAt(candidateMax)) {
-    lo = candidateMax;
-  } else {
+  let foundUnsafe = false;
+  for (let i = 1; i <= SWEEP_STEPS; i++) {
+    const amount = (candidateMax * i) / SWEEP_STEPS;
+    if (fastSafeAt(amount)) {
+      lo = amount;
+    } else {
+      hi = amount;
+      foundUnsafe = true;
+      break;
+    }
+  }
+
+  // Refine within the bracket the sweep found — only needed when the
+  // sweep actually hit a failure; a sweep that stayed safe all the way to
+  // candidateMax has nothing left to bisect.
+  if (foundUnsafe) {
     for (let i = 0; i < 16; i++) {
       const mid = (lo + hi) / 2;
       if (fastSafeAt(mid)) lo = mid;
@@ -393,7 +452,9 @@ function maxSafeInset(rawContour: THREE.Vector2[], candidateMax: number, smartPo
   // Back the winning amount off in a few monotonically-safer steps until
   // the expensive, conclusive check also passes (see isRingSimpleFull).
   let amount = lo;
-  for (let i = 0; i < 8 && amount > 0 && !isRingSimpleFull(ringAt(amount)); i++) {
+  for (let i = 0; i < 8 && amount > 0; i++) {
+    const ring = ringAt(amount);
+    if (shrankProperly(ring) && isRingSimpleFull(ring)) break;
     amount *= 0.85;
   }
   return amount;
