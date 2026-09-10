@@ -20,21 +20,44 @@ export interface ShapeRegion {
 }
 
 /**
- * One anchor in an in-progress Pen tool path (see the store's
- * `penDraftAnchors`), matching how Figma/Illustrator/Photoshop's own pen
- * tool represents a mixed corner/smooth path: a plain click places a
- * "corner" anchor (both handles undefined, straight lines on either side);
- * a click-and-drag places a "smooth" anchor with a real tangent handle in
- * each direction. `handleIn`/`handleOut` are absolute document-space
- * control points for the incoming/outgoing bezier segment — undefined
- * means that side of the anchor is a straight line, not a curve. The
- * finished path is flattened into an ordinary `ShapeRegion` outline (see
- * `flattenPenAnchors` in geometry/primitives.ts) once closed, so nothing
- * past that point needs to know curves were ever involved.
+ * How an anchor's two handles relate to each other — the same three-way
+ * distinction every professional vector tool (Figma/Illustrator/
+ * Photoshop) exposes:
+ *  - "corner": handles move fully independently. A cusp — the curve (or
+ *    straight line) on either side of the anchor can point any direction,
+ *    including no handle at all on one or both sides.
+ *  - "smooth": handles stay collinear (opposite directions through the
+ *    anchor) but may have different LENGTHS — the curve stays tangent-
+ *    continuous through the anchor without forcing symmetric curvature.
+ *  - "symmetric": handles stay collinear AND equal length — the strongest,
+ *    most common "smooth curve" case, and what a plain click-and-drag
+ *    anchor still defaults to.
+ * Purely a hint for how a drag on ONE handle should update the OTHER one
+ * (see updatePenAnchorHandle/updatePenShapeAnchorHandle) — the actual
+ * curve math never looks at it directly, only at whatever handleIn/
+ * handleOut currently are.
+ */
+export type PenAnchorType = "corner" | "smooth" | "symmetric";
+
+/**
+ * One anchor in a Pen tool path — both the in-progress draft (the store's
+ * `penDraftAnchors`) and, once a path is finished, the persistent record
+ * kept on its ShapeLayer (see `penAnchors` below) so the path stays a
+ * real editable vector path instead of collapsing into an opaque polygon
+ * the moment you're done drawing it. `handleIn`/`handleOut` are control
+ * points for the incoming/outgoing bezier segment, in the SAME coordinate
+ * space `x`/`y` are in (absolute document space while still a draft;
+ * shape-local space once attached to a ShapeLayer, matching `regions`) —
+ * undefined means that side of the anchor is a straight line, not a
+ * curve. The rendered/extruded/exported outline is always the flattened
+ * result (see `flattenPenAnchors` in geometry/primitives.ts): nothing
+ * downstream of `regions` needs to know curves or anchor types were ever
+ * involved, only this editing layer does.
  */
 export interface PenAnchor extends Point2 {
   handleIn?: Point2;
   handleOut?: Point2;
+  type: PenAnchorType;
 }
 
 export interface Transform2D {
@@ -104,6 +127,17 @@ export interface ShapeLayer extends LayerCommon {
   /** Inner-vertex radius as a fraction of the outer radius, for a Star
    * tool shape. Only meaningful alongside starPoints. */
   starInnerRatio?: number;
+  /** The Pen tool's own editable anchor/handle structure, in the same
+   * local (shape-origin-relative) space as `regions` — present only for a
+   * shape actually drawn with the Pen tool, undefined for every other
+   * shape (same "editable-back-into-existence" convention as
+   * polygonSides/starPoints). `regions` stays the single source of truth
+   * for rendering/extrusion/export; this is what lets the Pen tool's own
+   * Edit Path mode re-open the path's real anchors and handles later
+   * instead of only ever seeing the flattened, already-tessellated
+   * outline `regions` holds. Kept in sync with `regions` on every anchor/
+   * handle edit (see updatePenShapeAnchorPosition/Handle in the store). */
+  penAnchors?: PenAnchor[];
 }
 
 /**

@@ -636,6 +636,21 @@
 .pen-draft-point.first-point.closable {
   fill: var(--accent);
 }
+/* Hovering the current anchor (the only one with pointer-events enabled,
+   short of the Ctrl/Cmd direct-select passthrough) is the tool's one
+   visual cue that clicking/dragging here acts on that anchor's own state
+   instead of placing a new point — filling it solid on hover, the same
+   way the first anchor already goes solid once it's close-able, gives
+   that "you're about to interact with THIS point" feedback Figma's own
+   pen cursor swap gives. */
+.pen-draft-point:hover {
+  fill: var(--accent);
+}
+.pen-draft-point.first-point.closable:hover {
+  /* Already solid — widen the ring instead so hover still reads as a
+     distinct state from "just close-able." */
+  stroke-width: 2.5;
+}
 .pen-draft-line {
   fill: none;
   stroke: var(--accent);
@@ -652,6 +667,26 @@
 .pen-draft-handle {
   fill: var(--accent);
   opacity: 0.8;
+}
+
+/* Edit Path mode (a finished Pen shape's anchors/handles, re-opened for
+   direct editing) reuses the draft-drawing anchor/handle/dashed-line looks
+   above so the two states read as "the same kind of thing," but the
+   outline itself gets its own class — it isn't the in-progress preview
+   line, it's the real path, so it stays solid instead of matching
+   pen-draft-line's usual dashed/live-preview feel. */
+.pen-edit-path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+.pen-edit-point {
+  cursor: move;
+}
+.pen-edit-point.curved {
+  fill: var(--accent);
 }
 
 .selection-box {

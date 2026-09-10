@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { beginGesture, endGesture, useActivePlateRootIds, useSceneStore, type TrackedSceneSlice } from "../state/store";
 import {
+  applyTransform2D,
   boundsOverlap,
   getLayerWorldBounds,
   getLocalLayerBounds,
   getMultiLayerWorldBounds,
   getTopLevelId,
+  getWorldTransform,
+  invertTransform2D,
   isAncestorOrSelf,
   isEffectivelyLocked,
   stepIntoOnClick,
@@ -121,6 +124,14 @@ export function Canvas2D({ resetSignal }: Props) {
   const finishPenTool = useSceneStore((s) => s.finishPenTool);
   const updatePenAnchorPosition = useSceneStore((s) => s.updatePenAnchorPosition);
   const updatePenAnchorHandle = useSceneStore((s) => s.updatePenAnchorHandle);
+  const setPenAnchorCurve = useSceneStore((s) => s.setPenAnchorCurve);
+  const editingPenShapeId = useSceneStore((s) => s.editingPenShapeId);
+  const beginEditPenShape = useSceneStore((s) => s.beginEditPenShape);
+  const endEditPenShape = useSceneStore((s) => s.endEditPenShape);
+  const updatePenShapeAnchorPosition = useSceneStore((s) => s.updatePenShapeAnchorPosition);
+  const updatePenShapeAnchorHandle = useSceneStore((s) => s.updatePenShapeAnchorHandle);
+  const setPenShapeAnchorType = useSceneStore((s) => s.setPenShapeAnchorType);
+  const deletePenShapeAnchor = useSceneStore((s) => s.deletePenShapeAnchor);
   const addImageLayer = useSceneStore((s) => s.addImageLayer);
   const cutToolActive = useSceneStore((s) => s.cutToolActive);
   const cutShapesByLine = useSceneStore((s) => s.cutShapesByLine);
@@ -196,6 +207,56 @@ export function Canvas2D({ resetSignal }: Props) {
       penAdjustRef.current = null;
     }
   }, [penToolActive]);
+  // Ctrl/Cmd held while the Pen tool is armed temporarily switches to
+  // direct-selection behavior — every already-placed anchor (not just the
+  // last one) and its handles become draggable, the same "manipulate
+  // existing points without leaving the Pen tool" passthrough Illustrator/
+  // Figma give. Released (or the window loses focus) reverts to the
+  // ordinary draw-only behavior where only the last anchor is adjustable.
+  const [penCtrlHeld, setPenCtrlHeld] = useState(false);
+  useEffect(() => {
+    if (!penToolActive) {
+      setPenCtrlHeld(false);
+      return;
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Control" || e.key === "Meta") setPenCtrlHeld(true);
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.key === "Control" || e.key === "Meta") setPenCtrlHeld(false);
+    }
+    function onBlur() {
+      setPenCtrlHeld(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [penToolActive]);
+  // A drag on one of Edit Path mode's own anchors/handles — mirrors
+  // penAdjustRef above, but against a FINISHED shape's persistent
+  // penAnchors (via updatePenShapeAnchorPosition/Handle) rather than the
+  // in-progress draft, and undo-tracked per gesture (see beginGesture/
+  // endGesture) since every one of those edits is a real, trackable
+  // change to the layer, unlike drafting a not-yet-committed path.
+  const editPenAdjustRef = useRef<{
+    shapeId: string;
+    index: number;
+    kind: "anchor" | "handleIn" | "handleOut";
+    preGestureSnapshot: TrackedSceneSlice;
+    moved: boolean;
+  } | null>(null);
+  // Leaving Edit Path mode whenever the edited shape stops being the
+  // selection (clicking elsewhere, clearing selection, Escape already
+  // handled explicitly in App.tsx) keeps this mode from lingering silently
+  // once the user has clearly moved on to something else.
+  useEffect(() => {
+    if (editingPenShapeId && !selection.includes(editingPenShapeId)) endEditPenShape();
+  }, [selection, editingPenShapeId, endEditPenShape]);
   // Smart alignment guides: while dragging shapes, a dashed line highlights
   // any edge/center that lines up with another shape's, so you can actually
   // see the alignment happen instead of eyeballing it against the (visually
@@ -495,6 +556,27 @@ export function Canvas2D({ resetSignal }: Props) {
     return { x: 2 * anchor.x - handle.x, y: 2 * anchor.y - handle.y };
   }
 
+  /** Shift-constrain: rounds the angle from `from` to `to` to the nearest
+   * `stepDeg` (45° by default — corner/handle placement in every vector
+   * tool), keeping the same distance. Used for both a new anchor's
+   * position relative to the previous one AND a handle's direction
+   * relative to its own anchor, so Shift means the same thing whether
+   * you're placing a point or pulling a curve out of it. */
+  function snapAngle(
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    stepDeg = 45,
+  ): { x: number; y: number } {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 1e-9) return to;
+    const angle = Math.atan2(dy, dx);
+    const stepRad = (stepDeg * Math.PI) / 180;
+    const snapped = Math.round(angle / stepRad) * stepRad;
+    return { x: from.x + Math.cos(snapped) * dist, y: from.y + Math.sin(snapped) * dist };
+  }
+
   /** Starts a pen-tool gesture on pointerdown; returns whether it did
    * (callers should skip their normal select/pan/move handling if so) —
    * same shape as tryZoomToolClick above. The actual anchor/close commit
@@ -502,6 +584,13 @@ export function Canvas2D({ resetSignal }: Props) {
    * this was a click or a click-and-drag. */
   function tryPenToolDown(e: React.PointerEvent): boolean {
     if (!penToolActive) return false;
+    // Ctrl/Cmd held: direct-selection passthrough (see penCtrlHeld) — a
+    // click that lands on an existing anchor/handle is handled by that
+    // element's own onPointerDown (beginPenAdjust, called before this ever
+    // runs, via stopPropagation); anything else is an ordinary
+    // select/marquee click, not a new-anchor placement, while the
+    // modifier is held.
+    if (e.ctrlKey || e.metaKey) return false;
     e.stopPropagation();
     const p = clientToSvg(e.clientX, e.clientY);
     const first = penDraftAnchors[0];
@@ -588,6 +677,34 @@ export function Canvas2D({ resetSignal }: Props) {
     e.stopPropagation();
     penAdjustRef.current = { index, kind };
     (e.target as Element).setPointerCapture(e.pointerId);
+  }
+
+  /** Starts dragging an anchor's own dot or one of its handles while in
+   * Edit Path mode. Cmd/Ctrl+click on an anchor dot instead deletes it
+   * outright (no drag) — Illustrator/Figma's own "modifier-click a point to
+   * remove it" gesture, and the only way to shrink a finished path's anchor
+   * count back down since drawing itself never removes points. */
+  function beginEditPenAdjust(e: React.PointerEvent, shapeId: string, index: number, kind: "anchor" | "handleIn" | "handleOut") {
+    e.stopPropagation();
+    if (kind === "anchor" && (e.metaKey || e.ctrlKey)) {
+      deletePenShapeAnchor(shapeId, index);
+      return;
+    }
+    editPenAdjustRef.current = { shapeId, index, kind, preGestureSnapshot: beginGesture(), moved: false };
+    (e.target as Element).setPointerCapture(e.pointerId);
+  }
+
+  /** Cycles an anchor's type corner → smooth → symmetric → corner on
+   * double-click, while in Edit Path mode — the quickest way to satisfy
+   * "convert anchors between corner/smooth/symmetric" without adding a
+   * whole separate piece of UI chrome for it. */
+  function cyclePenAnchorType(e: React.MouseEvent, shapeId: string, index: number) {
+    e.stopPropagation();
+    const layer = layers[shapeId];
+    if (!layer || layer.type !== "shape" || !layer.penAnchors) return;
+    const current = layer.penAnchors[index]?.type ?? "corner";
+    const next = current === "corner" ? "smooth" : current === "smooth" ? "symmetric" : "corner";
+    setPenShapeAnchorType(shapeId, index, next);
   }
 
   // A native (non-passive) listener is required here: React attaches wheel
@@ -885,9 +1002,21 @@ export function Canvas2D({ resetSignal }: Props) {
       return;
     }
 
+    if (editPenAdjustRef.current) {
+      const { preGestureSnapshot, moved } = editPenAdjustRef.current;
+      endGesture(preGestureSnapshot, moved);
+      editPenAdjustRef.current = null;
+      (e.target as Element).releasePointerCapture?.(e.pointerId);
+      return;
+    }
+
     const penGesture = penGestureRef.current;
     if (penGesture) {
-      const drop = clientToSvg(e.clientX, e.clientY);
+      const rawDrop = clientToSvg(e.clientX, e.clientY);
+      // Shift constrains the HANDLE's own direction out of the anchor to
+      // 45° steps — not the anchor's position, which for a click-and-drag
+      // gesture never moves from where the mouse first went down.
+      const drop = e.shiftKey ? snapAngle(penGesture.anchorPoint, rawDrop) : rawDrop;
       if (penGesture.closing) {
         // A drag on the closing click curves the final segment back into
         // the first anchor — handed to finishPenTool as that anchor's own
@@ -901,10 +1030,15 @@ export function Canvas2D({ resetSignal }: Props) {
           y: penGesture.anchorPoint.y,
           handleOut: drop,
           handleIn: mirrorPoint(penGesture.anchorPoint, drop),
+          type: "symmetric",
         });
       } else {
         // A plain click: a straight "corner" anchor, no handles at all.
-        addPenAnchor({ x: penGesture.anchorPoint.x, y: penGesture.anchorPoint.y });
+        // Shift here constrains the ANCHOR's own position relative to the
+        // previous one instead (there's no handle direction to snap yet).
+        const prev = penDraftAnchors[penDraftAnchors.length - 1];
+        const point = e.shiftKey && prev ? snapAngle(prev, penGesture.anchorPoint) : penGesture.anchorPoint;
+        addPenAnchor({ x: point.x, y: point.y, type: "corner" });
       }
       penGestureRef.current = null;
       setPenDragPoint(null);
@@ -1114,6 +1248,20 @@ export function Canvas2D({ resetSignal }: Props) {
             // whatever's locked at the top level.
             if (!isEffectivelyLocked(layers, id)) handleShapeDown(e, id);
           }}
+          onDoubleClick={(e) => {
+            // Double-click re-opens a finished Pen shape's own anchors/
+            // handles (Figma's "the Pen tool never really stops being
+            // available on a vector path" model) instead of only ever
+            // exposing the flattened, already-tessellated outline through
+            // the ordinary bounding-box resize handles. Shapes never drawn
+            // with the Pen tool have no penAnchors and just fall through to
+            // whatever double-click already did (nothing, today).
+            if (penToolActive || cutToolActive || shapeToolActive) return;
+            if (isEffectivelyLocked(layers, id)) return;
+            if (!layer.penAnchors) return;
+            e.stopPropagation();
+            beginEditPenShape(id);
+          }}
         />
       </g>
     );
@@ -1121,6 +1269,19 @@ export function Canvas2D({ resetSignal }: Props) {
 
   const gridSize = 10;
   const zoomPct = Math.round((document_.widthMM / vb.w) * 100);
+  // A fixed mm size (the old `vb.w * constant` formulas below, before this
+  // fix) only stays a constant SCREEN size across the middle of the zoom
+  // range — pinned to whatever CSS pixel width the SVG happened to have
+  // when that constant was tuned. Zoom in far enough and the same mm size
+  // covers more and more real screen pixels, growing without bound — the
+  // exact "pen dots are huge when I zoom in" bug. Converting through the
+  // SVG's OWN CURRENT rendered width instead keeps every on-canvas
+  // interaction target (anchors, handles) truly constant in screen
+  // pixels at any zoom level, and stays correct across a window resize
+  // too (the old formula silently assumed the SVG's CSS size never
+  // changed from whatever fitView last picked).
+  const svgClientWidthPx = svgRef.current?.clientWidth || 800;
+  const pxToMM = (px: number) => (px * vb.w) / svgClientWidthPx;
 
   return (
     <>
@@ -1156,6 +1317,34 @@ export function Canvas2D({ resetSignal }: Props) {
           }
         }}
         onPointerMove={(e) => {
+          const editAdjust = editPenAdjustRef.current;
+          if (editAdjust) {
+            const layer = layers[editAdjust.shapeId];
+            if (layer && layer.type === "shape" && layer.penAnchors) {
+              const world = getWorldTransform(layers, editAdjust.shapeId);
+              const local = invertTransform2D(clientToSvg(e.clientX, e.clientY), world);
+              editAdjust.moved = true;
+              if (editAdjust.kind === "anchor") {
+                const anchors = layer.penAnchors;
+                const prev = anchors[(editAdjust.index - 1 + anchors.length) % anchors.length];
+                updatePenShapeAnchorPosition(
+                  editAdjust.shapeId,
+                  editAdjust.index,
+                  e.shiftKey && prev ? snapAngle(prev, local) : local,
+                );
+              } else {
+                const anchor = layer.penAnchors[editAdjust.index];
+                updatePenShapeAnchorHandle(
+                  editAdjust.shapeId,
+                  editAdjust.index,
+                  editAdjust.kind,
+                  e.shiftKey && anchor ? snapAngle(anchor, local) : local,
+                  e.altKey,
+                );
+              }
+            }
+            return;
+          }
           if (cutGestureRef.current) {
             const p = clientToSvg(e.clientX, e.clientY);
             const start = cutGestureRef.current.start;
@@ -1178,8 +1367,40 @@ export function Canvas2D({ resetSignal }: Props) {
             const p = clientToSvg(e.clientX, e.clientY);
             const adjust = penAdjustRef.current;
             if (adjust) {
-              if (adjust.kind === "anchor") updatePenAnchorPosition(adjust.index, p);
-              else updatePenAnchorHandle(adjust.index, adjust.kind, p);
+              if (adjust.kind === "anchor") {
+                const isLastAnchor = adjust.index === penDraftAnchors.length - 1;
+                const directSelect = e.ctrlKey || e.metaKey;
+                const anchor = penDraftAnchors[adjust.index];
+                if (isLastAnchor && !directSelect) {
+                  const target = e.shiftKey && anchor ? snapAngle(anchor, p) : p;
+                  if (anchor && (anchor.handleOut || anchor.handleIn)) {
+                    // The current anchor already carries curvature (state
+                    // this tool must not throw away just because you
+                    // pressed on it again) — dragging its dot adjusts the
+                    // OUTGOING handle that determines the next segment's
+                    // tangent, exactly like dragging the dedicated handle
+                    // nub would, rather than replacing its whole curve
+                    // with a brand new one from scratch.
+                    updatePenAnchorHandle(adjust.index, "handleOut", target, e.altKey);
+                  } else {
+                    // No curvature yet on this anchor: a plain drag
+                    // directly on the tip you just placed pulls a fresh
+                    // curve handle out of it (Figma/Illustrator's own
+                    // "give this point a new angle" gesture) instead of
+                    // moving the point.
+                    setPenAnchorCurve(adjust.index, target);
+                  }
+                } else {
+                  // Ctrl/Cmd+drag (any anchor) or a non-last anchor
+                  // (only reachable via that same passthrough) always
+                  // repositions instead — see penCtrlHeld.
+                  const prev = penDraftAnchors[adjust.index - 1];
+                  updatePenAnchorPosition(adjust.index, e.shiftKey && prev ? snapAngle(prev, p) : p);
+                }
+              } else {
+                const anchor = penDraftAnchors[adjust.index];
+                updatePenAnchorHandle(adjust.index, adjust.kind, e.shiftKey && anchor ? snapAngle(anchor, p) : p, e.altKey);
+              }
               return;
             }
             const gesture = penGestureRef.current;
@@ -1187,7 +1408,7 @@ export function Canvas2D({ resetSignal }: Props) {
               const anchorClient = svgPointToClient(gesture.anchorPoint);
               const clientDist = anchorClient ? Math.hypot(e.clientX - anchorClient.x, e.clientY - anchorClient.y) : 0;
               if (clientDist > PEN_DRAG_THRESHOLD_PX) gesture.moved = true;
-              setPenDragPoint(p);
+              setPenDragPoint(e.shiftKey ? snapAngle(gesture.anchorPoint, p) : p);
             } else {
               setPenHoverPoint(p);
             }
@@ -1301,6 +1522,7 @@ export function Canvas2D({ resetSignal }: Props) {
           // rotated corners.
           if (selection.length !== 1) return null;
           const id = selection[0];
+          if (id === editingPenShapeId) return null;
           const layer = layers[id];
           if (!layer || (layer.type !== "shape" && layer.type !== "image") || isEffectivelyLocked(layers, id))
             return null;
@@ -1378,13 +1600,14 @@ export function Canvas2D({ resetSignal }: Props) {
                 ? {
                     x: gesture.anchorPoint.x,
                     y: gesture.anchorPoint.y,
+                    type: "symmetric",
                     handleOut: penDragPoint!,
                     handleIn: mirrorPoint(gesture.anchorPoint, penDragPoint!),
                   }
-                : { x: gesture.anchorPoint.x, y: gesture.anchorPoint.y };
+                : { x: gesture.anchorPoint.x, y: gesture.anchorPoint.y, type: "corner" };
             }
           } else if (penHoverPoint) {
-            previewTarget = { x: penHoverPoint.x, y: penHoverPoint.y };
+            previewTarget = { x: penHoverPoint.x, y: penHoverPoint.y, type: "corner" };
           }
 
           let d = `M ${penDraftAnchors[0].x} ${penDraftAnchors[0].y} `;
@@ -1392,10 +1615,9 @@ export function Canvas2D({ resetSignal }: Props) {
           const last = penDraftAnchors[penDraftAnchors.length - 1];
           if (previewTarget) d += penSegmentD(last, previewTarget);
 
-          const handleR = Math.max(0.7, vb.w * 0.0035);
+          const handleR = pxToMM(2.5);
           const mirroredHandle = dragging ? mirrorPoint(gesture!.anchorPoint, penDragPoint!) : null;
           const lastIndex = penDraftAnchors.length - 1;
-          const lastAnchor = penDraftAnchors[lastIndex];
 
           return (
             <>
@@ -1414,49 +1636,69 @@ export function Canvas2D({ resetSignal }: Props) {
                   <circle className="pen-draft-handle" cx={mirroredHandle.x} cy={mirroredHandle.y} r={handleR} pointerEvents="none" />
                 </>
               )}
-              {/* The last-placed anchor's own handles, live and draggable —
-                  the "go back and adjust the arc you just drew" gesture.
-                  Skipped while a new anchor is actively being placed above
-                  (that preview already covers this same spot visually). */}
-              {!gesture && (lastAnchor.handleOut || lastAnchor.handleIn) && (
-                <>
-                  {lastAnchor.handleOut && lastAnchor.handleIn && (
-                    <line
-                      className="pen-draft-handle-line"
-                      x1={lastAnchor.handleIn.x}
-                      y1={lastAnchor.handleIn.y}
-                      x2={lastAnchor.handleOut.x}
-                      y2={lastAnchor.handleOut.y}
-                      pointerEvents="none"
-                    />
-                  )}
-                  {lastAnchor.handleOut && (
-                    <circle
-                      className="pen-draft-handle"
-                      cx={lastAnchor.handleOut.x}
-                      cy={lastAnchor.handleOut.y}
-                      r={handleR * 1.4}
-                      style={{ cursor: "grab" }}
-                      onPointerDown={(e) => beginPenAdjust(e, lastIndex, "handleOut")}
-                    />
-                  )}
-                  {lastAnchor.handleIn && (
-                    <circle
-                      className="pen-draft-handle"
-                      cx={lastAnchor.handleIn.x}
-                      cy={lastAnchor.handleIn.y}
-                      r={handleR * 1.4}
-                      style={{ cursor: "grab" }}
-                      onPointerDown={(e) => beginPenAdjust(e, lastIndex, "handleIn")}
-                    />
-                  )}
-                </>
-              )}
+              {/* Every already-placed anchor's own handles, live and
+                  draggable — normally just the last-placed one (the "go
+                  back and adjust the arc you just drew" gesture right after
+                  placing it), or ALL of them while Ctrl/Cmd is held (the
+                  direct-selection passthrough — see penCtrlHeld). Skipped
+                  while a new anchor is actively being placed above (that
+                  preview already covers this same spot visually). */}
+              {!gesture &&
+                penDraftAnchors.map((anchor, i) => {
+                  if (i !== lastIndex && !penCtrlHeld) return null;
+                  if (!anchor.handleOut && !anchor.handleIn) return null;
+                  return (
+                    <g key={`h${i}`}>
+                      {anchor.handleOut && anchor.handleIn && (
+                        <line
+                          className="pen-draft-handle-line"
+                          x1={anchor.handleIn.x}
+                          y1={anchor.handleIn.y}
+                          x2={anchor.handleOut.x}
+                          y2={anchor.handleOut.y}
+                          pointerEvents="none"
+                        />
+                      )}
+                      {anchor.handleOut && (
+                        <circle
+                          className="pen-draft-handle"
+                          cx={anchor.handleOut.x}
+                          cy={anchor.handleOut.y}
+                          r={handleR * 1.4}
+                          style={{ cursor: "grab" }}
+                          onPointerDown={(e) => beginPenAdjust(e, i, "handleOut")}
+                        />
+                      )}
+                      {anchor.handleIn && (
+                        <circle
+                          className="pen-draft-handle"
+                          cx={anchor.handleIn.x}
+                          cy={anchor.handleIn.y}
+                          r={handleR * 1.4}
+                          style={{ cursor: "grab" }}
+                          onPointerDown={(e) => beginPenAdjust(e, i, "handleIn")}
+                        />
+                      )}
+                    </g>
+                  );
+                })}
               {penDraftAnchors.map((p, i) => {
                 const isFirst = i === 0;
                 const isLast = i === lastIndex;
                 const closable = isFirst && penDraftAnchors.length >= 3;
-                const r = Math.max(0.9, vb.w * 0.005) * (isFirst ? 1.6 : 1);
+                const adjustable = (isLast || penCtrlHeld) && !gesture;
+                // Small enough that the dot marks the point without
+                // hiding it underneath — the first anchor still reads as
+                // the "close here" target via a modest size bump, not a
+                // big solid blob sitting on top of exactly where you
+                // clicked.
+                const r = pxToMM(2.75) * (isFirst ? 1.35 : 1);
+                // Cursor communicates which of the two very different
+                // things a drag on this dot is about to do: reposition
+                // (Ctrl/Cmd held — the direct-selection passthrough) vs.
+                // pull a fresh curve handle out of the tip you just placed
+                // (plain drag, last anchor only — see setPenAnchorCurve).
+                const cursor = penCtrlHeld ? "move" : isLast ? "crosshair" : "move";
                 return (
                   <circle
                     key={i}
@@ -1464,12 +1706,111 @@ export function Canvas2D({ resetSignal }: Props) {
                     cx={p.x}
                     cy={p.y}
                     r={r}
-                    pointerEvents={isLast && !gesture ? "all" : "none"}
-                    style={isLast && !gesture ? { cursor: "move" } : undefined}
-                    onPointerDown={isLast && !gesture ? (e) => beginPenAdjust(e, lastIndex, "anchor") : undefined}
+                    pointerEvents={adjustable ? "all" : "none"}
+                    style={adjustable ? { cursor } : undefined}
+                    onPointerDown={adjustable ? (e) => beginPenAdjust(e, i, "anchor") : undefined}
                   />
                 );
               })}
+            </>
+          );
+        })()}
+
+        {(() => {
+          // Edit Path mode: a finished Pen shape's real anchors/handles,
+          // re-opened for direct editing (see beginEditPenShape). Every
+          // point is draggable here, unlike the draft-drawing render above
+          // which only ever lets you adjust the LAST anchor — once a path
+          // is finished there's no "closing hotspot" to protect, so every
+          // anchor can be a live drag target.
+          if (!editingPenShapeId) return null;
+          const layer = layers[editingPenShapeId];
+          if (!layer || layer.type !== "shape" || !layer.penAnchors || layer.penAnchors.length < 3) return null;
+          const world = getWorldTransform(layers, editingPenShapeId);
+          const anchorsWorld = layer.penAnchors.map((a) => ({
+            ...a,
+            ...applyTransform2D(a, world),
+            handleIn: a.handleIn ? applyTransform2D(a.handleIn, world) : undefined,
+            handleOut: a.handleOut ? applyTransform2D(a.handleOut, world) : undefined,
+          }));
+
+          let d = `M ${anchorsWorld[0].x} ${anchorsWorld[0].y} `;
+          for (let i = 0; i < anchorsWorld.length; i++) {
+            d += penSegmentD(anchorsWorld[i], anchorsWorld[(i + 1) % anchorsWorld.length]);
+          }
+
+          const handleR = pxToMM(2.5);
+          const anchorR = pxToMM(2.75);
+
+          return (
+            <>
+              <path className="pen-edit-path" d={d} pointerEvents="none" />
+              {anchorsWorld.map((a, i) => (
+                <g key={i}>
+                  {a.handleOut && a.handleIn && (
+                    <line
+                      className="pen-draft-handle-line"
+                      x1={a.handleIn.x}
+                      y1={a.handleIn.y}
+                      x2={a.handleOut.x}
+                      y2={a.handleOut.y}
+                      pointerEvents="none"
+                    />
+                  )}
+                  {a.handleOut && (
+                    <>
+                      <line
+                        className="pen-draft-handle-line"
+                        x1={a.x}
+                        y1={a.y}
+                        x2={a.handleOut.x}
+                        y2={a.handleOut.y}
+                        pointerEvents="none"
+                      />
+                      <circle
+                        className="pen-draft-handle"
+                        cx={a.handleOut.x}
+                        cy={a.handleOut.y}
+                        r={handleR}
+                        style={{ cursor: "grab" }}
+                        onPointerDown={(e) => beginEditPenAdjust(e, editingPenShapeId, i, "handleOut")}
+                      />
+                    </>
+                  )}
+                  {a.handleIn && (
+                    <>
+                      <line
+                        className="pen-draft-handle-line"
+                        x1={a.x}
+                        y1={a.y}
+                        x2={a.handleIn.x}
+                        y2={a.handleIn.y}
+                        pointerEvents="none"
+                      />
+                      <circle
+                        className="pen-draft-handle"
+                        cx={a.handleIn.x}
+                        cy={a.handleIn.y}
+                        r={handleR}
+                        style={{ cursor: "grab" }}
+                        onPointerDown={(e) => beginEditPenAdjust(e, editingPenShapeId, i, "handleIn")}
+                      />
+                    </>
+                  )}
+                </g>
+              ))}
+              {anchorsWorld.map((a, i) => (
+                <circle
+                  key={i}
+                  className={"pen-draft-point pen-edit-point" + (a.type !== "corner" ? " curved" : "")}
+                  cx={a.x}
+                  cy={a.y}
+                  r={anchorR}
+                  style={{ cursor: "move" }}
+                  onPointerDown={(e) => beginEditPenAdjust(e, editingPenShapeId, i, "anchor")}
+                  onDoubleClick={(e) => cyclePenAnchorType(e, editingPenShapeId, i)}
+                />
+              ))}
             </>
           );
         })()}

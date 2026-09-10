@@ -117,6 +117,16 @@ function App() {
         return;
       }
 
+      // Edit Path mode (re-opened anchors/handles on an already-finished
+      // Pen shape) has its own Escape meaning — leave the mode — that must
+      // win over the plain "Escape clears selection" case below, the same
+      // way the Cut/Shape/Pen tools' own Escape handling already does.
+      if (store.editingPenShapeId && e.key === "Escape") {
+        e.preventDefault();
+        store.endEditPenShape();
+        return;
+      }
+
       if (store.penToolActive) {
         if (e.key === "Escape") {
           e.preventDefault();
