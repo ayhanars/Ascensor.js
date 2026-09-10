@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type { Layer, ShapeLayer, ShapeRegion, Transform2D } from "../types";
-import { roundRegions } from "./roundCorners";
+import { roundRegions, smartRoundRegions } from "./roundCorners";
 import { buildBeveledExtrudeGeometry } from "./bevelExtrude";
 import { subtractHoles } from "./holeSubtraction";
 
@@ -61,6 +61,7 @@ function regionsToThreeShapes(regions: ShapeRegion[]): THREE.Shape[] {
 interface CachedGeometryEntry {
   regions: ShapeLayer["regions"];
   cornerRadius: number;
+  smartPolish: number;
   extrusionDepth: number;
   bevelBottom: number;
   bevelTop: number;
@@ -85,12 +86,14 @@ const geometryCache = new Map<string, CachedGeometryEntry>();
 export function buildExtrudeGeometry(layer: ShapeLayer): THREE.BufferGeometry {
   const bevelBottom = layer.bevelBottom ?? 0;
   const bevelTop = layer.bevelTop ?? 0;
+  const smartPolish = layer.smartPolish ?? 0;
 
   const cached = geometryCache.get(layer.id);
   if (
     cached &&
     cached.regions === layer.regions &&
     cached.cornerRadius === layer.cornerRadius &&
+    cached.smartPolish === smartPolish &&
     cached.extrusionDepth === layer.extrusionDepth &&
     cached.bevelBottom === bevelBottom &&
     cached.bevelTop === bevelTop
@@ -98,7 +101,13 @@ export function buildExtrudeGeometry(layer: ShapeLayer): THREE.BufferGeometry {
     return cached.geometry;
   }
 
-  const shapes = regionsToThreeShapes(roundRegions(layer.regions, layer.cornerRadius));
+  // Smart Polish (sharpness-adaptive corner softening) runs first, on the
+  // shape's own outline — before the uniform corner-radius pass, which
+  // still applies on top if the user also set one. Independent of edge
+  // bevel entirely: this softens the OUTLINE's own sharp points regardless
+  // of whether the rim is beveled at all.
+  const polishedRegions = smartPolish > 0 ? smartRoundRegions(layer.regions, smartPolish) : layer.regions;
+  const shapes = regionsToThreeShapes(roundRegions(polishedRegions, layer.cornerRadius));
   const depth = Math.max(0.05, layer.extrusionDepth);
 
   const geometry =
@@ -113,6 +122,7 @@ export function buildExtrudeGeometry(layer: ShapeLayer): THREE.BufferGeometry {
   geometryCache.set(layer.id, {
     regions: layer.regions,
     cornerRadius: layer.cornerRadius,
+    smartPolish,
     extrusionDepth: layer.extrusionDepth,
     bevelBottom,
     bevelTop,

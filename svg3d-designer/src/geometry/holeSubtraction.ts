@@ -58,6 +58,7 @@ interface MeshEntry {
 interface GeometrySignature {
   regions: unknown;
   cornerRadius: number;
+  smartPolish: number;
   extrusionDepth: number;
   bevelBottom: number;
   bevelTop: number;
@@ -68,6 +69,7 @@ function signatureOf(layer: ShapeLayer, mesh: THREE.Mesh): GeometrySignature {
   return {
     regions: layer.regions,
     cornerRadius: layer.cornerRadius,
+    smartPolish: layer.smartPolish ?? 0,
     extrusionDepth: layer.extrusionDepth,
     bevelBottom: layer.bevelBottom,
     bevelTop: layer.bevelTop,
@@ -78,6 +80,7 @@ function signatureOf(layer: ShapeLayer, mesh: THREE.Mesh): GeometrySignature {
 function signaturesEqual(a: GeometrySignature, b: GeometrySignature): boolean {
   if (a.regions !== b.regions) return false;
   if (a.cornerRadius !== b.cornerRadius) return false;
+  if (a.smartPolish !== b.smartPolish) return false;
   if (a.extrusionDepth !== b.extrusionDepth) return false;
   if (a.bevelBottom !== b.bevelBottom) return false;
   if (a.bevelTop !== b.bevelTop) return false;

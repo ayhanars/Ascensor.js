@@ -346,6 +346,7 @@ interface SceneState {
   setLayerTransform: (id: string, patch: Partial<Transform2D>) => void;
   setExtrusionDepth: (id: string, depth: number) => void;
   setCornerRadius: (id: string, radius: number) => void;
+  setSmartPolish: (id: string, mm: number) => void;
   setBevelBottom: (id: string, mm: number) => void;
   setBevelTop: (id: string, mm: number) => void;
   setIsHole: (id: string, value: boolean) => void;
@@ -781,6 +782,18 @@ export const useSceneStore = create<SceneState>()(
         layers: {
           ...state.layers,
           [id]: { ...layer, cornerRadius: Math.max(0, radius) } as ShapeLayer,
+        },
+      };
+    }),
+
+  setSmartPolish: (id, mm) =>
+    set((state) => {
+      const layer = state.layers[id];
+      if (!layer || layer.type !== "shape") return {};
+      return {
+        layers: {
+          ...state.layers,
+          [id]: { ...layer, smartPolish: Math.max(0, mm) } as ShapeLayer,
         },
       };
     }),
@@ -1659,6 +1672,7 @@ export const useSceneStore = create<SceneState>()(
         // routinely produces, so there's no reason to throw away whatever
         // edge treatment the front-most source had, unlike corner rounding.
         cornerRadius: 0,
+        smartPolish: frontMost.smartPolish ?? 0,
         bevelBottom: frontMost.bevelBottom,
         bevelTop: frontMost.bevelTop,
         isHole: false,
@@ -1812,6 +1826,7 @@ export const useSceneStore = create<SceneState>()(
         // resulting outline is, so there's no reason to discard whatever
         // edge treatment the front-most operand had.
         cornerRadius: 0,
+        smartPolish: frontMost.smartPolish ?? 0,
         bevelBottom: frontMost.bevelBottom,
         bevelTop: frontMost.bevelTop,
         isHole: false,
@@ -2119,6 +2134,7 @@ export const useSceneStore = create<SceneState>()(
         regions,
         extrusionDepth: 1.2,
         cornerRadius: 0,
+        smartPolish: 0,
         bevelBottom: 0,
         bevelTop: 0,
         isHole: kind === "hole",
@@ -2322,6 +2338,7 @@ export const useSceneStore = create<SceneState>()(
         regions: [{ outer: { points }, holes: [] }],
         extrusionDepth: 1.2,
         cornerRadius: 0,
+        smartPolish: 0,
         bevelBottom: 0,
         bevelTop: 0,
         isHole: false,

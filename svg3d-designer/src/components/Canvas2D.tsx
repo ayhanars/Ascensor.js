@@ -13,7 +13,7 @@ import {
   isEffectivelyLocked,
   stepIntoOnClick,
 } from "../state/sceneUtils";
-import { roundRegions } from "../geometry/roundCorners";
+import { roundRegions, smartRoundRegions } from "../geometry/roundCorners";
 import { normalizeToBounds, regularPolygonPoints, starPolygonPoints } from "../geometry/primitives";
 import type { Layer, PenAnchor, ShapeRegion, Transform2D } from "../types";
 import { InfoIcon } from "./icons";
@@ -1218,7 +1218,9 @@ export function Canvas2D({ resetSignal }: Props) {
       );
     }
 
-    const pathD = regionsToPathD(roundRegions(layer.regions, layer.cornerRadius));
+    const polishedRegions =
+      layer.smartPolish > 0 ? smartRoundRegions(layer.regions, layer.smartPolish) : layer.regions;
+    const pathD = regionsToPathD(roundRegions(polishedRegions, layer.cornerRadius));
     return (
       <g key={id} transform={transformAttr}>
         <path

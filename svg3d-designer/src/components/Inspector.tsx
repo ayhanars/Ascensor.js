@@ -464,6 +464,7 @@ export function Inspector() {
   ).reverse();
   const setExtrusionDepth = useSceneStore((s) => s.setExtrusionDepth);
   const setCornerRadius = useSceneStore((s) => s.setCornerRadius);
+  const setSmartPolish = useSceneStore((s) => s.setSmartPolish);
   const setBevelBottom = useSceneStore((s) => s.setBevelBottom);
   const setBevelTop = useSceneStore((s) => s.setBevelTop);
   const setIsHole = useSceneStore((s) => s.setIsHole);
@@ -477,6 +478,7 @@ export function Inspector() {
   const [selectedDiameterPreset, setSelectedDiameterPreset] = useState("");
   const [selectedThicknessPreset, setSelectedThicknessPreset] = useState("");
   const radiusGesture = useRef<TrackedSceneSlice | null>(null);
+  const smartPolishGesture = useRef<TrackedSceneSlice | null>(null);
   const bevelBottomGesture = useRef<TrackedSceneSlice | null>(null);
   const bevelTopGesture = useRef<TrackedSceneSlice | null>(null);
   const bevelBottomRaf = useRef<RafThrottleState>({ scheduled: false, value: null, handle: null });
@@ -978,6 +980,50 @@ export function Inspector() {
                     unit={unit}
                     style={{ flex: "0 0 60px" }}
                     onChange={(v) => applyToAll(targets.map((t) => t.id), (id) => setCornerRadius(id, v))}
+                  />
+                </div>
+              </CollapsibleSection>
+
+              <CollapsibleSection
+                key={`smart-polish:${targets.map((t) => t.id).join(",")}`}
+                title={`Smart Polish${isBatch ? " (all shapes in group)" : ""}`}
+                active={display.smartPolish > 0}
+                onAdd={() => applyToAll(targets.map((t) => t.id), (id) => setSmartPolish(id, 1.5))}
+                onRemove={() => applyToAll(targets.map((t) => t.id), (id) => setSmartPolish(id, 0))}
+              >
+                <p className="hole-hint">
+                  Automatically softens only the outline's sharpest points — spikes, thin seams from a boolean
+                  op — for a smoother, more polished look. Gentle curves are left untouched.
+                </p>
+                <div className="field-row">
+                  <span className="field-label">Intensity ({unitLabel})</span>
+                  <input
+                    className="field-input"
+                    type="range"
+                    min={0}
+                    max={10}
+                    step={0.1}
+                    value={Math.min(10, display.smartPolish)}
+                    onPointerDown={() => {
+                      smartPolishGesture.current = beginGesture();
+                    }}
+                    onPointerUp={() => {
+                      if (smartPolishGesture.current) {
+                        endGesture(smartPolishGesture.current, true);
+                        smartPolishGesture.current = null;
+                      }
+                    }}
+                    onChange={(e) =>
+                      targets.forEach((t) => setSmartPolish(t.id, parseFloat(e.target.value)))
+                    }
+                    style={{ flex: "1 1 auto" }}
+                  />
+                  <NumberField
+                    value={display.smartPolish}
+                    min={0}
+                    unit={unit}
+                    style={{ flex: "0 0 60px" }}
+                    onChange={(v) => applyToAll(targets.map((t) => t.id), (id) => setSmartPolish(id, v))}
                   />
                 </div>
               </CollapsibleSection>

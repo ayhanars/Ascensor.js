@@ -101,6 +101,11 @@ export interface ShapeLayer extends LayerCommon {
   extrusionDepth: number;
   /** Uniform corner rounding applied to every vertex, in mm. 0 = sharp. */
   cornerRadius: number;
+  /** Sharpness-adaptive corner softening intensity, in mm — unlike
+   * `cornerRadius`, this scales per-vertex with how sharp that corner
+   * actually is (see `smartRoundContour`), so a genuinely sharp point gets
+   * softened while an already-gentle curve is left alone. 0 = off. */
+  smartPolish: number;
   /** Straight chamfer cut into the bottom rim (z=0), in mm. 0 = sharp edge. */
   bevelBottom: number;
   /** Straight chamfer cut into the top rim (z=extrusionDepth), in mm. 0 = sharp edge. */

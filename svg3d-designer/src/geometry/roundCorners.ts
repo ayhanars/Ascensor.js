@@ -1,19 +1,23 @@
 import type { Contour, Point2, ShapeRegion } from "../types";
 
 /**
- * Replaces every vertex of a closed polygon with a tangent-circle fillet of
- * up to `radius` mm, tessellated into straight segments. This is the one
- * place "corner radius" is computed — the 2D preview, the 3D mesh, and the
- * STL export all consume its output, so what you see is always what
- * extrudes and exports.
+ * Replaces every vertex of a closed polygon with a tangent-circle fillet,
+ * tessellated into straight segments. This is the one place "corner
+ * rounding" is computed — the 2D preview, the 3D mesh, and the STL export
+ * all consume its output, so what you see is always what extrudes and
+ * exports.
  *
- * Each corner's fillet is independently clamped to at most half the length
- * of its two adjacent edges, so neighboring fillets can never overlap or
- * cross — the same safe-clamp strategy used for rounded-rectangle corners,
- * generalized to arbitrary polygons (convex or reflex).
+ * `radiusAt` gets each vertex's interior angle (0..π; π is a straight line,
+ * small values are sharp/acute) and returns the fillet radius to use
+ * *there* — a plain `() => radius` gives the classic uniform "Corner
+ * Radius" behavior (see `roundContour`); `smartRoundContour` instead scales
+ * the radius with how sharp each corner actually is. Either way, each
+ * corner's fillet is independently clamped to at most half the length of
+ * its two adjacent edges, so neighboring fillets can never overlap or
+ * cross.
  */
-export function roundContour(points: Point2[], radius: number, segments: number): Point2[] {
-  if (radius <= 0 || points.length < 3) return points;
+function roundContourCore(points: Point2[], radiusAt: (thetaRad: number, index: number) => number, segments: number): Point2[] {
+  if (points.length < 3) return points;
 
   // A closed SVG path (or a boolean-op/merge result) can store an explicit
   // point at both the start and end of what's already an implicitly-closed
@@ -62,6 +66,12 @@ export function roundContour(points: Point2[], radius: number, segments: number)
     const theta = Math.acos(dot); // interior angle at this vertex, 0..pi
     const halfAngle = theta / 2;
 
+    const radius = radiusAt(theta, i);
+    if (radius <= 0) {
+      out.push(cur);
+      continue;
+    }
+
     const tMax = Math.min(lenPrev, lenNext) / 2;
     const tWanted = radius / Math.tan(halfAngle || 1e-9);
     const t = Math.min(tWanted, tMax);
@@ -108,6 +118,11 @@ export function roundContour(points: Point2[], radius: number, segments: number)
   return out;
 }
 
+export function roundContour(points: Point2[], radius: number, segments: number): Point2[] {
+  if (radius <= 0 || points.length < 3) return points;
+  return roundContourCore(points, () => radius, segments);
+}
+
 // STL is a real polygon mesh, not a shading trick — an under-tessellated
 // fillet doesn't just look faceted on screen, it prints faceted too. 32
 // gives a 90° corner ~16 straight segments (~5.6° each), plenty smooth at
@@ -119,6 +134,49 @@ export function roundRegions(regions: ShapeRegion[], radius: number): ShapeRegio
   if (radius <= 0) return regions;
   const round = (c: Contour): Contour => ({
     points: roundContour(c.points, radius, ARC_SEGMENTS_PER_HALF_TURN),
+  });
+  return regions.map((region) => ({
+    outer: round(region.outer),
+    holes: region.holes.map(round),
+  }));
+}
+
+/**
+ * "Smart Polish": rather than one fixed radius applied to every corner
+ * alike (see `roundContour`), this scales each vertex's fillet with how
+ * sharp that vertex actually is. A gently curving outline (most points on a
+ * circle, a shallow bend) sits at an interior angle close to a straight
+ * line (π) and gets essentially no extra rounding — the original shape is
+ * left alone. A genuinely sharp corner or spike (a star's point, an acute
+ * boolean-op seam) sits at a small interior angle and gets a fillet
+ * approaching the full `intensityMM` — exactly the "only soften what's too
+ * sharp" behavior a uniform corner radius can't give you without also
+ * rounding every already-smooth curve.
+ *
+ * The angle→radius response is a smoothstep between two thresholds rather
+ * than a hard cutoff, so neighboring corners of gradually differing
+ * sharpness don't get a visible seam where the effect switches on.
+ */
+const SMART_POLISH_SOFT_ANGLE_DEG = 150; // interior angle at/above this: no softening (already gentle)
+const SMART_POLISH_FULL_ANGLE_DEG = 70; // interior angle at/below this: full intensity (genuinely sharp)
+
+function smartPolishFactor(thetaRad: number): number {
+  const thetaDeg = (thetaRad * 180) / Math.PI;
+  if (thetaDeg >= SMART_POLISH_SOFT_ANGLE_DEG) return 0;
+  if (thetaDeg <= SMART_POLISH_FULL_ANGLE_DEG) return 1;
+  const t = (SMART_POLISH_SOFT_ANGLE_DEG - thetaDeg) / (SMART_POLISH_SOFT_ANGLE_DEG - SMART_POLISH_FULL_ANGLE_DEG);
+  return t * t * (3 - 2 * t); // smoothstep
+}
+
+export function smartRoundContour(points: Point2[], intensityMM: number, segments: number): Point2[] {
+  if (intensityMM <= 0 || points.length < 3) return points;
+  return roundContourCore(points, (theta) => intensityMM * smartPolishFactor(theta), segments);
+}
+
+export function smartRoundRegions(regions: ShapeRegion[], intensityMM: number): ShapeRegion[] {
+  if (intensityMM <= 0) return regions;
+  const round = (c: Contour): Contour => ({
+    points: smartRoundContour(c.points, intensityMM, ARC_SEGMENTS_PER_HALF_TURN),
   });
   return regions.map((region) => ({
     outer: round(region.outer),
