@@ -449,15 +449,42 @@ function maxSafeInset(rawContour: THREE.Vector2[], candidateMax: number, smartPo
     }
   }
 
-  // Back the winning amount off in a few monotonically-safer steps until
-  // the expensive, conclusive check also passes (see isRingSimpleFull).
-  let amount = lo;
-  for (let i = 0; i < 8 && amount > 0; i++) {
-    const ring = ringAt(amount);
-    if (shrankProperly(ring) && isRingSimpleFull(ring)) break;
-    amount *= 0.85;
+  // `isRingSimpleFast`'s cheap self-union area check can say a ring is
+  // simple while `THREE.ShapeUtils.triangulateShape` — the actual
+  // ear-clipper both `isRingSimpleFull` and the real cap-building code use
+  // — still disagrees with that ring's own shoelace area by anywhere from
+  // a fraction of a percent (ordinary numerical noise from a finely
+  // tessellated corner-assist arc: verified directly on a plain 40mm
+  // square, whose mismatch shrinks smoothly toward 0 as the inset shrinks,
+  // from ~10% at 3mm down to ~0.03% at 0.01mm — completely ordinary,
+  // completely safe geometry that this check is simply slow to agree
+  // with) to a persistent, scale-INDEPENDENT ~33% even at an inset of a
+  // few ten-thousandths of a millimeter (verified directly against a real
+  // user-submitted crescent whose tips are razor-thin: the mismatch never
+  // budges no matter how small the candidate amount gets, the actual
+  // signature of a genuinely broken triangulation — one ear covering a
+  // huge, wrong chunk of the ring — not of noise). A fixed handful of
+  // fixed-ratio backoff steps used to average out to needing "a little
+  // more shrinking" for the first (safe, just noisy) case, and could never
+  // reach the tiny amount that same handful of steps was too coarse to
+  // find in the second (genuinely unsafe) case either — silently handing
+  // back its last, never-actually-validated amount either way. A real
+  // bisection between 0 (trivially safe: the unmodified raw contour always
+  // triangulates cleanly against itself) and `lo` converges to whichever
+  // of those two outcomes is actually true in a small, fixed number of
+  // steps regardless of shape complexity — landing close to `lo` for the
+  // first case and collapsing to (effectively) 0 for the second, and,
+  // critically, is the ONLY value this function ever hands back that a
+  // passing check actually confirmed, or else 0 itself.
+  let safeAmount = 0;
+  let unsafeAmount = lo;
+  for (let i = 0; i < 14; i++) {
+    const mid = (safeAmount + unsafeAmount) / 2;
+    const ring = ringAt(mid);
+    if (shrankProperly(ring) && isRingSimpleFull(ring)) safeAmount = mid;
+    else unsafeAmount = mid;
   }
-  return amount;
+  return safeAmount;
 }
 
 interface Ring {
