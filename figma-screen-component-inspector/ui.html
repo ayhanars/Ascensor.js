@@ -333,7 +333,7 @@
           Show unclassified
         </label>
         <label class="filter-toggle">
-          <input type="checkbox" id="hide-atoms-toggle" />
+          <input type="checkbox" id="hide-atoms-toggle" checked />
           Hide atoms
         </label>
       </div>
@@ -357,7 +357,7 @@
 
   var lastComponents = [];
   var showUnclassified = false;
-  var hideAtoms = false;
+  var hideAtoms = hideAtomsToggle.checked;
 
   refreshBtn.addEventListener('click', function () {
     parent.postMessage({ pluginMessage: { type: 'refresh' } }, '*');

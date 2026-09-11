@@ -30,21 +30,24 @@ your document.
      still named "Label" whose displayed content was overridden to
      "Service" for that particular instance on the screen). If a
      component appears more than once, each occurrence gets its own
-     "Instance N" grouping since their text can differ. Text that
-     belongs to a *nested* component instance (e.g. an icon-with-label
-     inside a button) is excluded here — it shows up under that nested
-     component's own row instead.
+     "Instance N" grouping since their text can differ. Text nested
+     inside a **DS Atom** instance (e.g. a Label or Icon atom used
+     inside a Button component) is treated as belonging to the
+     component and included here — atoms are hidden by default (see
+     below), so this is usually the only place their text is visible.
+     Text nested inside any *other* kind of instance (a DS Component or
+     an unclassified one) is excluded — that instance gets its own row
+     and its own Content section instead.
    - **Links** — both publish-time documentation links and Dev Mode "dev
      resources" links (see below).
 6. The header shows the screen's name and a direct link to it in Figma.
 7. For a variant (e.g. `Button` with `Size`/`State` variants), the row
    shows the component set's name with the specific variant (e.g.
    `Size=Large, State=Hover`) underneath it in a lighter color.
-8. By default only **DS Component** and **DS Atom** rows are shown. Check
-   "Show unclassified" above the list to also see unclassified instances.
-   Check "Hide atoms" to hide DS Atom rows entirely (both checkboxes are
-   unchecked by default and only filter the already-fetched list — no
-   re-analysis; they never change row order).
+8. By default only **DS Component** rows are shown: "Hide atoms" is
+   checked by default, and unclassified rows are hidden unless "Show
+   unclassified" is checked. Both checkboxes only filter the
+   already-fetched list — no re-analysis, and row order never changes.
 9. Rows are always listed in the order the components first appear on
    the screen (top-to-bottom in the layers tree), not alphabetically.
 10. Each row has a target/select button next to the expand arrow — click

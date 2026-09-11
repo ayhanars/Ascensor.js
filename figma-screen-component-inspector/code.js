@@ -95,14 +95,19 @@ async function resolveComponentInfo(instance) {
   };
 }
 
-// Walking up from a text node to the instance that owns it — if that walk
-// crosses another INSTANCE first, the text belongs to a nested component
-// instance (e.g. an icon's label inside a button-with-icon), not this one,
-// so it's excluded to keep each row's content specific to its own layers.
-function isOwnText(textNode, instanceRoot) {
+// Walking up from a text node to the instance that owns it: a nested DS Atom
+// instance is treated as transparent (its text is considered part of the
+// containing component's own content — atoms are hidden by default in the
+// UI, and their text, e.g. a label or icon caption, is usually the whole
+// point of showing that component's content at all). Crossing into any
+// *other* nested instance (a DS Component or Unclassified one) still stops
+// the walk — that nested instance gets its own row and its own content.
+function isOwnText(textNode, instanceRoot, instanceClassification) {
   var p = textNode.parent;
   while (p && p.id !== instanceRoot.id) {
-    if (p.type === 'INSTANCE') return false;
+    if (p.type === 'INSTANCE' && instanceClassification[p.id] !== 'DS Atom') {
+      return false;
+    }
     p = p.parent;
   }
   return true;
@@ -110,13 +115,14 @@ function isOwnText(textNode, instanceRoot) {
 
 // Reads the actual characters typed into each of an instance's own text
 // layers (e.g. a layer still named "Label" whose displayed text was
-// overridden to "Service" for this particular instance). This is plain
+// overridden to "Service" for this particular instance), looking through
+// any nested DS Atom instances per isOwnText above. This is plain
 // per-instance content, not something read from the main component.
-function extractTextContent(instance) {
+function extractTextContent(instance, instanceClassification) {
   var textNodes = instance.findAll(function (n) { return n.type === 'TEXT'; });
   var content = [];
   for (var i = 0; i < textNodes.length; i++) {
-    if (!isOwnText(textNodes[i], instance)) continue;
+    if (!isOwnText(textNodes[i], instance, instanceClassification)) continue;
     content.push({ name: textNodes[i].name, characters: textNodes[i].characters });
   }
   return content;
@@ -173,7 +179,14 @@ async function analyzeSelection() {
 
   var order = [];
   var byId = {};
+  var instanceClassification = {}; // instance.id -> classification, for every instance (incl. nested)
+  var resolvedInstances = []; // { node, mainId }, same order as instances
 
+  // Pass 1: resolve identity/classification for every instance found,
+  // including nested ones. This has to fully finish before extracting text
+  // content (pass 2 below), since a component's own content extraction
+  // needs to know the classification of instances nested *inside* it —
+  // which may appear later in this array than the component itself.
   for (var i = 0; i < instances.length; i++) {
     var info = await resolveComponentInfo(instances[i]);
     if (!info) continue;
@@ -197,7 +210,15 @@ async function analyzeSelection() {
     }
     byId[info.id].count += 1;
     byId[info.id].instanceIds.push(instances[i].id);
-    byId[info.id].content.push(extractTextContent(instances[i]));
+    instanceClassification[instances[i].id] = byId[info.id].classification;
+    resolvedInstances.push({ node: instances[i], mainId: info.id });
+  }
+
+  // Pass 2: now that every instance's classification is known, extract each
+  // occurrence's own text content.
+  for (var j = 0; j < resolvedInstances.length; j++) {
+    var entry = resolvedInstances[j];
+    byId[entry.mainId].content.push(extractTextContent(entry.node, instanceClassification));
   }
 
   // Batch-fetch Dev Mode links for every unique component (and its variant
