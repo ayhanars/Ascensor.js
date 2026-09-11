@@ -46,8 +46,17 @@ your document.
    `Size=Large, State=Hover`) underneath it in a lighter color.
 8. By default only **DS Component** rows are shown: "Hide atoms" is
    checked by default, and unclassified rows are hidden unless "Show
-   unclassified" is checked. Both checkboxes only filter the
-   already-fetched list — no re-analysis, and row order never changes.
+   unclassified" is checked. A third checkbox, "Hide version numbers"
+   (unchecked by default), strips version-style markers from the
+   displayed component/variant name — e.g. `Button v2` → `Button`,
+   `Card (v1.3)` → `Card`, and a variant property list like
+   `Version=2, Size=Large` → `Size=Large`. This is a text-pattern match
+   on the name, not a real Figma concept, and it only changes what's
+   *displayed and copied* — it never touches the underlying Figma
+   document, and has no effect on grouping/counting, which is still
+   keyed by the actual component identity. All three checkboxes only
+   affect the already-fetched list — no re-analysis, and row order
+   never changes.
 9. Rows are sorted by each component's **on-canvas position** — topmost
    occurrence first (top-to-bottom), then leftmost for ties — so the list
    reads in the same order as the screen itself. This is *not* the same
@@ -73,7 +82,8 @@ your document.
 13. **Copy to Technical Story** (next to Refresh, in purple) copies a
     Confluence-paste-ready rich-text block to your clipboard, built from
     whatever is *currently visible and checked* in the list (respecting
-    "Hide atoms" / "Show unclassified" and the per-row checkboxes above):
+    "Hide atoms" / "Show unclassified" / "Hide version numbers" and the
+    per-row checkboxes above):
     - Screen name as an H3 heading, then the Figma link as bare text (not
       a hyperlink) on its own line/paragraph — see the note below on why
       this doesn't reliably turn into an embedded preview card on its own.

@@ -421,6 +421,10 @@
           <input type="checkbox" id="hide-atoms-toggle" checked />
           Hide atoms
         </label>
+        <label class="filter-toggle">
+          <input type="checkbox" id="hide-versions-toggle" />
+          Hide version numbers
+        </label>
       </div>
     </div>
     <div id="component-list"></div>
@@ -440,6 +444,7 @@
   var copyStoriesBtn = document.getElementById('copy-stories-btn');
   var showUnclassifiedToggle = document.getElementById('show-unclassified-toggle');
   var hideAtomsToggle = document.getElementById('hide-atoms-toggle');
+  var hideVersionsToggle = document.getElementById('hide-versions-toggle');
   var languageSelect = document.getElementById('language-select');
   var toastEl = document.getElementById('toast');
 
@@ -448,6 +453,7 @@
   var lastScreen = null;
   var showUnclassified = false;
   var hideAtoms = hideAtomsToggle.checked;
+  var hideVersions = hideVersionsToggle.checked;
   var toastTimer = null;
   // comp.id -> boolean; absent/true means included in "Copy to Technical
   // Story". Reset whenever a fresh analysis result comes in (see
@@ -539,9 +545,10 @@
     parts.push('<h3>UI elements &amp; copy</h3>');
 
     componentsForCopy().forEach(function (comp) {
+      var copyName = hideVersions ? stripVersionNumbers(comp.name) : comp.name;
       var nameHtml = comp.links.length
-        ? '<a href="' + escapeHtml(comp.links[0].url) + '">' + escapeHtml(comp.name) + '</a>'
-        : escapeHtml(comp.name);
+        ? '<a href="' + escapeHtml(comp.links[0].url) + '">' + escapeHtml(copyName) + '</a>'
+        : escapeHtml(copyName);
 
       var occurrences = comp.content.length ? comp.content : [[]];
       occurrences.forEach(function (layers) {
@@ -587,6 +594,11 @@
     renderFilteredList();
   });
 
+  hideVersionsToggle.addEventListener('change', function () {
+    hideVersions = hideVersionsToggle.checked;
+    renderFilteredList();
+  });
+
   var EMPTY_STATES = {
     'no-selection': {
       title: 'Select a screen to inspect.',
@@ -606,6 +618,26 @@
     return String(str == null ? '' : str).replace(/[&<>"']/g, function (c) {
       return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
     });
+  }
+
+  // Heuristically strips version-number markers from a component or
+  // variant name so displayed/copied names read cleanly, e.g.
+  // "Button v2" -> "Button", "Card (v1.3)" -> "Card", and a variant
+  // property list like "Version=2, Size=Large" -> "Size=Large". This is a
+  // pattern match on the name text, not a real Figma "version" concept —
+  // it only ever affects what's rendered/copied, never the underlying data.
+  function stripVersionNumbers(str) {
+    if (!str) return str;
+    var withoutVersionProp = str
+      .split(',')
+      .filter(function (segment) { return !/^\s*version\s*=/i.test(segment); })
+      .join(',');
+    var withoutInlineVersion = withoutVersionProp.replace(/\s*\(?\bv(?:ersion)?\.?\s*\d+(?:\.\d+)*\)?/gi, '');
+    return withoutInlineVersion
+      .replace(/^\s*,\s*/, '')
+      .replace(/\s*,\s*$/, '')
+      .replace(/,\s*,/g, ',')
+      .trim();
   }
 
   function badgeClassFor(classification) {
@@ -639,6 +671,9 @@
     var item = document.createElement('div');
     item.className = 'item';
 
+    var displayName = hideVersions ? stripVersionNumbers(comp.name) : comp.name;
+    var displayVariant = comp.variantName && hideVersions ? stripVersionNumbers(comp.variantName) : comp.variantName;
+
     var tagsHtml = comp.tags.length
       ? comp.tags.map(function (t) { return '<span class="tag-chip">' + escapeHtml(t) + '</span>'; }).join('')
       : '<span class="detail-value muted">No tags found.</span>';
@@ -669,8 +704,8 @@
         }).join('')
       : '<div class="detail-value muted">No links available for this component.</div>';
 
-    var variantHtml = comp.variantName
-      ? '<div class="item-variant">' + escapeHtml(comp.variantName) + '</div>'
+    var variantHtml = displayVariant
+      ? '<div class="item-variant">' + escapeHtml(displayVariant) + '</div>'
       : '';
 
     var isIncluded = includedInCopy[comp.id] !== false;
@@ -681,7 +716,7 @@
           '<input type="checkbox" class="copy-include-checkbox"' + (isIncluded ? ' checked' : '') + ' />' +
         '</label>' +
         '<div class="item-main">' +
-          '<div class="item-name">' + escapeHtml(comp.name) + '</div>' +
+          '<div class="item-name">' + escapeHtml(displayName) + '</div>' +
           variantHtml +
           '<div class="item-badges"><span class="badge ' + badgeClassFor(comp.classification) + '">' + escapeHtml(comp.classification) + '</span></div>' +
         '</div>' +
