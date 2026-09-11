@@ -48,13 +48,40 @@ your document.
    checked by default, and unclassified rows are hidden unless "Show
    unclassified" is checked. Both checkboxes only filter the
    already-fetched list — no re-analysis, and row order never changes.
-9. Rows are always listed in the order the components first appear on
-   the screen (top-to-bottom in the layers tree), not alphabetically.
+9. Rows are sorted by each component's **on-canvas position** — topmost
+   occurrence first (top-to-bottom), then leftmost for ties — so the list
+   reads in the same order as the screen itself. This is *not* the same
+   as the node tree's child order (which is z-stacking/back-to-front and
+   can be scrambled by reordering layers, "bring to front", copy-paste,
+   etc.) — that's what earlier versions of this plugin used, which is
+   why the order could look arbitrary.
 10. Each row has a target/select button next to the expand arrow — click
     it to select every instance of that component on the canvas and
     scroll/zoom the viewport to fit them. This does not change what the
     plugin is inspecting (it keeps showing the current screen's
     inventory), it only changes your Figma selection on canvas.
+11. A **content language** dropdown (EN/DE) sits at the very top of the
+    plugin. It only affects the "Copy to Technical Story" output below —
+    it doesn't change anything else displayed in the plugin.
+12. **Copy to Technical Story** (next to Refresh, in purple) copies a
+    Confluence-paste-ready rich-text block to your clipboard, built from
+    whatever is *currently visible* in the list (respecting "Hide atoms"
+    / "Show unclassified"):
+    - Screen name as an H3 heading, then the Figma link.
+    - An underlined "UI elements & copy" label.
+    - One block per component **occurrence** — if a component is used 3
+      times, it's written out 3 times, since each occurrence's text can
+      differ. The component name is hyperlinked to its first
+      documentation link when one exists.
+    - Underneath each occurrence, one line per text layer found on it,
+      as a `DE: …` / `EN: …` pair — whichever language is selected in
+      the dropdown gets the actual text (from that occurrence's Content,
+      see above), the other is left blank for a translator to fill in
+      directly in Confluence.
+    A small toast confirms the copy. Paste directly into Confluence's
+    editor (or Word/Google Docs/any rich-text target) to get real
+    headings/links/underline instead of raw text — see the clipboard
+    note below for how that's implemented.
 
 The list re-analyzes automatically whenever your selection changes while
 the plugin is open, and has a manual "Refresh" button for re-reading a
@@ -148,6 +175,16 @@ its own.
   `[ds-atom]`, the plugin classifies it as **DS Component** and lists
   both detected tags in the expanded detail view — the PRD does not
   define a precedence rule, so this is a deliberate, documented default.
+- **Rich-text clipboard copy.** "Copy to Technical Story" writes HTML to
+  the clipboard via a hidden `contenteditable` element plus
+  `document.execCommand('copy')` on a DOM selection, rather than the
+  newer async `navigator.clipboard.write`/`ClipboardItem` API. Browsers
+  populate both `text/html` and `text/plain` automatically from a DOM
+  selection copy, and this route is more reliably supported from inside
+  a sandboxed plugin UI iframe. A target that only accepts plain text
+  (e.g. a plain textarea) still gets readable output; a rich-text target
+  like Confluence, Word, or Google Docs renders the heading/link/
+  underline formatting.
 - **No network access.** `manifest.json` declares
   `"networkAccess": { "allowedDomains": ["none"] }` — the plugin cannot
   make any network requests, matching the privacy requirement that all

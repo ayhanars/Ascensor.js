@@ -11,6 +11,7 @@
     --bg: #ffffff;
     --bg-subtle: #f7f7f7;
     --accent: #18a0fb;
+    --copy-accent: #7c3aed;
     --badge-component: #eef6ff;
     --badge-component-text: #0d7ae0;
     --badge-atom: #eefbf3;
@@ -59,10 +60,38 @@
     font-size: 11px;
   }
 
+  .lang-bar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .lang-bar select {
+    font-size: 11px;
+    padding: 2px 4px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+  }
+
   .toolbar {
     display: flex;
     justify-content: space-between;
     align-items: center;
+  }
+
+  .toolbar-actions {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    margin-left: 8px;
   }
 
   .refresh-btn {
@@ -74,9 +103,42 @@
     cursor: pointer;
     color: var(--text);
     flex-shrink: 0;
-    margin-left: 8px;
   }
   .refresh-btn:hover { background: var(--bg-subtle); }
+
+  .copy-btn {
+    border: none;
+    background: var(--copy-accent);
+    color: #ffffff;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 9px;
+    cursor: pointer;
+    flex-shrink: 0;
+    margin-right: 6px;
+    white-space: nowrap;
+  }
+  .copy-btn:hover { opacity: 0.9; }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 16px;
+    transform: translateX(-50%);
+    background: var(--text);
+    color: var(--bg);
+    font-size: 12px;
+    padding: 7px 14px;
+    border-radius: 6px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    z-index: 20;
+    white-space: nowrap;
+  }
+  .toast.visible { opacity: 1; }
 
   main {
     flex: 1;
@@ -308,6 +370,14 @@
 </head>
 <body>
 
+<div class="lang-bar">
+  <label for="language-select">Content language</label>
+  <select id="language-select">
+    <option value="EN" selected>EN</option>
+    <option value="DE">DE</option>
+  </select>
+</div>
+
 <header>
   <div class="toolbar">
     <div style="min-width:0;">
@@ -315,9 +385,14 @@
       <a id="screen-link" class="screen-link" href="#" target="_blank" style="display:none;">Open in Figma ↗</a>
       <span id="screen-link-disabled" class="screen-link-disabled" style="display:none;">Figma link unavailable in this session — see README</span>
     </div>
-    <button class="refresh-btn" id="refresh-btn" title="Re-analyze selection">Refresh</button>
+    <div class="toolbar-actions">
+      <button class="copy-btn" id="copy-stories-btn" type="button" title="Copy UI elements & copy as Confluence-ready rich text">Copy to Technical Story</button>
+      <button class="refresh-btn" id="refresh-btn" title="Re-analyze selection">Refresh</button>
+    </div>
   </div>
 </header>
+
+<div class="toast" id="toast"></div>
 
 <main id="main">
   <div class="empty-state" id="empty-state">
@@ -352,15 +427,113 @@
   var screenLinkEl = document.getElementById('screen-link');
   var screenLinkDisabledEl = document.getElementById('screen-link-disabled');
   var refreshBtn = document.getElementById('refresh-btn');
+  var copyStoriesBtn = document.getElementById('copy-stories-btn');
   var showUnclassifiedToggle = document.getElementById('show-unclassified-toggle');
   var hideAtomsToggle = document.getElementById('hide-atoms-toggle');
+  var languageSelect = document.getElementById('language-select');
+  var toastEl = document.getElementById('toast');
 
   var lastComponents = [];
+  var lastFilteredComponents = [];
+  var lastScreen = null;
   var showUnclassified = false;
   var hideAtoms = hideAtomsToggle.checked;
+  var toastTimer = null;
 
   refreshBtn.addEventListener('click', function () {
     parent.postMessage({ pluginMessage: { type: 'refresh' } }, '*');
+  });
+
+  function showToast(message) {
+    toastEl.textContent = message;
+    toastEl.classList.add('visible');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () {
+      toastEl.classList.remove('visible');
+    }, 1800);
+  }
+
+  // Copies HTML to the clipboard via a hidden contenteditable + the classic
+  // execCommand('copy') selection-copy trick, rather than the async
+  // navigator.clipboard.write/ClipboardItem API — this is the more reliably
+  // supported route for *rich* (HTML) clipboard content from inside a
+  // sandboxed plugin iframe, and browsers populate both text/html and
+  // text/plain from the DOM selection automatically, so a paste target that
+  // only accepts plain text still gets sensible output.
+  function copyRichHtmlToClipboard(html) {
+    var container = document.createElement('div');
+    container.setAttribute('contenteditable', 'true');
+    container.style.position = 'fixed';
+    container.style.left = '-9999px';
+    container.style.top = '0';
+    container.innerHTML = html;
+    document.body.appendChild(container);
+
+    var range = document.createRange();
+    range.selectNodeContents(container);
+    var selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    var ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch (e) {
+      ok = false;
+    }
+
+    selection.removeAllRanges();
+    document.body.removeChild(container);
+    return ok;
+  }
+
+  // Builds a Confluence-paste-ready HTML fragment: screen name as an H3,
+  // the Figma link, an underlined "UI elements & copy" label, then one
+  // block per component OCCURRENCE (a component used 3 times on the screen
+  // produces 3 blocks, since each occurrence's text can differ) — the
+  // component name (hyperlinked to its first documentation link, if any),
+  // followed by one DE/EN pair per text layer found on that occurrence.
+  // Only the currently selected content language is filled in; the other
+  // is left blank for a translator to fill in directly in Confluence.
+  function buildConfluenceHtml() {
+    var lang = languageSelect.value;
+    var screenName = (lastScreen && lastScreen.name) || 'Screen';
+    var screenLink = lastScreen && lastScreen.link;
+
+    var parts = [];
+    parts.push('<h3>' + escapeHtml(screenName) + '</h3>');
+    parts.push(screenLink
+      ? '<p><a href="' + escapeHtml(screenLink) + '">' + escapeHtml(screenLink) + '</a></p>'
+      : '<p>(Figma link unavailable)</p>');
+    parts.push('<p><u>UI elements &amp; copy</u></p>');
+
+    lastFilteredComponents.forEach(function (comp) {
+      var nameHtml = comp.links.length
+        ? '<a href="' + escapeHtml(comp.links[0].url) + '">' + escapeHtml(comp.name) + '</a>'
+        : escapeHtml(comp.name);
+
+      var occurrences = comp.content.length ? comp.content : [[]];
+      occurrences.forEach(function (layers) {
+        parts.push('<p><strong>' + nameHtml + '</strong></p>');
+        layers.forEach(function (t) {
+          var deVal = lang === 'DE' ? escapeHtml(t.characters || '') : '';
+          var enVal = lang === 'EN' ? escapeHtml(t.characters || '') : '';
+          parts.push('<p><em>' + escapeHtml(t.name) + '</em><br/>DE: ' + deVal + '<br/>EN: ' + enVal + '</p>');
+        });
+      });
+    });
+
+    return parts.join('\n');
+  }
+
+  copyStoriesBtn.addEventListener('click', function () {
+    if (!lastFilteredComponents.length) {
+      showToast('Nothing to copy — no components in the current list');
+      return;
+    }
+    var html = buildConfluenceHtml();
+    var ok = copyRichHtmlToClipboard(html);
+    showToast(ok ? 'Copied for Confluence' : 'Copy failed — try again');
   });
 
   showUnclassifiedToggle.addEventListener('change', function () {
@@ -409,6 +582,7 @@
   }
 
   function renderScreenHeader(screen) {
+    lastScreen = screen;
     screenNameEl.textContent = screen.name;
     if (screen.link) {
       screenLinkEl.href = screen.link;
@@ -492,8 +666,10 @@
 
   // Renders the current filter state against the last full result received
   // from the plugin. Called on new data and on toggling either checkbox, so
-  // no re-analysis is needed. Order is always first-appearance-on-screen;
-  // the checkboxes only ever hide rows, never reorder them.
+  // no re-analysis is needed. Order is always top-to-bottom on the screen;
+  // the checkboxes only ever hide rows, never reorder them. The filtered
+  // list is also cached as lastFilteredComponents so "Copy to Technical
+  // Story" copies exactly what's currently visible.
   function renderFilteredList() {
     var all = lastComponents || [];
     var filtered = all.filter(function (c) {
@@ -501,6 +677,7 @@
       if (hideAtoms && c.classification === 'DS Atom') return false;
       return true;
     });
+    lastFilteredComponents = filtered;
 
     componentsTitleEl.textContent = filtered.length === all.length
       ? 'Components (' + all.length + ')'
@@ -528,6 +705,7 @@
     lastComponents = components || [];
 
     if (!lastComponents.length) {
+      lastFilteredComponents = [];
       showEmptyState('no-components');
       return;
     }
@@ -543,6 +721,8 @@
 
     if (msg.type === 'empty') {
       lastComponents = [];
+      lastFilteredComponents = [];
+      lastScreen = null;
       screenNameEl.textContent = '—';
       screenLinkEl.style.display = 'none';
       screenLinkDisabledEl.style.display = 'none';

@@ -171,10 +171,12 @@ async function analyzeSelection() {
     return;
   }
 
-  // findAll walks the tree depth-first in document order (the same order
-  // layers appear in the layers panel), so the order in which distinct
-  // components are first encountered below already matches their order of
-  // appearance on the screen.
+  // findAll's order is the node tree's children-array order, i.e. z-stacking
+  // (back to front) — NOT visual top-to-bottom position. Reordering layers,
+  // "bring to front", or pasting can freely scramble it relative to how the
+  // screen actually reads, so it cannot be used as "order of appearance".
+  // Instead each unique component is sorted below by the on-canvas position
+  // (top-to-bottom, then left-to-right) of its topmost occurrence.
   var instances = screenNode.findAll(function (n) { return n.type === 'INSTANCE'; });
 
   var order = [];
@@ -191,6 +193,10 @@ async function analyzeSelection() {
     var info = await resolveComponentInfo(instances[i]);
     if (!info) continue;
 
+    var box = instances[i].absoluteBoundingBox;
+    var posY = box ? box.y : 0;
+    var posX = box ? box.x : 0;
+
     if (!byId[info.id]) {
       var classified = classifyDescription(info.description);
       byId[info.id] = {
@@ -204,9 +210,15 @@ async function analyzeSelection() {
         description: info.description,
         links: info.documentationLinks.map(function (l) { return { name: null, url: l.uri }; }),
         instanceIds: [],
-        content: []
+        content: [],
+        sortY: posY,
+        sortX: posX
       };
       order.push(info.id);
+    } else if (posY < byId[info.id].sortY) {
+      // Keep the topmost (then leftmost) occurrence's position as the sort key.
+      byId[info.id].sortY = posY;
+      byId[info.id].sortX = posX;
     }
     byId[info.id].count += 1;
     byId[info.id].instanceIds.push(instances[i].id);
@@ -242,6 +254,14 @@ async function analyzeSelection() {
   });
 
   var components = order.map(function (id) { return byId[id]; });
+  components.sort(function (a, b) {
+    if (a.sortY !== b.sortY) return a.sortY - b.sortY;
+    return a.sortX - b.sortX;
+  });
+  components.forEach(function (comp) {
+    delete comp.sortY;
+    delete comp.sortX;
+  });
 
   figma.ui.postMessage({
     type: 'result',
