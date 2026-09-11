@@ -20,12 +20,21 @@ your document.
    - `[ds-atom]` → classified as **DS Atom**
    - neither → **Unclassified**
 5. Each row can be expanded to show the detected tags, the full raw
-   description, and any documentation links attached to the component.
+   description, and any links attached to the component (both
+   publish-time documentation links and Dev Mode "dev resources" links —
+   see below).
 6. The header shows the screen's name and a direct link to it in Figma.
+7. For a variant (e.g. `Button` with `Size`/`State` variants), the row
+   shows the component set's name with the specific variant (e.g.
+   `Size=Large, State=Hover`) underneath it in a lighter color.
+8. By default only **DS Component** and **DS Atom** rows are shown. Check
+   "Show unclassified" above the list to also see unclassified instances.
+9. Rows are listed in the order the components first appear on the
+   screen (top-to-bottom in the layers tree), not alphabetically.
 
 The list re-analyzes automatically whenever your selection changes while
 the plugin is open, and has a manual "Refresh" button for re-reading a
-description you just edited.
+description or link you just edited.
 
 ## Installing locally (no build step required)
 
@@ -67,14 +76,26 @@ its own.
 
 ## Technical notes & known limitations (MVP)
 
-- **Component links.** Figma's Plugin API exposes `documentationLinks` on
-  `ComponentNode`/`ComponentSetNode` — these are the links attached via
-  the "Add link" control in the component's properties panel (the same
-  data used when preparing a component for library publishing). This
-  plugin reads and displays exactly those links; it does not infer,
-  guess, or fetch links from anywhere else. If a component has no
-  documentation links set in Figma, none will be shown — the plugin does
-  not fabricate them.
+- **Component links.** Figma exposes two independent, unrelated link
+  features, and this plugin reads both, merging them into one "Links"
+  list per component:
+  - `documentationLinks` on `ComponentNode`/`ComponentSetNode` — the
+    links attached via the "Add link" control in the component's
+    properties panel (the same data used when preparing a component for
+    library publishing).
+  - **Dev Mode links ("dev resources")** — the links you attach via the
+    link/paperclip control in the **Dev Mode Inspect panel** on a
+    component. These are read via `figma.getDevResourcesAsync()`, a
+    separate Plugin API not used in the first version of this plugin —
+    this is what was missing when links weren't showing up for
+    components tagged from Dev Mode. Reading these does **not** require
+    the plugin itself to be running in Dev Mode.
+  In both cases the plugin only displays links it read from Figma; it
+  never infers, guesses, or fetches links from anywhere else. Dev
+  resources also require a Figma plan with Dev Mode enabled on the
+  file — on a plan/file without it, `getDevResourcesAsync` returns
+  nothing and the plugin silently falls back to documentation links
+  only.
 - **Figma screen link.** The "Open in Figma" link is built from
   `figma.fileKey` and the selected node's id. If the file has never been
   saved to Figma's servers (e.g. a brand-new unsaved local file), no file

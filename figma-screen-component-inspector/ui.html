@@ -84,14 +84,34 @@
     padding: 0 0 16px 0;
   }
 
-  .section-title {
+  .section-title-row {
     padding: 14px 16px 8px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .section-title {
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text-muted);
+    white-space: nowrap;
   }
+
+  .filter-toggle {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .filter-toggle input { margin: 0; cursor: pointer; }
 
   .empty-state {
     padding: 40px 20px;
@@ -105,6 +125,14 @@
     margin-bottom: 6px;
   }
   .empty-state .subtitle {
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .filtered-empty {
+    padding: 24px 16px;
+    text-align: center;
+    color: var(--text-muted);
     font-size: 12px;
     line-height: 1.5;
   }
@@ -129,6 +157,15 @@
 
   .item-name {
     font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .item-variant {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 1px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -236,7 +273,13 @@
     <div class="subtitle">Select a Figma frame to see its<br/>components and metadata.</div>
   </div>
   <div id="component-section" style="display:none;">
-    <div class="section-title" id="components-title">Components</div>
+    <div class="section-title-row">
+      <span class="section-title" id="components-title">Components</span>
+      <label class="filter-toggle">
+        <input type="checkbox" id="show-unclassified-toggle" />
+        Show unclassified
+      </label>
+    </div>
     <div id="component-list"></div>
   </div>
 </main>
@@ -251,9 +294,18 @@
   var screenLinkEl = document.getElementById('screen-link');
   var screenLinkDisabledEl = document.getElementById('screen-link-disabled');
   var refreshBtn = document.getElementById('refresh-btn');
+  var showUnclassifiedToggle = document.getElementById('show-unclassified-toggle');
+
+  var lastComponents = [];
+  var showUnclassified = false;
 
   refreshBtn.addEventListener('click', function () {
     parent.postMessage({ pluginMessage: { type: 'refresh' } }, '*');
+  });
+
+  showUnclassifiedToggle.addEventListener('change', function () {
+    showUnclassified = showUnclassifiedToggle.checked;
+    renderFilteredList();
   });
 
   var EMPTY_STATES = {
@@ -303,57 +355,92 @@
     }
   }
 
+  function buildItemEl(comp) {
+    var item = document.createElement('div');
+    item.className = 'item';
+
+    var tagsHtml = comp.tags.length
+      ? comp.tags.map(function (t) { return '<span class="tag-chip">' + escapeHtml(t) + '</span>'; }).join('')
+      : '<span class="detail-value muted">No tags found.</span>';
+
+    var descriptionHtml = comp.description && comp.description.trim()
+      ? '<div class="detail-value">' + escapeHtml(comp.description) + '</div>'
+      : '<div class="detail-value muted">No description provided.</div>';
+
+    var linksHtml = comp.links.length
+      ? comp.links.map(function (l) {
+          var label = l.name ? l.name : l.url;
+          return '<span class="link-row"><a href="' + escapeHtml(l.url) + '" target="_blank">' + escapeHtml(label) + ' ↗</a></span>';
+        }).join('')
+      : '<div class="detail-value muted">No links available for this component.</div>';
+
+    var variantHtml = comp.variantName
+      ? '<div class="item-variant">' + escapeHtml(comp.variantName) + '</div>'
+      : '';
+
+    item.innerHTML =
+      '<div class="item-row">' +
+        '<div class="item-main">' +
+          '<div class="item-name">' + escapeHtml(comp.name) + '</div>' +
+          variantHtml +
+          '<div class="item-badges"><span class="badge ' + badgeClassFor(comp.classification) + '">' + escapeHtml(comp.classification) + '</span></div>' +
+        '</div>' +
+        '<div class="item-count">&times; ' + comp.count + '</div>' +
+        '<svg class="chevron" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+      '</div>' +
+      '<div class="item-detail">' +
+        '<div class="detail-block"><div class="detail-label">Tags</div>' + tagsHtml + '</div>' +
+        '<div class="detail-block"><div class="detail-label">Description</div>' + descriptionHtml + '</div>' +
+        '<div class="detail-block"><div class="detail-label">Links</div>' + linksHtml + '</div>' +
+      '</div>';
+
+    item.querySelector('.item-row').addEventListener('click', function () {
+      item.classList.toggle('expanded');
+    });
+
+    return item;
+  }
+
+  // Renders the current filter state (showUnclassified) against the last
+  // full result received from the plugin. Called both on new data and on
+  // toggling the "Show unclassified" checkbox, so no re-analysis is needed.
+  function renderFilteredList() {
+    var all = lastComponents || [];
+    var filtered = showUnclassified ? all : all.filter(function (c) { return c.classification !== 'Unclassified'; });
+
+    componentsTitleEl.textContent = filtered.length === all.length
+      ? 'Components (' + all.length + ')'
+      : 'Components (' + filtered.length + ' of ' + all.length + ')';
+
+    componentListEl.innerHTML = '';
+
+    if (!filtered.length) {
+      var hidden = all.length;
+      var notice = document.createElement('div');
+      notice.className = 'filtered-empty';
+      notice.innerHTML = 'All ' + hidden + ' component' + (hidden === 1 ? '' : 's') + ' on this screen ' +
+        (hidden === 1 ? 'is' : 'are') + ' unclassified.<br/>Check &ldquo;Show unclassified&rdquo; above to view ' +
+        (hidden === 1 ? 'it' : 'them') + '.';
+      componentListEl.appendChild(notice);
+      return;
+    }
+
+    filtered.forEach(function (comp) {
+      componentListEl.appendChild(buildItemEl(comp));
+    });
+  }
+
   function renderComponents(components) {
-    if (!components.length) {
+    lastComponents = components || [];
+
+    if (!lastComponents.length) {
       showEmptyState('no-components');
       return;
     }
 
     emptyStateEl.style.display = 'none';
     componentSectionEl.style.display = 'block';
-    componentsTitleEl.textContent = 'Components (' + components.length + ')';
-
-    componentListEl.innerHTML = '';
-
-    components.forEach(function (comp, index) {
-      var item = document.createElement('div');
-      item.className = 'item';
-
-      var tagsHtml = comp.tags.length
-        ? comp.tags.map(function (t) { return '<span class="tag-chip">' + escapeHtml(t) + '</span>'; }).join('')
-        : '<span class="detail-value muted">No tags found.</span>';
-
-      var descriptionHtml = comp.description && comp.description.trim()
-        ? '<div class="detail-value">' + escapeHtml(comp.description) + '</div>'
-        : '<div class="detail-value muted">No description provided.</div>';
-
-      var linksHtml = comp.links.length
-        ? comp.links.map(function (uri) {
-            return '<span class="link-row"><a href="' + escapeHtml(uri) + '" target="_blank">' + escapeHtml(uri) + ' ↗</a></span>';
-          }).join('')
-        : '<div class="detail-value muted">No links available for this component.</div>';
-
-      item.innerHTML =
-        '<div class="item-row" data-index="' + index + '">' +
-          '<div class="item-main">' +
-            '<div class="item-name">' + escapeHtml(comp.name) + '</div>' +
-            '<div class="item-badges"><span class="badge ' + badgeClassFor(comp.classification) + '">' + escapeHtml(comp.classification) + '</span></div>' +
-          '</div>' +
-          '<div class="item-count">&times; ' + comp.count + '</div>' +
-          '<svg class="chevron" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
-        '</div>' +
-        '<div class="item-detail">' +
-          '<div class="detail-block"><div class="detail-label">Tags</div>' + tagsHtml + '</div>' +
-          '<div class="detail-block"><div class="detail-label">Description</div>' + descriptionHtml + '</div>' +
-          '<div class="detail-block"><div class="detail-label">Links</div>' + linksHtml + '</div>' +
-        '</div>';
-
-      item.querySelector('.item-row').addEventListener('click', function () {
-        item.classList.toggle('expanded');
-      });
-
-      componentListEl.appendChild(item);
-    });
+    renderFilteredList();
   }
 
   window.onmessage = function (event) {
@@ -361,6 +448,7 @@
     if (!msg) return;
 
     if (msg.type === 'empty') {
+      lastComponents = [];
       screenNameEl.textContent = '—';
       screenLinkEl.style.display = 'none';
       screenLinkDisabledEl.style.display = 'none';

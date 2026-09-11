@@ -34,6 +34,8 @@ function buildFigmaLink(node) {
 // documentation links. Falls back to the parent component set's data when
 // the instance's specific variant has none of its own — variant components
 // often carry shared metadata on the set rather than on each variant.
+// The set's name is kept separate from the variant's own name (e.g.
+// "Size=Large, State=Hover") so the UI can render them as two lines.
 async function resolveComponentInfo(instance) {
   var mainComponent = null;
   try {
@@ -56,14 +58,37 @@ async function resolveComponentInfo(instance) {
     documentationLinks = parent.documentationLinks || [];
   }
 
-  var name = isInSet ? (parent.name + ' / ' + mainComponent.name) : mainComponent.name;
-
   return {
     id: mainComponent.id,
-    name: name,
+    parentSetId: isInSet ? parent.id : null,
+    name: isInSet ? parent.name : mainComponent.name,
+    variantName: isInSet ? mainComponent.name : null,
     description: description,
     documentationLinks: documentationLinks
   };
+}
+
+// Reads Dev Mode "Dev resources" links (the ones attached via the link/paperclip
+// control in the Dev Mode inspect panel) for a batch of node ids. This is a
+// separate Figma feature/API from documentationLinks (which comes from the
+// component description panel used when publishing to a library), so both
+// sources are read and merged. Degrades to an empty result if the API isn't
+// available (older Figma client) or the workspace has no Dev Mode access.
+async function fetchDevResources(nodeIds) {
+  var byNode = {};
+  if (!nodeIds.length || typeof figma.getDevResourcesAsync !== 'function') return byNode;
+  try {
+    var resources = await figma.getDevResourcesAsync({ nodeIds: nodeIds });
+    for (var i = 0; i < resources.length; i++) {
+      var r = resources[i];
+      if (!r || !r.nodeId || !r.url) continue;
+      if (!byNode[r.nodeId]) byNode[r.nodeId] = [];
+      byNode[r.nodeId].push({ name: r.name || null, url: r.url });
+    }
+  } catch (e) {
+    // No Dev Mode access on this file/plan, or the API isn't supported — ignore.
+  }
+  return byNode;
 }
 
 async function analyzeSelection() {
@@ -86,6 +111,10 @@ async function analyzeSelection() {
     return;
   }
 
+  // findAll walks the tree depth-first in document order (the same order
+  // layers appear in the layers panel), so the order in which distinct
+  // components are first encountered below already matches their order of
+  // appearance on the screen.
   var instances = screenNode.findAll(function (n) { return n.type === 'INSTANCE'; });
 
   var order = [];
@@ -99,17 +128,39 @@ async function analyzeSelection() {
       var classified = classifyDescription(info.description);
       byId[info.id] = {
         id: info.id,
+        parentSetId: info.parentSetId,
         name: info.name,
+        variantName: info.variantName,
         count: 0,
         classification: classified.classification,
         tags: classified.tags,
         description: info.description,
-        links: info.documentationLinks.map(function (l) { return l.uri; })
+        links: info.documentationLinks.map(function (l) { return { name: null, url: l.uri }; })
       };
       order.push(info.id);
     }
     byId[info.id].count += 1;
   }
+
+  // Batch-fetch Dev Mode links for every unique component (and its variant
+  // set, as a fallback) found on the screen, then merge them in.
+  var nodeIdSet = {};
+  order.forEach(function (id) {
+    nodeIdSet[id] = true;
+    var setId = byId[id].parentSetId;
+    if (setId) nodeIdSet[setId] = true;
+  });
+  var devResourcesByNode = await fetchDevResources(Object.keys(nodeIdSet));
+
+  order.forEach(function (id) {
+    var comp = byId[id];
+    var devLinks = devResourcesByNode[id] || [];
+    if (!devLinks.length && comp.parentSetId) {
+      devLinks = devResourcesByNode[comp.parentSetId] || [];
+    }
+    comp.links = comp.links.concat(devLinks);
+    delete comp.parentSetId;
+  });
 
   var components = order.map(function (id) { return byId[id]; });
 
