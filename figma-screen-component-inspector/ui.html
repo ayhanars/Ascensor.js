@@ -220,6 +220,16 @@
   }
   .item-row:hover { background: var(--bg-subtle); }
 
+  .copy-include {
+    display: flex;
+    align-items: flex-start;
+    flex-shrink: 0;
+    margin-right: 8px;
+    padding-top: 2px;
+    cursor: pointer;
+  }
+  .copy-include input { margin: 0; cursor: pointer; }
+
   .item-main {
     min-width: 0;
     flex: 1;
@@ -439,6 +449,11 @@
   var showUnclassified = false;
   var hideAtoms = hideAtomsToggle.checked;
   var toastTimer = null;
+  // comp.id -> boolean; absent/true means included in "Copy to Technical
+  // Story". Reset whenever a fresh analysis result comes in (see
+  // renderComponents) since old ids may no longer correspond to what's
+  // currently on screen.
+  var includedInCopy = {};
 
   refreshBtn.addEventListener('click', function () {
     parent.postMessage({ pluginMessage: { type: 'refresh' } }, '*');
@@ -492,9 +507,12 @@
   // block per component OCCURRENCE (a component used 3 times on the screen
   // produces 3 blocks, since each occurrence's text can differ) — the
   // component name (hyperlinked to its first documentation link, if any),
-  // followed by one DE/EN pair per text layer found on that occurrence.
-  // Only the currently selected content language is filled in; the other
-  // is left blank for a translator to fill in directly in Confluence.
+  // followed by one DE/EN pair per text layer found on that occurrence,
+  // indented slightly so each occurrence's detail lines read as a group
+  // under its name line. Only components left checked (see the per-row
+  // checkbox) are included. Only the currently selected content language
+  // is filled in; the other is left blank for a translator to fill in
+  // directly in Confluence.
   function buildConfluenceHtml() {
     var lang = languageSelect.value;
     var screenName = (lastScreen && lastScreen.name) || 'Screen';
@@ -502,12 +520,15 @@
 
     var parts = [];
     parts.push('<h3>' + escapeHtml(screenName) + '</h3>');
+    // Pasted as a bare URL (not wrapped in <a>) on its own line/paragraph so
+    // Confluence's own paste-time link detection can turn it into a smart,
+    // embedded Figma preview card instead of a plain text hyperlink.
     parts.push(screenLink
-      ? '<p><a href="' + escapeHtml(screenLink) + '">' + escapeHtml(screenLink) + '</a></p>'
+      ? '<p>' + escapeHtml(screenLink) + '</p>'
       : '<p>(Figma link unavailable)</p>');
     parts.push('<p><u>UI elements &amp; copy</u></p>');
 
-    lastFilteredComponents.forEach(function (comp) {
+    componentsForCopy().forEach(function (comp) {
       var nameHtml = comp.links.length
         ? '<a href="' + escapeHtml(comp.links[0].url) + '">' + escapeHtml(comp.name) + '</a>'
         : escapeHtml(comp.name);
@@ -518,7 +539,7 @@
         layers.forEach(function (t) {
           var deVal = lang === 'DE' ? escapeHtml(t.characters || '') : '';
           var enVal = lang === 'EN' ? escapeHtml(t.characters || '') : '';
-          parts.push('<p><em>' + escapeHtml(t.name) + '</em><br/>DE: ' + deVal + '<br/>EN: ' + enVal + '</p>');
+          parts.push('<p style="margin-left: 24px;"><em>' + escapeHtml(t.name) + '</em><br/>DE: ' + deVal + '<br/>EN: ' + enVal + '</p>');
         });
       });
     });
@@ -526,9 +547,16 @@
     return parts.join('\n');
   }
 
+  // Only the components still checked (see the per-row checkbox in
+  // buildItemEl) go into the Confluence copy — everything not explicitly
+  // unchecked defaults to included.
+  function componentsForCopy() {
+    return lastFilteredComponents.filter(function (c) { return includedInCopy[c.id] !== false; });
+  }
+
   copyStoriesBtn.addEventListener('click', function () {
-    if (!lastFilteredComponents.length) {
-      showToast('Nothing to copy — no components in the current list');
+    if (!componentsForCopy().length) {
+      showToast('Nothing to copy — no components checked');
       return;
     }
     var html = buildConfluenceHtml();
@@ -632,8 +660,13 @@
       ? '<div class="item-variant">' + escapeHtml(comp.variantName) + '</div>'
       : '';
 
+    var isIncluded = includedInCopy[comp.id] !== false;
+
     item.innerHTML =
       '<div class="item-row">' +
+        '<label class="copy-include" title="Include in Copy to Technical Story">' +
+          '<input type="checkbox" class="copy-include-checkbox"' + (isIncluded ? ' checked' : '') + ' />' +
+        '</label>' +
         '<div class="item-main">' +
           '<div class="item-name">' + escapeHtml(comp.name) + '</div>' +
           variantHtml +
@@ -659,6 +692,14 @@
     item.querySelector('.select-btn').addEventListener('click', function (event) {
       event.stopPropagation();
       parent.postMessage({ pluginMessage: { type: 'select', ids: comp.instanceIds } }, '*');
+    });
+
+    item.querySelector('.copy-include').addEventListener('click', function (event) {
+      event.stopPropagation();
+    });
+
+    item.querySelector('.copy-include-checkbox').addEventListener('change', function (event) {
+      includedInCopy[comp.id] = event.target.checked;
     });
 
     return item;
@@ -703,6 +744,7 @@
 
   function renderComponents(components) {
     lastComponents = components || [];
+    includedInCopy = {};
 
     if (!lastComponents.length) {
       lastFilteredComponents = [];

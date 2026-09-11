@@ -63,21 +63,33 @@ your document.
 11. A **content language** dropdown (EN/DE) sits at the very top of the
     plugin. It only affects the "Copy to Technical Story" output below —
     it doesn't change anything else displayed in the plugin.
-12. **Copy to Technical Story** (next to Refresh, in purple) copies a
+12. Each row has a small checkbox at its left edge (default checked) —
+    uncheck it to leave that component out of "Copy to Technical Story"
+    without affecting anything else (it stays visible, still counted,
+    etc.). Unlike "Hide atoms"/"Show unclassified", this state is
+    per-component and resets to all-checked on every fresh analysis
+    (selection change or Refresh), since a re-scan can't guarantee old
+    ids still mean the same thing.
+13. **Copy to Technical Story** (next to Refresh, in purple) copies a
     Confluence-paste-ready rich-text block to your clipboard, built from
-    whatever is *currently visible* in the list (respecting "Hide atoms"
-    / "Show unclassified"):
-    - Screen name as an H3 heading, then the Figma link.
+    whatever is *currently visible and checked* in the list (respecting
+    "Hide atoms" / "Show unclassified" and the per-row checkboxes above):
+    - Screen name as an H3 heading, then the Figma link as bare text (not
+      a hyperlink) on its own line/paragraph — pasted that way, most
+      Confluence editors auto-detect it and offer to turn it into an
+      embedded Figma preview card, which a pre-wrapped `<a>` link would
+      prevent.
     - An underlined "UI elements & copy" label.
     - One block per component **occurrence** — if a component is used 3
       times, it's written out 3 times, since each occurrence's text can
       differ. The component name is hyperlinked to its first
       documentation link when one exists.
-    - Underneath each occurrence, one line per text layer found on it,
-      as a `DE: …` / `EN: …` pair — whichever language is selected in
-      the dropdown gets the actual text (from that occurrence's Content,
-      see above), the other is left blank for a translator to fill in
-      directly in Confluence.
+    - Underneath each occurrence, indented slightly to the right so it
+      reads as a group under its name line, one entry per text layer
+      found on it, as a `DE: …` / `EN: …` pair — whichever language is
+      selected in the dropdown gets the actual text (from that
+      occurrence's Content, see above), the other is left blank for a
+      translator to fill in directly in Confluence.
     A small toast confirms the copy. Paste directly into Confluence's
     editor (or Word/Google Docs/any rich-text target) to get real
     headings/links/underline instead of raw text — see the clipboard
