@@ -306,8 +306,8 @@
           Show unclassified
         </label>
         <label class="filter-toggle">
-          <input type="checkbox" id="sort-atoms-toggle" />
-          Atoms to bottom
+          <input type="checkbox" id="hide-atoms-toggle" />
+          Hide atoms
         </label>
       </div>
     </div>
@@ -326,11 +326,11 @@
   var screenLinkDisabledEl = document.getElementById('screen-link-disabled');
   var refreshBtn = document.getElementById('refresh-btn');
   var showUnclassifiedToggle = document.getElementById('show-unclassified-toggle');
-  var sortAtomsToggle = document.getElementById('sort-atoms-toggle');
+  var hideAtomsToggle = document.getElementById('hide-atoms-toggle');
 
   var lastComponents = [];
   var showUnclassified = false;
-  var sortAtomsToBottom = false;
+  var hideAtoms = false;
 
   refreshBtn.addEventListener('click', function () {
     parent.postMessage({ pluginMessage: { type: 'refresh' } }, '*');
@@ -341,8 +341,8 @@
     renderFilteredList();
   });
 
-  sortAtomsToggle.addEventListener('change', function () {
-    sortAtomsToBottom = sortAtomsToggle.checked;
+  hideAtomsToggle.addEventListener('change', function () {
+    hideAtoms = hideAtomsToggle.checked;
     renderFilteredList();
   });
 
@@ -447,18 +447,17 @@
     return item;
   }
 
-  // Renders the current filter/sort state against the last full result
-  // received from the plugin. Called on new data and on toggling either
-  // checkbox, so no re-analysis is needed.
+  // Renders the current filter state against the last full result received
+  // from the plugin. Called on new data and on toggling either checkbox, so
+  // no re-analysis is needed. Order is always first-appearance-on-screen;
+  // the checkboxes only ever hide rows, never reorder them.
   function renderFilteredList() {
     var all = lastComponents || [];
-    var filtered = showUnclassified ? all.slice() : all.filter(function (c) { return c.classification !== 'Unclassified'; });
-
-    if (sortAtomsToBottom) {
-      var nonAtoms = filtered.filter(function (c) { return c.classification !== 'DS Atom'; });
-      var atoms = filtered.filter(function (c) { return c.classification === 'DS Atom'; });
-      filtered = nonAtoms.concat(atoms);
-    }
+    var filtered = all.filter(function (c) {
+      if (!showUnclassified && c.classification === 'Unclassified') return false;
+      if (hideAtoms && c.classification === 'DS Atom') return false;
+      return true;
+    });
 
     componentsTitleEl.textContent = filtered.length === all.length
       ? 'Components (' + all.length + ')'
@@ -471,8 +470,8 @@
       var notice = document.createElement('div');
       notice.className = 'filtered-empty';
       notice.innerHTML = 'All ' + hidden + ' component' + (hidden === 1 ? '' : 's') + ' on this screen ' +
-        (hidden === 1 ? 'is' : 'are') + ' unclassified.<br/>Check &ldquo;Show unclassified&rdquo; above to view ' +
-        (hidden === 1 ? 'it' : 'them') + '.';
+        (hidden === 1 ? 'is' : 'are') + ' hidden by the filters above.<br/>Uncheck &ldquo;Hide atoms&rdquo; or check ' +
+        '&ldquo;Show unclassified&rdquo; to view ' + (hidden === 1 ? 'it' : 'them') + '.';
       componentListEl.appendChild(notice);
       return;
     }

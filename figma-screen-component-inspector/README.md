@@ -19,22 +19,25 @@ your document.
    - `[ds-component]` → classified as **DS Component**
    - `[ds-atom]` → classified as **DS Atom**
    - neither → **Unclassified**
-5. Each row can be expanded to show the detected tags, the full raw
-   description, and any links attached to the component (both
-   publish-time documentation links and Dev Mode "dev resources" links —
-   see below).
+5. Each row can be expanded to show:
+   - **Tags** — every `[bracket]` label found in the description, shown
+     individually (not just `[ds-component]`/`[ds-atom]`; if you also
+     write e.g. `[status: stable]` or `[owner: design-team]`, those show
+     up here too, label by label).
+   - **Description** — the full raw description text, unchanged.
+   - **Links** — both publish-time documentation links and Dev Mode "dev
+     resources" links (see below).
 6. The header shows the screen's name and a direct link to it in Figma.
 7. For a variant (e.g. `Button` with `Size`/`State` variants), the row
    shows the component set's name with the specific variant (e.g.
    `Size=Large, State=Hover`) underneath it in a lighter color.
 8. By default only **DS Component** and **DS Atom** rows are shown. Check
    "Show unclassified" above the list to also see unclassified instances.
-   Check "Atoms to bottom" to push DS Atom rows to the end of the list
-   (both checkboxes are unchecked by default and only re-order/filter the
-   already-fetched list — no re-analysis).
-9. Rows are listed in the order the components first appear on the
-   screen (top-to-bottom in the layers tree), not alphabetically, unless
-   "Atoms to bottom" is checked.
+   Check "Hide atoms" to hide DS Atom rows entirely (both checkboxes are
+   unchecked by default and only filter the already-fetched list — no
+   re-analysis; they never change row order).
+9. Rows are always listed in the order the components first appear on
+   the screen (top-to-bottom in the layers tree), not alphabetically.
 10. Each row has a target/select button next to the expand arrow — click
     it to select every instance of that component on the canvas and
     scroll/zoom the viewport to fit them. This does not change what the
@@ -108,19 +111,21 @@ its own.
 - **Figma screen link.** The "Open in Figma" link is built to match what
   Figma's own "Copy link to selection" (Cmd/Ctrl+L) produces:
   `https://www.figma.com/design/<fileKey>/<fileName>?node-id=<id>`. The
-  `<fileKey>` comes from `figma.fileKey`, a Plugin API property Figma
-  only populates once a file is saved/synced to Figma's servers — for a
-  brand-new, not-yet-synced local file it is `undefined` and the plugin
-  shows "unavailable" instead of guessing at a broken link. The manifest
-  now sets `"documentAccess": "dynamic-page"`, which is both the
-  officially recommended mode for the async component-resolution calls
-  this plugin already makes and, in some Figma client versions, a
-  prerequisite for `figma.fileKey` being populated at all — reinstall
-  this updated plugin if you were seeing "unavailable" before. If it's
-  still unavailable on a file you know is saved, that's a Plugin API
-  restriction (not something this plugin can bypass) — Cmd/Ctrl+L or
-  right-click → Copy link to selection in the Figma app itself always
-  has full access and will work as a fallback.
+  `<fileKey>` comes from `figma.fileKey`. Root cause of it showing
+  "unavailable": `figma.fileKey` is a **private-plugin API** — Figma
+  only populates it when the manifest sets `"enablePrivatePluginApi":
+  true` (confirmed against Figma's own developer docs/forum, not a
+  guess this time). That flag is now set in `manifest.json`. This
+  applies to local/dev-only plugins like this one with no extra setup;
+  the tradeoff is that a plugin using it can't later be published
+  publicly to the Figma Community without removing this property and
+  finding another way to get a file key (e.g. asking the user to paste
+  a file link) — not a concern here since this MVP is explicitly local
+  and not meant for Community distribution.
+  **You must reimport the plugin from the manifest again** (or fully
+  quit and reopen Figma) for a `manifest.json` permissions change like
+  this to take effect — just re-running an already-imported plugin does
+  not reread it.
 - **Scope of analysis.** The plugin walks the *entire* descendant tree of
   the selected frame and counts every component instance it finds,
   including instances nested inside other instances (e.g. an icon inside

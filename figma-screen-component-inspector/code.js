@@ -11,17 +11,33 @@ var VALID_SCREEN_TYPES = ['FRAME', 'COMPONENT', 'COMPONENT_SET', 'INSTANCE', 'SE
 var DS_COMPONENT_TAG = '[ds-component]';
 var DS_ATOM_TAG = '[ds-atom]';
 
+// Every [bracket] token in the description is treated as a "label" and
+// surfaced individually in the UI (e.g. a designer might also write
+// [status: stable] or [owner: design-team] alongside the classification
+// tags) — classification itself is still driven only by the two
+// recognized [ds-component] / [ds-atom] tags.
+function extractLabels(description) {
+  var matches = (description || '').match(/\[[^\[\]]+\]/g) || [];
+  var seen = {};
+  var labels = [];
+  matches.forEach(function (m) {
+    var normalized = m.trim();
+    if (!seen[normalized]) {
+      seen[normalized] = true;
+      labels.push(normalized);
+    }
+  });
+  return labels;
+}
+
 function classifyDescription(description) {
   var text = (description || '').toLowerCase();
-  var tags = [];
-  if (text.indexOf(DS_COMPONENT_TAG) !== -1) tags.push(DS_COMPONENT_TAG);
-  if (text.indexOf(DS_ATOM_TAG) !== -1) tags.push(DS_ATOM_TAG);
 
   var classification = 'Unclassified';
-  if (tags.indexOf(DS_COMPONENT_TAG) !== -1) classification = 'DS Component';
-  else if (tags.indexOf(DS_ATOM_TAG) !== -1) classification = 'DS Atom';
+  if (text.indexOf(DS_COMPONENT_TAG) !== -1) classification = 'DS Component';
+  else if (text.indexOf(DS_ATOM_TAG) !== -1) classification = 'DS Atom';
 
-  return { classification: classification, tags: tags };
+  return { classification: classification, tags: extractLabels(description) };
 }
 
 // Builds the same kind of link Figma's own "Copy link to selection" (Cmd/Ctrl+L)
