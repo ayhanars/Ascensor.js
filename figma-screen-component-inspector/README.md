@@ -69,9 +69,10 @@ your document.
     scroll/zoom the viewport to fit them. This does not change what the
     plugin is inspecting (it keeps showing the current screen's
     inventory), it only changes your Figma selection on canvas.
-11. A **content language** dropdown (EN/DE) sits at the very top of the
-    plugin. It only affects the "Copy to Technical Story" output below —
-    it doesn't change anything else displayed in the plugin.
+11. A **content language** dropdown (EN/DE, defaults to DE) sits at the
+    very top of the plugin. It only affects the "Copy to Technical Story"
+    output below — it doesn't change anything else displayed in the
+    plugin.
 12. Each row has a small checkbox at its left edge (default checked) —
     uncheck it to leave that component out of "Copy to Technical Story"
     without affecting anything else (it stays visible, still counted,

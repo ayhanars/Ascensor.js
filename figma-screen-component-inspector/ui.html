@@ -149,8 +149,8 @@
   .section-title-row {
     padding: 14px 16px 8px 16px;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
+    align-items: flex-start;
     gap: 8px;
   }
 
@@ -167,8 +167,10 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    width: 100%;
+    overflow-x: auto;
   }
 
   .filter-toggle {
@@ -383,8 +385,8 @@
 <div class="lang-bar">
   <label for="language-select">Content language</label>
   <select id="language-select">
-    <option value="EN" selected>EN</option>
-    <option value="DE">DE</option>
+    <option value="EN">EN</option>
+    <option value="DE" selected>DE</option>
   </select>
 </div>
 
