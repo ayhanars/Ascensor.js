@@ -24,10 +24,21 @@ function classifyDescription(description) {
   return { classification: classification, tags: tags };
 }
 
+// Builds the same kind of link Figma's own "Copy link to selection" (Cmd/Ctrl+L)
+// produces: /design/<fileKey>/<fileName>?node-id=<dash-separated-id>. Requires
+// figma.fileKey, which the Plugin API only populates for files that have been
+// saved/synced to Figma's servers — see README for when this can be null.
 function buildFigmaLink(node) {
-  var fileKey = figma.fileKey;
+  var fileKey = null;
+  try {
+    fileKey = figma.fileKey;
+  } catch (e) {
+    fileKey = null;
+  }
   if (!fileKey) return null;
-  return 'https://www.figma.com/file/' + fileKey + '/?node-id=' + encodeURIComponent(node.id);
+  var fileName = encodeURIComponent(figma.root.name || 'Untitled');
+  var dashNodeId = node.id.replace(/:/g, '-');
+  return 'https://www.figma.com/design/' + fileKey + '/' + fileName + '?node-id=' + dashNodeId;
 }
 
 // Resolves an instance's underlying component identity, description and
@@ -135,11 +146,13 @@ async function analyzeSelection() {
         classification: classified.classification,
         tags: classified.tags,
         description: info.description,
-        links: info.documentationLinks.map(function (l) { return { name: null, url: l.uri }; })
+        links: info.documentationLinks.map(function (l) { return { name: null, url: l.uri }; }),
+        instanceIds: []
       };
       order.push(info.id);
     }
     byId[info.id].count += 1;
+    byId[info.id].instanceIds.push(instances[i].id);
   }
 
   // Batch-fetch Dev Mode links for every unique component (and its variant
@@ -174,13 +187,45 @@ async function analyzeSelection() {
   });
 }
 
+// Selecting instances from the UI (the target button on each row) changes
+// figma.currentPage.selection ourselves, which would otherwise immediately
+// re-trigger analyzeSelection via selectionchange and blow away the current
+// inventory (since a multi-instance selection isn't a valid single "screen").
+// This flag swallows exactly that one self-caused event.
+var suppressNextSelectionChange = false;
+
+async function selectInstancesOnCanvas(ids) {
+  var nodes = [];
+  for (var i = 0; i < ids.length; i++) {
+    var node = null;
+    try {
+      node = await figma.getNodeByIdAsync(ids[i]);
+    } catch (e) {
+      node = null;
+    }
+    if (node) nodes.push(node);
+  }
+  if (!nodes.length) return;
+
+  suppressNextSelectionChange = true;
+  figma.currentPage.selection = nodes;
+  figma.viewport.scrollAndZoomIntoView(nodes);
+}
+
 figma.on('selectionchange', function () {
+  if (suppressNextSelectionChange) {
+    suppressNextSelectionChange = false;
+    return;
+  }
   analyzeSelection();
 });
 
 figma.ui.onmessage = function (msg) {
-  if (msg && msg.type === 'refresh') {
+  if (!msg) return;
+  if (msg.type === 'refresh') {
     analyzeSelection();
+  } else if (msg.type === 'select' && Array.isArray(msg.ids)) {
+    selectInstancesOnCanvas(msg.ids);
   }
 };
 

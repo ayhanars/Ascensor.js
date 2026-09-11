@@ -29,8 +29,17 @@ your document.
    `Size=Large, State=Hover`) underneath it in a lighter color.
 8. By default only **DS Component** and **DS Atom** rows are shown. Check
    "Show unclassified" above the list to also see unclassified instances.
+   Check "Atoms to bottom" to push DS Atom rows to the end of the list
+   (both checkboxes are unchecked by default and only re-order/filter the
+   already-fetched list — no re-analysis).
 9. Rows are listed in the order the components first appear on the
-   screen (top-to-bottom in the layers tree), not alphabetically.
+   screen (top-to-bottom in the layers tree), not alphabetically, unless
+   "Atoms to bottom" is checked.
+10. Each row has a target/select button next to the expand arrow — click
+    it to select every instance of that component on the canvas and
+    scroll/zoom the viewport to fit them. This does not change what the
+    plugin is inspecting (it keeps showing the current screen's
+    inventory), it only changes your Figma selection on canvas.
 
 The list re-analyzes automatically whenever your selection changes while
 the plugin is open, and has a manual "Refresh" button for re-reading a
@@ -96,10 +105,22 @@ its own.
   file — on a plan/file without it, `getDevResourcesAsync` returns
   nothing and the plugin silently falls back to documentation links
   only.
-- **Figma screen link.** The "Open in Figma" link is built from
-  `figma.fileKey` and the selected node's id. If the file has never been
-  saved to Figma's servers (e.g. a brand-new unsaved local file), no file
-  key exists yet and the link is shown as unavailable rather than broken.
+- **Figma screen link.** The "Open in Figma" link is built to match what
+  Figma's own "Copy link to selection" (Cmd/Ctrl+L) produces:
+  `https://www.figma.com/design/<fileKey>/<fileName>?node-id=<id>`. The
+  `<fileKey>` comes from `figma.fileKey`, a Plugin API property Figma
+  only populates once a file is saved/synced to Figma's servers — for a
+  brand-new, not-yet-synced local file it is `undefined` and the plugin
+  shows "unavailable" instead of guessing at a broken link. The manifest
+  now sets `"documentAccess": "dynamic-page"`, which is both the
+  officially recommended mode for the async component-resolution calls
+  this plugin already makes and, in some Figma client versions, a
+  prerequisite for `figma.fileKey` being populated at all — reinstall
+  this updated plugin if you were seeing "unavailable" before. If it's
+  still unavailable on a file you know is saved, that's a Plugin API
+  restriction (not something this plugin can bypass) — Cmd/Ctrl+L or
+  right-click → Copy link to selection in the Figma app itself always
+  has full access and will work as a fallback.
 - **Scope of analysis.** The plugin walks the *entire* descendant tree of
   the selected frame and counts every component instance it finds,
   including instances nested inside other instances (e.g. an icon inside
