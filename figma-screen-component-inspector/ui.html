@@ -258,6 +258,33 @@
   }
   .detail-value.muted { color: var(--text-muted); font-style: italic; }
 
+  .content-instance-heading {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin: 8px 0 2px 0;
+  }
+  .content-instance-heading:first-child { margin-top: 0; }
+
+  .content-row {
+    display: flex;
+    gap: 6px;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .content-label {
+    color: var(--text-muted);
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .content-label::after { content: ':'; }
+  .content-value {
+    color: var(--text);
+    word-break: break-word;
+  }
+
   .tag-chip {
     display: inline-block;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -405,6 +432,21 @@
       ? '<div class="detail-value">' + escapeHtml(comp.description) + '</div>'
       : '<div class="detail-value muted">No description provided.</div>';
 
+    var hasContent = comp.content.some(function (instLayers) { return instLayers.length > 0; });
+    var contentHtml = hasContent
+      ? comp.content.map(function (instLayers, idx) {
+          if (!instLayers.length) return '';
+          var heading = comp.content.length > 1
+            ? '<div class="content-instance-heading">Instance ' + (idx + 1) + '</div>'
+            : '';
+          var rows = instLayers.map(function (t) {
+            var value = t.characters && t.characters.length ? t.characters : '(empty)';
+            return '<div class="content-row"><span class="content-label">' + escapeHtml(t.name) + '</span><span class="content-value">' + escapeHtml(value) + '</span></div>';
+          }).join('');
+          return heading + rows;
+        }).join('')
+      : '<div class="detail-value muted">No text layers found.</div>';
+
     var linksHtml = comp.links.length
       ? comp.links.map(function (l) {
           var label = l.name ? l.name : l.url;
@@ -432,6 +474,7 @@
       '<div class="item-detail">' +
         '<div class="detail-block"><div class="detail-label">Tags</div>' + tagsHtml + '</div>' +
         '<div class="detail-block"><div class="detail-label">Description</div>' + descriptionHtml + '</div>' +
+        '<div class="detail-block"><div class="detail-label">Content</div>' + contentHtml + '</div>' +
         '<div class="detail-block"><div class="detail-label">Links</div>' + linksHtml + '</div>' +
       '</div>';
 

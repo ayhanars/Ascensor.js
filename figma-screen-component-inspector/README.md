@@ -25,6 +25,15 @@ your document.
      write e.g. `[status: stable]` or `[owner: design-team]`, those show
      up here too, label by label).
    - **Description** — the full raw description text, unchanged.
+   - **Content** — the actual characters typed into each of the
+     component's own text layers, per occurrence (e.g. a text layer
+     still named "Label" whose displayed content was overridden to
+     "Service" for that particular instance on the screen). If a
+     component appears more than once, each occurrence gets its own
+     "Instance N" grouping since their text can differ. Text that
+     belongs to a *nested* component instance (e.g. an icon-with-label
+     inside a button) is excluded here — it shows up under that nested
+     component's own row instead.
    - **Links** — both publish-time documentation links and Dev Mode "dev
      resources" links (see below).
 6. The header shows the screen's name and a direct link to it in Figma.

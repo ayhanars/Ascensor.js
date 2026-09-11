@@ -95,6 +95,33 @@ async function resolveComponentInfo(instance) {
   };
 }
 
+// Walking up from a text node to the instance that owns it — if that walk
+// crosses another INSTANCE first, the text belongs to a nested component
+// instance (e.g. an icon's label inside a button-with-icon), not this one,
+// so it's excluded to keep each row's content specific to its own layers.
+function isOwnText(textNode, instanceRoot) {
+  var p = textNode.parent;
+  while (p && p.id !== instanceRoot.id) {
+    if (p.type === 'INSTANCE') return false;
+    p = p.parent;
+  }
+  return true;
+}
+
+// Reads the actual characters typed into each of an instance's own text
+// layers (e.g. a layer still named "Label" whose displayed text was
+// overridden to "Service" for this particular instance). This is plain
+// per-instance content, not something read from the main component.
+function extractTextContent(instance) {
+  var textNodes = instance.findAll(function (n) { return n.type === 'TEXT'; });
+  var content = [];
+  for (var i = 0; i < textNodes.length; i++) {
+    if (!isOwnText(textNodes[i], instance)) continue;
+    content.push({ name: textNodes[i].name, characters: textNodes[i].characters });
+  }
+  return content;
+}
+
 // Reads Dev Mode "Dev resources" links (the ones attached via the link/paperclip
 // control in the Dev Mode inspect panel) for a batch of node ids. This is a
 // separate Figma feature/API from documentationLinks (which comes from the
@@ -163,12 +190,14 @@ async function analyzeSelection() {
         tags: classified.tags,
         description: info.description,
         links: info.documentationLinks.map(function (l) { return { name: null, url: l.uri }; }),
-        instanceIds: []
+        instanceIds: [],
+        content: []
       };
       order.push(info.id);
     }
     byId[info.id].count += 1;
     byId[info.id].instanceIds.push(instances[i].id);
+    byId[info.id].content.push(extractTextContent(instances[i]));
   }
 
   // Batch-fetch Dev Mode links for every unique component (and its variant
