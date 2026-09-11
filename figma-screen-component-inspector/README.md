@@ -75,18 +75,18 @@ your document.
     whatever is *currently visible and checked* in the list (respecting
     "Hide atoms" / "Show unclassified" and the per-row checkboxes above):
     - Screen name as an H3 heading, then the Figma link as bare text (not
-      a hyperlink) on its own line/paragraph — pasted that way, most
-      Confluence editors auto-detect it and offer to turn it into an
-      embedded Figma preview card, which a pre-wrapped `<a>` link would
-      prevent.
-    - An underlined "UI elements & copy" label.
+      a hyperlink) on its own line/paragraph — see the note below on why
+      this doesn't reliably turn into an embedded preview card on its own.
+    - "UI elements & copy" as its own H3 heading.
     - One block per component **occurrence** — if a component is used 3
       times, it's written out 3 times, since each occurrence's text can
-      differ. The component name is hyperlinked to its first
-      documentation link when one exists.
-    - Underneath each occurrence, indented slightly to the right so it
-      reads as a group under its name line, one entry per text layer
-      found on it, as a `DE: …` / `EN: …` pair — whichever language is
+      differ. The component name (as "Component Name:") is hyperlinked
+      to its first documentation link when one exists.
+    - Underneath each occurrence, a real nested bullet list (one `<li>`
+      per text layer) so the grouping survives Confluence's paste
+      sanitizer — plain CSS indentation (`margin-left`) does not, which
+      is why an earlier version of this didn't look indented once
+      pasted. Each item is `DE: …` / `EN: …` — whichever language is
       selected in the dropdown gets the actual text (from that
       occurrence's Content, see above), the other is left blank for a
       translator to fill in directly in Confluence.
@@ -196,7 +196,27 @@ its own.
   a sandboxed plugin UI iframe. A target that only accepts plain text
   (e.g. a plain textarea) still gets readable output; a rich-text target
   like Confluence, Word, or Google Docs renders the heading/link/
-  underline formatting.
+  underline/list formatting. Before copying, the hidden container's
+  styles are reset (`all: initial`) so this page's own theme (fonts,
+  colors) doesn't get baked into the clipboard HTML as extra inline
+  styles/spans — Chrome's copy serialization otherwise tends to do that
+  for anything inheriting page CSS.
+- **Figma link auto-embed is not guaranteed.** The plugin pastes the
+  screen's Figma URL as bare, unlinked text specifically so a paste-time
+  "turn this into an embedded card" detector has a chance to match it —
+  but whether that actually happens is entirely up to the paste target,
+  not this plugin. Confluence's embed/unfurl behavior for a pasted URL
+  depends on things outside the Plugin API's reach: whether your
+  Confluence workspace has a Figma smart-link integration enabled at
+  all, which exact paste path its editor took (typed/plain-text paste is
+  generally more reliable for triggering it than a rich HTML paste,
+  which is what a multi-block copy like this necessarily is), and
+  internal implementation details of Confluence's editor that can change
+  between versions. If it still comes through as plain inline text,
+  that's a Confluence-side limitation this plugin cannot force past —
+  try pasting just that one link on its own (e.g. with "paste as plain
+  text") if you specifically want the embed card, or use Confluence's
+  own link/embed picker on the pasted URL afterward.
 - **No network access.** `manifest.json` declares
   `"networkAccess": { "allowedDomains": ["none"] }` — the plugin cannot
   make any network requests, matching the privacy requirement that all

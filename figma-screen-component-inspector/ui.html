@@ -478,6 +478,13 @@
   function copyRichHtmlToClipboard(html) {
     var container = document.createElement('div');
     container.setAttribute('contenteditable', 'true');
+    // Reset every inherited style (this page's custom font/color/etc. from
+    // body) back to the browser's plain defaults before positioning it, so
+    // Chrome's copy serialization doesn't bake our page's theme into the
+    // clipboard HTML as extra inline styles/spans — that inherited styling
+    // is exactly the kind of thing that can turn a clean "just a bare URL"
+    // paragraph into something a paste-time link detector no longer matches.
+    container.style.all = 'initial';
     container.style.position = 'fixed';
     container.style.left = '-9999px';
     container.style.top = '0';
@@ -503,16 +510,17 @@
   }
 
   // Builds a Confluence-paste-ready HTML fragment: screen name as an H3,
-  // the Figma link, an underlined "UI elements & copy" label, then one
-  // block per component OCCURRENCE (a component used 3 times on the screen
-  // produces 3 blocks, since each occurrence's text can differ) — the
-  // component name (hyperlinked to its first documentation link, if any),
-  // followed by one DE/EN pair per text layer found on that occurrence,
-  // indented slightly so each occurrence's detail lines read as a group
-  // under its name line. Only components left checked (see the per-row
-  // checkbox) are included. Only the currently selected content language
-  // is filled in; the other is left blank for a translator to fill in
-  // directly in Confluence.
+  // the Figma link, "UI elements & copy" as its own H3, then one block per
+  // component OCCURRENCE (a component used 3 times on the screen produces
+  // 3 blocks, since each occurrence's text can differ) — the component
+  // name (hyperlinked to its first documentation link, if any), followed
+  // by a real nested <ul>/<li> list (not CSS margin — inline margin
+  // styling is routinely stripped by rich-text paste sanitizers, Confluence
+  // included, whereas list nesting is structural and survives paste) with
+  // one DE/EN pair per text layer found on that occurrence. Only components
+  // left checked (see the per-row checkbox) are included. Only the
+  // currently selected content language is filled in; the other is left
+  // blank for a translator to fill in directly in Confluence.
   function buildConfluenceHtml() {
     var lang = languageSelect.value;
     var screenName = (lastScreen && lastScreen.name) || 'Screen';
@@ -522,11 +530,13 @@
     parts.push('<h3>' + escapeHtml(screenName) + '</h3>');
     // Pasted as a bare URL (not wrapped in <a>) on its own line/paragraph so
     // Confluence's own paste-time link detection can turn it into a smart,
-    // embedded Figma preview card instead of a plain text hyperlink.
+    // embedded Figma preview card instead of a plain text hyperlink. Whether
+    // this actually triggers depends on Confluence's own paste handling and
+    // on its Figma integration being enabled for the workspace — see README.
     parts.push(screenLink
       ? '<p>' + escapeHtml(screenLink) + '</p>'
       : '<p>(Figma link unavailable)</p>');
-    parts.push('<p><u>UI elements &amp; copy</u></p>');
+    parts.push('<h3>UI elements &amp; copy</h3>');
 
     componentsForCopy().forEach(function (comp) {
       var nameHtml = comp.links.length
@@ -535,12 +545,15 @@
 
       var occurrences = comp.content.length ? comp.content : [[]];
       occurrences.forEach(function (layers) {
-        parts.push('<p><strong>' + nameHtml + '</strong></p>');
-        layers.forEach(function (t) {
-          var deVal = lang === 'DE' ? escapeHtml(t.characters || '') : '';
-          var enVal = lang === 'EN' ? escapeHtml(t.characters || '') : '';
-          parts.push('<p style="margin-left: 24px;"><em>' + escapeHtml(t.name) + '</em><br/>DE: ' + deVal + '<br/>EN: ' + enVal + '</p>');
-        });
+        parts.push('<p><strong>' + nameHtml + ':</strong></p>');
+        if (layers.length) {
+          var items = layers.map(function (t) {
+            var deVal = lang === 'DE' ? escapeHtml(t.characters || '') : '';
+            var enVal = lang === 'EN' ? escapeHtml(t.characters || '') : '';
+            return '<li>' + escapeHtml(t.name) + '<br/>DE: ' + deVal + '<br/>EN: ' + enVal + '</li>';
+          }).join('');
+          parts.push('<ul>' + items + '</ul>');
+        }
       });
     });
 
