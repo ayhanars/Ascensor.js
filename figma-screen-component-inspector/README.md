@@ -158,6 +158,20 @@ This plugin is plain JavaScript/HTML — there is nothing to compile or
   which is the only supported way to run this MVP (see step 1 above). If
   you're hitting either of these, double-check you're using the desktop
   app rather than a figma.com browser tab.
+- **`Unable to load code: ... EPERM: operation not permitted, open
+  '.../code.js'`** — this is macOS itself, not Figma or this plugin. On
+  macOS, apps need an explicit one-time grant (separate from normal file
+  permissions) to read inside the **Desktop**, **Documents**, or
+  **Downloads** folders. If this plugin's folder lives inside one of
+  those, Figma may not have that grant yet. Fix either by:
+  - Moving the plugin's folder somewhere outside Desktop/Documents/
+    Downloads (e.g. your home folder or a `~/dev`/`~/Projects` folder),
+    then re-importing from the new location — this is the more reliable
+    fix, or
+  - Granting Figma access via **System Settings → Privacy & Security →
+    Files and Folders** (or Full Disk Access), then fully quitting and
+    reopening Figma — this setting can be flaky and sometimes needs a
+    restart to actually take effect.
 
 ## Files
 
