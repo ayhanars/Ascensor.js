@@ -62,6 +62,12 @@ your document.
    shown in orange and it gets an orange "Local" badge next to its
    classification badge, so components that only exist in this file
    (rather than coming from a shared library) stand out at a glance.
+   **A local-named row always shows up, overriding "Show unclassified"
+   and "Hide atoms"** — ad-hoc/local components frequently don't carry a
+   `[ds-component]`/`[ds-atom]` tag yet (that's often exactly what makes
+   them worth flagging in the first place), so without this override
+   they'd silently disappear behind those two filters' defaults instead
+   of being surfaced.
 10. Rows are sorted by each component's **on-canvas position** — topmost
     occurrence first (top-to-bottom), then leftmost for ties — so the
     list reads in the same order as the screen itself. This is *not* the

@@ -778,6 +778,12 @@
   function renderFilteredList() {
     var all = lastComponents || [];
     var filtered = all.filter(function (c) {
+      // Local components (see isLocalComponent) always surface regardless of
+      // the other filters — most don't carry a [ds-component]/[ds-atom] tag
+      // yet (that's often exactly what makes them worth flagging), so
+      // without this override they'd silently vanish behind "Show
+      // unclassified" / "Hide atoms" instead of standing out as intended.
+      if (isLocalComponent(c)) return true;
       if (!showUnclassified && c.classification === 'Unclassified') return false;
       if (hideAtoms && c.classification === 'DS Atom') return false;
       return true;
