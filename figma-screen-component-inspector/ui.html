@@ -427,6 +427,10 @@
           <input type="checkbox" id="hide-versions-toggle" />
           Hide version numbers
         </label>
+        <label class="filter-toggle">
+          <input type="checkbox" id="hide-local-toggle" />
+          Hide local components
+        </label>
       </div>
     </div>
     <div id="component-list"></div>
@@ -447,6 +451,7 @@
   var showUnclassifiedToggle = document.getElementById('show-unclassified-toggle');
   var hideAtomsToggle = document.getElementById('hide-atoms-toggle');
   var hideVersionsToggle = document.getElementById('hide-versions-toggle');
+  var hideLocalToggle = document.getElementById('hide-local-toggle');
   var languageSelect = document.getElementById('language-select');
   var toastEl = document.getElementById('toast');
 
@@ -456,6 +461,7 @@
   var showUnclassified = false;
   var hideAtoms = hideAtomsToggle.checked;
   var hideVersions = hideVersionsToggle.checked;
+  var hideLocal = hideLocalToggle.checked;
   var toastTimer = null;
   // comp.id -> boolean; absent/true means included in "Copy to Technical
   // Story". Reset whenever a fresh analysis result comes in (see
@@ -600,6 +606,19 @@
     hideVersions = hideVersionsToggle.checked;
     renderFilteredList();
   });
+
+  hideLocalToggle.addEventListener('change', function () {
+    hideLocal = hideLocalToggle.checked;
+    renderFilteredList();
+  });
+
+  // True if "local" appears anywhere in the component's name or variant
+  // name (case-insensitive) — a plain text match, not the Plugin API's
+  // separate local-vs-library-remote concept.
+  function isLocalComponent(comp) {
+    var haystack = comp.name + ' ' + (comp.variantName || '');
+    return /local/i.test(haystack);
+  }
 
   var EMPTY_STATES = {
     'no-selection': {
@@ -766,6 +785,7 @@
     var filtered = all.filter(function (c) {
       if (!showUnclassified && c.classification === 'Unclassified') return false;
       if (hideAtoms && c.classification === 'DS Atom') return false;
+      if (hideLocal && isLocalComponent(c)) return false;
       return true;
     });
     lastFilteredComponents = filtered;
@@ -781,8 +801,8 @@
       var notice = document.createElement('div');
       notice.className = 'filtered-empty';
       notice.innerHTML = 'All ' + hidden + ' component' + (hidden === 1 ? '' : 's') + ' on this screen ' +
-        (hidden === 1 ? 'is' : 'are') + ' hidden by the filters above.<br/>Uncheck &ldquo;Hide atoms&rdquo; or check ' +
-        '&ldquo;Show unclassified&rdquo; to view ' + (hidden === 1 ? 'it' : 'them') + '.';
+        (hidden === 1 ? 'is' : 'are') + ' hidden by the filters above.<br/>Adjust the checkboxes to view ' +
+        (hidden === 1 ? 'it' : 'them') + '.';
       componentListEl.appendChild(notice);
       return;
     }
