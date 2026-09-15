@@ -50,44 +50,48 @@ your document.
    default) strips version-style markers from the displayed
    component/variant name — e.g. `Button v2` → `Button`, `Card (v1.3)` →
    `Card`, and a variant property list like `Version=2, Size=Large` →
-   `Size=Large`. "Hide local components" (unchecked by default) removes
-   any row whose component or variant name contains "local" (a plain,
-   case-insensitive text match on the name — not the Plugin API's
-   separate local-vs-library-remote concept). "Hide version numbers" is
-   a text transform on what's displayed/copied only; the other three
-   checkboxes actually remove rows from the list. None of them touch the
-   underlying Figma document, and grouping/counting is always keyed by
-   real component identity regardless of any checkbox state. All four
-   checkboxes only affect the already-fetched list — no re-analysis, and
-   row order never changes.
-9. Rows are sorted by each component's **on-canvas position** — topmost
-   occurrence first (top-to-bottom), then leftmost for ties — so the list
-   reads in the same order as the screen itself. This is *not* the same
-   as the node tree's child order (which is z-stacking/back-to-front and
-   can be scrambled by reordering layers, "bring to front", copy-paste,
-   etc.) — that's what earlier versions of this plugin used, which is
-   why the order could look arbitrary.
-10. Each row has a target/select button next to the expand arrow — click
+   `Size=Large` — a text transform on what's displayed/copied only. The
+   other two checkboxes actually remove rows from the list. None of them
+   touch the underlying Figma document, and grouping/counting is always
+   keyed by real component identity regardless of any checkbox state.
+   All three checkboxes only affect the already-fetched list — no
+   re-analysis, and row order never changes.
+9. A row whose component or variant name contains "local" (a plain,
+   case-insensitive text match — not the Plugin API's separate
+   local-vs-library-remote concept) is flagged, not hidden: its name is
+   shown in orange and it gets an orange "Local" badge next to its
+   classification badge, so components that only exist in this file
+   (rather than coming from a shared library) stand out at a glance.
+10. Rows are sorted by each component's **on-canvas position** — topmost
+    occurrence first (top-to-bottom), then leftmost for ties — so the
+    list reads in the same order as the screen itself. This is *not* the
+    same as the node tree's child order (which is z-stacking/back-to-front
+    and can be scrambled by reordering layers, "bring to front",
+    copy-paste, etc.) — that's what earlier versions of this plugin used,
+    which is why the order could look arbitrary.
+11. Each row has a target/select button next to the expand arrow — click
     it to select every instance of that component on the canvas and
     scroll/zoom the viewport to fit them. This does not change what the
     plugin is inspecting (it keeps showing the current screen's
     inventory), it only changes your Figma selection on canvas.
-11. A **content language** dropdown (EN/DE, defaults to DE) sits at the
+12. A **content language** dropdown (EN/DE, defaults to DE) sits at the
     very top of the plugin. It only affects the "Copy to Technical Story"
     output below — it doesn't change anything else displayed in the
     plugin.
-12. Each row has a small checkbox at its left edge (default checked) —
+13. Each row has a small checkbox at its left edge (default checked) —
     uncheck it to leave that component out of "Copy to Technical Story"
     without affecting anything else (it stays visible, still counted,
     etc.). Unlike "Hide atoms"/"Show unclassified", this state is
     per-component and resets to all-checked on every fresh analysis
     (selection change or Refresh), since a re-scan can't guarantee old
     ids still mean the same thing.
-13. **Copy to Technical Story** (next to Refresh, in purple) copies a
+14. **Copy to Technical Story** (next to Refresh, in purple) copies a
     Confluence-paste-ready rich-text block to your clipboard, built from
     whatever is *currently visible and checked* in the list (respecting
-    "Hide atoms" / "Show unclassified" / "Hide version numbers" / "Hide
-    local components" and the per-row checkboxes above):
+    "Hide atoms" / "Show unclassified" / "Hide version numbers" and the
+    per-row checkboxes above — the "Local" highlight from item 9 is
+    purely visual and doesn't filter anything, so a local component is
+    still included in the copy unless you uncheck it):
     - Screen name as an H3 heading, then the Figma link as bare text (not
       a hyperlink) on its own line/paragraph — see the note below on why
       this doesn't reliably turn into an embedded preview card on its own.

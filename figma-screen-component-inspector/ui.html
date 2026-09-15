@@ -18,6 +18,8 @@
     --badge-atom-text: #0f9d58;
     --badge-unclassified: #f2f2f2;
     --badge-unclassified-text: #6b6b6b;
+    --local-accent-bg: #fff1e0;
+    --local-accent-text: #b35c00;
   }
 
   * { box-sizing: border-box; }
@@ -243,6 +245,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .item-name-local { color: var(--local-accent-text); }
 
   .item-variant {
     font-size: 11px;
@@ -272,6 +275,7 @@
   .badge-component { background: var(--badge-component); color: var(--badge-component-text); }
   .badge-atom { background: var(--badge-atom); color: var(--badge-atom-text); }
   .badge-unclassified { background: var(--badge-unclassified); color: var(--badge-unclassified-text); }
+  .badge-local { background: var(--local-accent-bg); color: var(--local-accent-text); }
 
   .item-count {
     flex-shrink: 0;
@@ -427,10 +431,6 @@
           <input type="checkbox" id="hide-versions-toggle" />
           Hide version numbers
         </label>
-        <label class="filter-toggle">
-          <input type="checkbox" id="hide-local-toggle" />
-          Hide local components
-        </label>
       </div>
     </div>
     <div id="component-list"></div>
@@ -451,7 +451,6 @@
   var showUnclassifiedToggle = document.getElementById('show-unclassified-toggle');
   var hideAtomsToggle = document.getElementById('hide-atoms-toggle');
   var hideVersionsToggle = document.getElementById('hide-versions-toggle');
-  var hideLocalToggle = document.getElementById('hide-local-toggle');
   var languageSelect = document.getElementById('language-select');
   var toastEl = document.getElementById('toast');
 
@@ -461,7 +460,6 @@
   var showUnclassified = false;
   var hideAtoms = hideAtomsToggle.checked;
   var hideVersions = hideVersionsToggle.checked;
-  var hideLocal = hideLocalToggle.checked;
   var toastTimer = null;
   // comp.id -> boolean; absent/true means included in "Copy to Technical
   // Story". Reset whenever a fresh analysis result comes in (see
@@ -607,11 +605,6 @@
     renderFilteredList();
   });
 
-  hideLocalToggle.addEventListener('change', function () {
-    hideLocal = hideLocalToggle.checked;
-    renderFilteredList();
-  });
-
   // True if "local" appears anywhere in the component's name or variant
   // name (case-insensitive) — a plain text match, not the Plugin API's
   // separate local-vs-library-remote concept.
@@ -730,6 +723,8 @@
       : '';
 
     var isIncluded = includedInCopy[comp.id] !== false;
+    var isLocal = isLocalComponent(comp);
+    var localBadgeHtml = isLocal ? '<span class="badge badge-local">Local</span>' : '';
 
     item.innerHTML =
       '<div class="item-row">' +
@@ -737,9 +732,9 @@
           '<input type="checkbox" class="copy-include-checkbox"' + (isIncluded ? ' checked' : '') + ' />' +
         '</label>' +
         '<div class="item-main">' +
-          '<div class="item-name">' + escapeHtml(displayName) + '</div>' +
+          '<div class="item-name' + (isLocal ? ' item-name-local' : '') + '">' + escapeHtml(displayName) + '</div>' +
           variantHtml +
-          '<div class="item-badges"><span class="badge ' + badgeClassFor(comp.classification) + '">' + escapeHtml(comp.classification) + '</span></div>' +
+          '<div class="item-badges"><span class="badge ' + badgeClassFor(comp.classification) + '">' + escapeHtml(comp.classification) + '</span>' + localBadgeHtml + '</div>' +
         '</div>' +
         '<div class="item-count">&times; ' + comp.count + '</div>' +
         '<button class="select-btn" type="button" title="Select instance' + (comp.count === 1 ? '' : 's') + ' on canvas">' +
@@ -785,7 +780,6 @@
     var filtered = all.filter(function (c) {
       if (!showUnclassified && c.classification === 'Unclassified') return false;
       if (hideAtoms && c.classification === 'DS Atom') return false;
-      if (hideLocal && isLocalComponent(c)) return false;
       return true;
     });
     lastFilteredComponents = filtered;
