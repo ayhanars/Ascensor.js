@@ -146,11 +146,18 @@ This plugin is plain JavaScript/HTML — there is nothing to compile or
   **Import plugin from manifest…** again, or fully quit and reopen Figma
   desktop.
 - **`Manifest error: Expected "manifest.containsWidget" to have type
-  true but got undefined instead`** — an older copy of this plugin is
-  missing the `containsWidget` field that newer Figma manifest
-  validation expects on every plugin (not just actual widgets). Make
-  sure you're using the current `manifest.json` from this folder, which
-  explicitly sets `"containsWidget": false`.
+  true but got undefined instead`** or, on a different upload path,
+  **`Manifest has unexpected extra property: containsWidget`** — these
+  two errors directly contradict each other (one wants the field, the
+  other rejects it), which is a sign they came from two different Figma
+  validators depending on exactly how/where you're loading the plugin
+  (local desktop import vs. some other browser/upload flow). This
+  plugin's manifest deliberately does **not** set `containsWidget` at
+  all — it's a plugin, not a widget, and the field isn't required for
+  local import via the desktop app's **Import plugin from manifest…**,
+  which is the only supported way to run this MVP (see step 1 above). If
+  you're hitting either of these, double-check you're using the desktop
+  app rather than a figma.com browser tab.
 
 ## Files
 

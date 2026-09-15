@@ -7,7 +7,6 @@
   "editorType": ["figma"],
   "documentAccess": "dynamic-page",
   "enablePrivatePluginApi": true,
-  "containsWidget": false,
   "networkAccess": {
     "allowedDomains": ["none"]
   }
