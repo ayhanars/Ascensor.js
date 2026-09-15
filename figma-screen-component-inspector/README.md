@@ -128,11 +128,29 @@ description or link you just edited.
 This plugin is plain JavaScript/HTML — there is nothing to compile or
 `npm install`.
 
-1. Open the Figma desktop app.
+1. Open the **Figma desktop app** (local/unpublished dev plugins read
+   files off your disk, which a figma.com browser tab cannot do — using
+   the browser instead of desktop is a common cause of load errors here).
 2. Go to **Menu → Plugins → Development → Import plugin from manifest…**
 3. Select the `manifest.json` file in this folder.
 4. Open any file, select a frame, and run **Plugins → Development →
    Screen Component Inspector**.
+
+### Troubleshooting
+
+- **`Unable to load code: ... web:getLocalFileExtensionSource: Unknown
+  plugin`** — you're most likely running this from a figma.com browser
+  tab rather than the desktop app (see step 1 above), or the desktop
+  app's internal registration for this local plugin was reset (happens
+  after long sessions, sleep/wake, or an app update). Fix: re-import via
+  **Import plugin from manifest…** again, or fully quit and reopen Figma
+  desktop.
+- **`Manifest error: Expected "manifest.containsWidget" to have type
+  true but got undefined instead`** — an older copy of this plugin is
+  missing the `containsWidget` field that newer Figma manifest
+  validation expects on every plugin (not just actual widgets). Make
+  sure you're using the current `manifest.json` from this folder, which
+  explicitly sets `"containsWidget": false`.
 
 ## Files
 
