@@ -127,6 +127,20 @@
   .skipped { margin-top: 8px; font-size: 11px; color: var(--text-faint); }
   .item .src { color: var(--text-faint); font-weight: 400; font-size: 11px; margin-left: 6px; }
 
+  /* Change log */
+  .clog { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-light); }
+  .clog-head { display: flex; align-items: center; justify-content: space-between; font-weight: 600; margin-bottom: 6px; }
+  .clog-status { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+  .clog-status strong { color: var(--text); font-weight: 600; }
+  .clog-actions { display: flex; gap: 8px; align-items: center; }
+  .opt { display: flex; align-items: center; gap: 8px; font-size: 11px; margin-top: 10px; color: var(--text); }
+  .opt input[type="checkbox"] { margin: 0; }
+  .opt input[type="number"] {
+    width: 52px; height: 24px; font: inherit; font-size: 11px; color: var(--text); text-align: center;
+    background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  }
+  .opt .muted { margin-left: auto; }
+
   /* Other library files */
   .remote { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-light); }
   .remote-head { display: flex; align-items: center; justify-content: space-between; font-weight: 600; margin-bottom: 8px; }
@@ -285,6 +299,18 @@
       </details>
       <div class="skipped hidden" id="skipped"></div>
 
+      <div class="clog">
+        <div class="clog-head">
+          <span>Change log</span>
+          <div class="clog-actions">
+            <button class="link hidden" id="clog-clear">Clear</button>
+            <button class="btn small" id="clog-use">Use selection as change log</button>
+          </div>
+        </div>
+        <div class="help">Select the change log frame(s) on the canvas, then click the button. Every “Change log Row” inside is read: name, version, status, description and the “Published on” date above it. Version lines in component descriptions are read automatically.</div>
+        <div class="clog-status" id="clog-status"></div>
+      </div>
+
       <div class="remote">
         <div class="remote-head">
           <span>Other library files</span>
@@ -344,6 +370,16 @@
     <div class="sec-body">
       <button class="btn primary" id="generate" disabled>Generate table</button>
       <div class="progress" id="progress"></div>
+      <label class="opt">
+        <input type="checkbox" id="history-enabled" checked>
+        <span>Add change log sub-rows under each component</span>
+      </label>
+      <div class="opt" id="history-limit-row">
+        <span>Show the last</span>
+        <input type="number" id="history-limit" min="0" max="99" value="0">
+        <span>versions</span>
+        <span class="muted">0 = all</span>
+      </div>
       <div class="note">The table is placed on the current page. Regenerating replaces the previous table in place.</div>
     </div>
   </section>
@@ -365,6 +401,7 @@
     components: null,   // merged local + remote list once scanned
     files: { coba: null, purple: null }, // { name, data } once valid
     mappings: {},        // normalised JSON name -> componentId (manual mapping)
+    changelog: { entries: [], rows: 0, frames: 0 },
     skippedPages: [],
     generating: false
   };
@@ -520,6 +557,7 @@
 
     renderDuplicates(components);
     renderSkipped();
+    renderChangelog();
     renderSummary();
     refresh();
   }
@@ -559,6 +597,63 @@
 
   $("rescan-link").addEventListener("click", startScan);
   $("rescan-btn").addEventListener("click", startScan);
+
+  // ---------------------------------------------------------------------
+  // Step 1c: change log table on the canvas
+  // ---------------------------------------------------------------------
+  $("clog-use").addEventListener("click", function () {
+    $("clog-status").textContent = "Reading selection…";
+    postToPlugin({ type: "changelog-from-selection" });
+  });
+  $("clog-clear").addEventListener("click", function () {
+    postToPlugin({ type: "changelog-clear" });
+  });
+
+  function onChangelog(msg) {
+    state.changelog = { entries: msg.entries || [], rows: msg.rows || 0, frames: msg.frames || 0 };
+    renderChangelog();
+    renderSummary();
+    refresh();
+  }
+
+  function descriptionEntryCount() {
+    var n = 0;
+    (state.components || []).forEach(function (c) { n += (c.descriptionLog || []).length; });
+    return n;
+  }
+
+  function renderChangelog() {
+    var box = $("clog-status");
+    var cl = state.changelog;
+    box.innerHTML = "";
+    var fromDescriptions = descriptionEntryCount();
+    if (cl.entries.length === 0 && cl.rows === 0) {
+      if (fromDescriptions > 0) {
+        box.appendChild(el("strong", "", String(fromDescriptions)));
+        box.appendChild(document.createTextNode(" entries found in component descriptions. No change log table selected yet."));
+      } else {
+        box.textContent = "No change log selected.";
+      }
+      show($("clog-clear"), false);
+      return;
+    }
+    var library = {};
+    (state.components || []).forEach(function (c) { library[normalizeName(c.name)] = true; });
+    var names = {};
+    cl.entries.forEach(function (e) { names[normalizeName(e.name)] = true; });
+    var matched = Object.keys(names).filter(function (k) { return library[k] || state.mappings[k]; }).length;
+    var unmatched = Object.keys(names).length - matched;
+
+    box.appendChild(el("strong", "", String(cl.entries.length)));
+    box.appendChild(document.createTextNode(" entries from " + cl.rows + " rows in " + cl.frames + " frame" + (cl.frames === 1 ? "" : "s") +
+      " · " + matched + " component name" + (matched === 1 ? "" : "s") + " matched" +
+      (unmatched ? " · " + unmatched + " not in the library" : "") +
+      (fromDescriptions ? " · " + fromDescriptions + " more from descriptions" : "") + "."));
+    if (unmatched) {
+      box.appendChild(el("div", "help", "Names not in the library can be mapped in step 2 once both brand files are loaded."));
+    }
+    show($("clog-clear"), true);
+  }
 
   // ---------------------------------------------------------------------
   // Step 1b: other library files through the Figma REST API
@@ -849,6 +944,11 @@
   /** Every JSON name across both files, keyed by normalised name, with where it appears. */
   function collectJsonNames() {
     var jsonNames = {};
+    state.changelog.entries.forEach(function (e) {
+      var key = normalizeName(e.name);
+      if (!jsonNames[key]) jsonNames[key] = { name: e.name, where: [] };
+      if (jsonNames[key].where.indexOf("Change log") === -1) jsonNames[key].where.push("Change log");
+    });
     BRANDS.forEach(function (brand) {
       var file = state.files[brand];
       if (!file) return;
@@ -898,8 +998,14 @@
     // A component counts as matched by its own name or by a manual mapping.
     var mappedIds = {};
     Object.keys(state.mappings).forEach(function (k) { if (state.mappings[k]) mappedIds[state.mappings[k]] = true; });
+    var inFiles = {};
+    BRANDS.forEach(function (brand) {
+      PLATFORMS.forEach(function (platform) {
+        Object.keys(state.files[brand].data.platforms[platform]).forEach(function (n) { inFiles[normalizeName(n)] = true; });
+      });
+    });
     var matched = state.components.filter(function (c) {
-      return !!jsonNames[normalizeName(c.name)] || !!mappedIds[c.id];
+      return !!inFiles[normalizeName(c.name)] || !!mappedIds[c.id];
     }).length;
     var mappedCount = Object.keys(state.mappings).filter(function (k) { return !!state.mappings[k]; }).length;
     var ignoredCount = unmatched.length - mappedCount;
@@ -914,7 +1020,7 @@
       var details = el("details");
       details.open = ignoredCount > 0;
       details.appendChild(el("summary", "",
-        unmatched.length + " JSON name" + (unmatched.length === 1 ? "" : "s") + " not found in the library" +
+        unmatched.length + " name" + (unmatched.length === 1 ? "" : "s") + " from the files or change log not found in the library" +
         (mappedCount ? " · " + mappedCount + " mapped" : "")));
       var list = el("div", "map-list");
       unmatched.forEach(function (k) {
@@ -978,7 +1084,11 @@
       components: state.components,
       coba: state.files.coba.data,
       purple: state.files.purple.data,
-      mappings: mappingsForPlugin()
+      mappings: mappingsForPlugin(),
+      history: {
+        enabled: $("history-enabled").checked,
+        limit: Math.max(0, parseInt($("history-limit").value, 10) || 0)
+      }
     });
     refresh();
   });
@@ -1035,6 +1145,9 @@
       case "remote-done":
         onRemoteDone(msg);
         break;
+      case "changelog":
+        onChangelog(msg);
+        break;
       case "token-saved":
         renderRemote();
         break;
@@ -1052,6 +1165,7 @@
         break;
       case "error":
         showError(msg.message || "Something went wrong.");
+        if ($("clog-status").textContent === "Reading selection…") renderChangelog();
         if (state.scanning) {
           state.scanning = false;
           if (counter.timer) { clearInterval(counter.timer); counter.timer = null; }

@@ -88,6 +88,30 @@ own file. Linked files are remembered on the current document so they reload
 on the next run. The API lists **published** components only; unpublished
 ones in the other file are not visible to it.
 
+#### Change log sub-rows
+
+The table can show the history of every component as sub-rows (version,
+date, change type, description), newest first. Two sources are combined:
+
+- **The change log table on the canvas.** Select its frame(s) once and click
+  **Use selection as change log**. Every layer named "Change log Row" is read
+  through its text layers (`Name`, `version`, the Status cell text,
+  `Description`) and the nearest "Published on dd.mm.yyyy" text above it gives
+  the date. The frames are remembered on the document and re-read on the next
+  run; **Clear** forgets them.
+- **Version lines in component descriptions**, for older history:
+
+  ```
+  v1.2.0 - Added outlined variant
+  1.1.0 (12.03.2024) Fixed padding
+  ```
+
+  A line starting with a version starts an entry; following lines without a
+  version continue it. `Version:` and `Type:` lines are ignored.
+
+When both sources have the same version the change log entry wins. Step 3 has
+a checkbox to include the sub-rows and a "last N versions" limit (0 = all).
+
 ### 2 · Upload
 
 Drop (or click to browse) one `.json` file per brand. Both platforms live in
@@ -160,5 +184,5 @@ component-status/
 
 | Direction | Message |
 | --- | --- |
-| main → UI | `init {token, remoteFiles}`, `scan-progress {count, scanned, total, pageName}`, `scan-done {components, skippedPages, mappings}`, `remote-done {key, fileName, components, skippedPages}`, `token-saved {hasToken}`, `generate-progress {done, total}`, `generate-done {count}`, `error {message}` |
-| UI → main | `generate {components, coba, purple, mappings}`, `rescan`, `remote-parse {key, fileName, componentSets, components}`, `save-token {token}`, `save-files {files}`, `close` |
+| main → UI | `init {token, remoteFiles}`, `scan-progress {count, scanned, total, pageName}`, `scan-done {components, skippedPages, mappings}`, `remote-done {key, fileName, components, skippedPages}`, `changelog {entries, rows, frames}`, `token-saved {hasToken}`, `generate-progress {done, total}`, `generate-done {count}`, `error {message}` |
+| UI → main | `generate {components, coba, purple, mappings, history}`, `rescan`, `changelog-from-selection`, `changelog-clear`, `remote-parse {key, fileName, componentSets, components}`, `save-token {token}`, `save-files {files}`, `close` |

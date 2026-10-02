@@ -19,6 +19,27 @@ interface LibraryComponent {
   source?: string;
   /** Link to the component in its file (remote only). */
   url?: string;
+  /** Older history kept as version lines in the component description. */
+  descriptionLog?: LogEntry[];
+}
+
+/** One change log entry for a component, from the canvas table or the description. */
+interface LogEntry {
+  /** Cleaned component name the entry belongs to. */
+  name: string;
+  version: string | null;
+  /** dd.mm.yyyy or "" */
+  date: string;
+  /** Change type, e.g. "New Variant", "Bug Fix". */
+  status: string;
+  description: string;
+  source: "changelog" | "description";
+}
+
+interface HistoryOptions {
+  enabled: boolean;
+  /** 0 = every entry. */
+  limit: number;
 }
 
 /** Another library file scanned through the Figma REST API. */
@@ -64,7 +85,10 @@ type UIMessage =
       coba: BrandFile;
       purple: BrandFile;
       mappings?: Mapping[];
+      history?: HistoryOptions;
     }
+  | { type: "changelog-from-selection" }
+  | { type: "changelog-clear" }
   | { type: "rescan" }
   | { type: "save-token"; token: string }
   | { type: "save-files"; files: RemoteFile[] }
@@ -89,6 +113,10 @@ const SCAN_YIELD_EVERY = 50;
 const SCAN_PROGRESS_EVERY = 5;
 const MAPPINGS_KEY = "componentStatusMappings";
 const FILES_KEY = "componentStatusFiles";
+const CHANGELOG_KEY = "componentStatusChangelog";
+const CHANGELOG_ROW_RE = /change\s*log\s*row/i;
+const DATE_RE = /(\d{1,2})\.(\d{1,2})\.(\d{4})/;
+const SUBROW_FILL = "#FAFAF9";
 const TOKEN_KEY = "componentStatusFigmaToken";
 
 /**
@@ -398,6 +426,48 @@ function ancestorsOf(node: SceneNode): { pageName: string; ancestorNames: string
   return { pageName, ancestorNames };
 }
 
+/**
+ * Older history kept in the description as lines starting with a version:
+ *   v1.2.0 - Added outlined variant
+ *   1.1.0 (12.03.2024) Fixed padding
+ * Lines that follow without a version continue the previous entry.
+ */
+function parseDescriptionLog(description: string, componentName: string): LogEntry[] {
+  const entries: LogEntry[] = [];
+  const lineRe = /^\s*(?:v\.?)?(\d+\.\d+\.\d+)\b\s*(.*)$/i;
+  for (const rawLine of description.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || /^(version|type)\s*:/i.test(line)) continue;
+    const match = lineRe.exec(line);
+    if (match) {
+      let rest = match[2];
+      let date = "";
+      const dateMatch = DATE_RE.exec(rest);
+      if (dateMatch) {
+        date = normalizeDate(dateMatch[0]);
+        rest = rest.replace(dateMatch[0], " ");
+      }
+      rest = rest
+        .replace(/[(\[]\s*[)\]]/g, " ")
+        .replace(/^[\s\-–—:|.]+/, "")
+        .replace(/[\s\-–—:|]+$/, "")
+        .trim();
+      entries.push({ name: componentName, version: normalizeVersion(match[1]), date, status: "", description: rest, source: "description" });
+    } else if (entries.length > 0) {
+      const last = entries[entries.length - 1];
+      last.description = (last.description ? last.description + " " : "") + line;
+    }
+  }
+  return entries;
+}
+
+function normalizeDate(date: string): string {
+  const m = DATE_RE.exec(date);
+  if (!m) return date.trim();
+  const pad = (n: string) => (n.length < 2 ? "0" + n : n);
+  return `${pad(m[1])}.${pad(m[2])}.${m[3]}`;
+}
+
 function describeComponent(node: ComponentNode | ComponentSetNode): LibraryComponent {
   const description = node.description || "";
   const { pageName, ancestorNames } = ancestorsOf(node);
@@ -410,6 +480,7 @@ function describeComponent(node: ComponentNode | ComponentSetNode): LibraryCompo
     // The version in the name wins; the description is the fallback.
     version: split.version || parseVersion(description),
     pageName,
+    descriptionLog: parseDescriptionLog(description, split.name || node.name.trim()),
   };
 }
 
@@ -476,7 +547,202 @@ function describeRemote(item: ApiComponent, file: RemoteFile): LibraryComponent 
     pageName,
     source: file.name,
     url: `https://www.figma.com/design/${file.key}?node-id=${encodeURIComponent(item.node_id)}`,
+    descriptionLog: parseDescriptionLog(description, split.name || item.name.trim()),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Change log table on the canvas
+// ---------------------------------------------------------------------------
+
+/** Parsed entries of the remembered change log frames, kept for generation. */
+let changelogEntries: LogEntry[] = [];
+
+function loadChangelogIds(): string[] {
+  try {
+    const raw = figma.root.getPluginData(CHANGELOG_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveChangelogIds(ids: string[]): void {
+  try {
+    figma.root.setPluginData(CHANGELOG_KEY, JSON.stringify(ids));
+  } catch (e) {
+    console.warn("Could not save change log frames: " + errorMessage(e));
+  }
+}
+
+function absoluteY(node: SceneNode): number {
+  try {
+    return node.absoluteTransform[1][2];
+  } catch (e) {
+    return 0;
+  }
+}
+
+function textNamed(root: SceneNode & ChildrenMixin, pattern: RegExp): string {
+  const found = root.findOne((n) => n.type === "TEXT" && pattern.test(n.name));
+  return found && found.type === "TEXT" ? found.characters.trim() : "";
+}
+
+function textInside(root: SceneNode & ChildrenMixin, cellPattern: RegExp): string {
+  const cell = root.findOne((n) => "children" in n && cellPattern.test(n.name));
+  if (!cell || !("children" in cell)) return "";
+  const texts = cell.findAllWithCriteria({ types: ["TEXT"] });
+  return texts.length ? texts[0].characters.trim() : "";
+}
+
+function parseChangelogRow(row: SceneNode & ChildrenMixin, date: string): LogEntry | null {
+  const rawName = textNamed(row, /^name$/i) || textInside(row, /component table cell/i);
+  if (!rawName) return null;
+  const nameSplit = splitNameAndVersion(rawName);
+  const versionText = textNamed(row, /^version$/i) || textInside(row, /version table cell/i);
+  const versionMatch = /(?:v\.?)?(\d+\.\d+\.\d+)/i.exec(versionText);
+  const version = versionMatch ? normalizeVersion(versionMatch[1]) : nameSplit.version;
+  const status = textInside(row, /status table cell/i);
+  const description = textNamed(row, /^description$/i) || textInside(row, /description table cell/i);
+  return {
+    name: nameSplit.name || stripDecorations(rawName),
+    version,
+    date,
+    status: stripDecorations(status),
+    description: description.replace(/\s+/g, " ").trim(),
+    source: "changelog",
+  };
+}
+
+/** Parse every "Change log Row" inside the given frames; dates come from the nearest "Published on" text above. */
+function parseChangelogFrames(frames: SceneNode[]): { entries: LogEntry[]; rows: number } {
+  const entries: LogEntry[] = [];
+  let rows = 0;
+  for (const frame of frames) {
+    if (!("children" in frame)) continue;
+    const headers: { y: number; date: string }[] = [];
+    for (const text of frame.findAllWithCriteria({ types: ["TEXT"] })) {
+      if (/published\s+on/i.test(text.characters)) {
+        const m = DATE_RE.exec(text.characters);
+        if (m) headers.push({ y: absoluteY(text), date: normalizeDate(m[0]) });
+      }
+    }
+    headers.sort((a, b) => a.y - b.y);
+    const rowNodes = frame
+      .findAll((n) => "children" in n && CHANGELOG_ROW_RE.test(n.name))
+      .filter((n) => {
+        // Keep only the outermost rows (a row never contains another row).
+        let p = n.parent;
+        while (p && p.type !== "PAGE") {
+          if (CHANGELOG_ROW_RE.test(p.name)) return false;
+          p = p.parent;
+        }
+        return true;
+      }) as (SceneNode & ChildrenMixin)[];
+    if (CHANGELOG_ROW_RE.test(frame.name)) rowNodes.push(frame as SceneNode & ChildrenMixin);
+    for (const row of rowNodes) {
+      rows++;
+      const y = absoluteY(row);
+      let date = "";
+      for (const h of headers) {
+        if (h.y <= y + 1) date = h.date;
+        else break;
+      }
+      const entry = parseChangelogRow(row, date);
+      if (entry) entries.push(entry);
+    }
+  }
+  return { entries, rows };
+}
+
+async function loadChangelogFromIds(ids: string[]): Promise<SceneNode[]> {
+  const nodes: SceneNode[] = [];
+  for (const id of ids) {
+    try {
+      const node = await figma.getNodeByIdAsync(id);
+      if (node && node.type !== "DOCUMENT" && node.type !== "PAGE" && !node.removed) nodes.push(node as SceneNode);
+    } catch (e) {
+      // removed or inaccessible; skip
+    }
+  }
+  return nodes;
+}
+
+function postChangelog(entries: LogEntry[], rows: number, frames: number): void {
+  changelogEntries = entries;
+  post({ type: "changelog", entries, rows, frames });
+}
+
+async function changelogFromSelection(): Promise<void> {
+  const selection = figma.currentPage.selection.filter((n) => "children" in n);
+  if (selection.length === 0) {
+    throw new Error("Select the change log frame(s) on the canvas first, then click “Use selection”.");
+  }
+  const parsed = parseChangelogFrames(selection);
+  if (parsed.rows === 0) {
+    throw new Error("No “Change log Row” layers found inside the selection.");
+  }
+  saveChangelogIds(selection.map((n) => n.id));
+  postChangelog(parsed.entries, parsed.rows, selection.length);
+}
+
+async function restoreChangelog(): Promise<void> {
+  const ids = loadChangelogIds();
+  if (ids.length === 0) return;
+  const frames = await loadChangelogFromIds(ids);
+  if (frames.length === 0) {
+    saveChangelogIds([]);
+    return;
+  }
+  const parsed = parseChangelogFrames(frames);
+  postChangelog(parsed.entries, parsed.rows, frames.length);
+}
+
+/** Entries for one component: change log first, then description lines, newest first, deduped by version. */
+function historyFor(component: LibraryComponent, keys: string[], byName: Map<string, LogEntry[]>, limit: number): LogEntry[] {
+  const entries: LogEntry[] = [];
+  const seenVersions: { [v: string]: true } = {};
+  const add = (entry: LogEntry) => {
+    const key = entry.version ? entry.version.toLowerCase() : "__" + entries.length;
+    if (seenVersions[key]) return;
+    seenVersions[key] = true;
+    entries.push(entry);
+  };
+  for (const key of keys) {
+    for (const entry of byName.get(key) || []) add(entry);
+  }
+  for (const entry of component.descriptionLog || []) add(entry);
+  entries.sort(compareEntriesNewestFirst);
+  return limit > 0 ? entries.slice(0, limit) : entries;
+}
+
+function dateValue(date: string): number {
+  const m = DATE_RE.exec(date);
+  return m ? parseInt(m[3], 10) * 10000 + parseInt(m[2], 10) * 100 + parseInt(m[1], 10) : 0;
+}
+
+function versionValue(version: string | null): number {
+  if (!version) return -1;
+  const parts = version.replace(/^v/i, "").split(".").map((n) => parseInt(n, 10) || 0);
+  return parts[0] * 1000000 + (parts[1] || 0) * 1000 + (parts[2] || 0);
+}
+
+function compareEntriesNewestFirst(a: LogEntry, b: LogEntry): number {
+  const v = versionValue(b.version) - versionValue(a.version);
+  if (v !== 0) return v;
+  return dateValue(b.date) - dateValue(a.date);
+}
+
+function buildChangelogIndex(entries: LogEntry[]): Map<string, LogEntry[]> {
+  const map = new Map<string, LogEntry[]>();
+  for (const entry of entries) {
+    const key = normalizeName(entry.name);
+    const list = map.get(key) || [];
+    list.push(entry);
+    map.set(key, list);
+  }
+  return map;
 }
 
 function parseRemote(
@@ -897,6 +1163,55 @@ function buildRow(component: LibraryComponent, lookups: Lookups, aliases: Aliase
   return row;
 }
 
+const TABLE_WIDTH = COLUMN.component + COLUMN.version + COLUMN.status * 4 + COLUMN.link;
+
+/** A full-width band under a component row with one line per change log entry. */
+function buildHistoryRow(component: LibraryComponent, entries: LogEntry[], fonts: FontSet): FrameNode {
+  const band = autoFrame(`History / ${component.name}`, "VERTICAL");
+  band.fills = solid(SUBROW_FILL);
+  setBorders(band, COLOR.borderLight, { bottom: true });
+  band.paddingLeft = PAD_X * 2;
+  band.paddingRight = PAD_X;
+  band.paddingTop = 8;
+  band.paddingBottom = 8;
+  band.itemSpacing = 4;
+  band.resize(TABLE_WIDTH, 1);
+  band.layoutSizingHorizontal = "FIXED";
+  band.layoutSizingVertical = "HUG";
+
+  for (const entry of entries) {
+    const line = autoFrame("Entry", "HORIZONTAL");
+    line.itemSpacing = 12;
+    line.counterAxisAlignItems = "MIN";
+    band.appendChild(line);
+    line.layoutSizingHorizontal = "FILL";
+    line.layoutSizingVertical = "HUG";
+
+    const fixed = (text: TextNode, width: number) => {
+      text.textAutoResize = "HEIGHT";
+      text.layoutSizingHorizontal = "FIXED";
+      text.resize(width, text.height);
+    };
+
+    const version = makeText(entry.version || "—", fonts.mono, 11, COLOR.version);
+    line.appendChild(version);
+    fixed(version, 70);
+
+    const date = makeText(entry.date || "", fonts.regular, 11, COLOR.faint);
+    line.appendChild(date);
+    fixed(date, 78);
+
+    const status = makeText(entry.status || (entry.source === "description" ? "Description" : ""), fonts.medium, 11, COLOR.muted);
+    line.appendChild(status);
+    fixed(status, 100);
+
+    const description = makeText(entry.description || "", fonts.regular, 12, COLOR.text);
+    line.appendChild(description);
+    fillWidth(description);
+  }
+  return band;
+}
+
 // ---------------------------------------------------------------------------
 // Table: root
 // ---------------------------------------------------------------------------
@@ -915,11 +1230,13 @@ async function generateTable(
   components: LibraryComponent[],
   coba: BrandFile,
   purple: BrandFile,
-  mappings: Mapping[]
+  mappings: Mapping[],
+  history: HistoryOptions
 ): Promise<void> {
   const fonts = await loadFonts();
   const lookups = buildLookups(coba, purple);
   const aliases = buildAliases(mappings);
+  const changelogIndex = buildChangelogIndex(changelogEntries);
   saveMappings(mappings);
   const sorted = components.slice().sort(compareByName);
   const page = figma.currentPage;
@@ -945,6 +1262,11 @@ async function generateTable(
       const batch = sorted.slice(i, i + ROW_BATCH);
       for (const component of batch) {
         body.appendChild(buildRow(component, lookups, aliases, fonts));
+        if (history.enabled) {
+          const keys = [normalizeName(component.name)].concat(aliases.get(component.id) || []);
+          const entries = historyFor(component, keys, changelogIndex, history.limit);
+          if (entries.length > 0) body.appendChild(buildHistoryRow(component, entries, fonts));
+        }
       }
       post({ type: "generate-progress", done: Math.min(i + ROW_BATCH, sorted.length), total: sorted.length });
       await yieldToUI();
@@ -988,6 +1310,13 @@ figma.ui.onmessage = async (msg: UIMessage) => {
       case "rescan":
         await scanComponents();
         break;
+      case "changelog-from-selection":
+        await changelogFromSelection();
+        break;
+      case "changelog-clear":
+        saveChangelogIds([]);
+        postChangelog([], 0, 0);
+        break;
       case "save-token":
         await saveToken(msg.token || "");
         post({ type: "token-saved", hasToken: !!msg.token });
@@ -1008,7 +1337,13 @@ figma.ui.onmessage = async (msg: UIMessage) => {
         break;
       }
       case "generate":
-        await generateTable(msg.components, msg.coba, msg.purple, msg.mappings || []);
+        await generateTable(
+          msg.components,
+          msg.coba,
+          msg.purple,
+          msg.mappings || [],
+          msg.history || { enabled: false, limit: 0 }
+        );
         break;
       case "close":
         figma.closePlugin();
@@ -1026,6 +1361,7 @@ figma.ui.onmessage = async (msg: UIMessage) => {
   try {
     post({ type: "init", token: await loadToken(), remoteFiles: loadSavedFiles() });
     await scanComponents();
+    await restoreChangelog();
   } catch (e) {
     const message = errorMessage(e);
     console.error(e);
