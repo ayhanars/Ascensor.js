@@ -8,7 +8,10 @@ type ComponentType = "Atom" | "Component";
 
 interface LibraryComponent {
   id: string;
+  /** Cleaned display name: emojis and the version token removed. */
   name: string;
+  /** The name exactly as it is in Figma. */
+  rawName: string;
   type: ComponentType;
   version: string | null;
   pageName: string;
@@ -57,10 +60,12 @@ const MAPPINGS_KEY = "componentStatusMappings";
 
 /**
  * Pages that never hold library components. Compared after stripping
- * leading markers such as "▸" and collapsing whitespace, case-insensitively.
+ * emojis and markers such as "▸" or "🟣" and collapsing whitespace,
+ * case-insensitively, so "🟣 WIP Purple" and "WIP Purple" both match.
  */
 const SKIPPED_PAGES = [
   "WIP",
+  "WIP Purple",
   "File template assets",
   "Annotations",
   "Text Resizing & Landscape",
@@ -92,6 +97,10 @@ type BrandKey = (typeof BRANDS)[number]["key"];
 type PlatformKey = (typeof PLATFORMS)[number]["key"];
 
 const VERSION_RE = /version:\s*(v?\d+\.\d+\.\d+)/i;
+/** A version token inside a component name, e.g. "Button v2.3.0" or "Card (1.2.0)". */
+const NAME_VERSION_RE = /(?:^|[^A-Za-z0-9.])v?(\d+\.\d+\.\d+)(?![A-Za-z0-9.])/i;
+/** Emojis, pictographs, dingbats, geometric markers and the joiners around them. */
+const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{1FC00}-\u{1FFFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{25A0}-\u{25FF}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{2700}-\u{27BF}\u{FE0F}\u{200D}\u{20E3}\u{E0020}-\u{E007F}]/gu;
 const TYPE_RE = /type:\s*(atom|component)\b/i;
 
 // ---------------------------------------------------------------------------
@@ -204,13 +213,43 @@ function normalizeVersion(version: string): string {
   return "v" + v;
 }
 
-/** "▸  WIP " -> "wip" */
-function normalizePageName(name: string): string {
+/** Remove emojis and leading/trailing separators, collapse whitespace. */
+function stripDecorations(name: string): string {
   return name
-    .replace(/^[^A-Za-z0-9]+/, "")
+    .replace(EMOJI_RE, " ")
     .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
+    .replace(/^[\s\-–—|/:,.•·]+/, "")
+    .replace(/[\s\-–—|/:,•·]+$/, "")
+    .trim();
+}
+
+/** "▸  WIP " -> "wip", "🟣 WIP Purple" -> "wip purple" */
+function normalizePageName(name: string): string {
+  return stripDecorations(name).toLowerCase();
+}
+
+/**
+ * Pull a version out of a component name, e.g. "🔵 Button v2.3.0",
+ * "Card (1.2.0)" or "Modal - v2.0.0". Returns the cleaned display name and
+ * the version found (null when the name has none).
+ */
+function splitNameAndVersion(rawName: string): { name: string; version: string | null } {
+  let name = rawName;
+  let version: string | null = null;
+  const match = NAME_VERSION_RE.exec(name);
+  if (match) {
+    version = normalizeVersion(match[1]);
+    const full = match[0];
+    // The match may start with the separator before the version; keep that char.
+    const keep = /^[A-Za-z0-9.]/.test(full) ? "" : full.charAt(0);
+    name = name.slice(0, match.index) + keep + " " + name.slice(match.index + full.length);
+    // Drop empty brackets left behind, e.g. "Card ()".
+    name = name.replace(/[(\[]\s*[)\]]/g, " ");
+  }
+  name = stripDecorations(name);
+  // Collapse separators left dangling in the middle, e.g. "Button -  Primary".
+  name = name.replace(/\s+([\-–—|/])\s+/g, " $1 ").replace(/\s{2,}/g, " ");
+  return { name, version };
 }
 
 const SKIPPED_PAGE_KEYS = SKIPPED_PAGES.map(normalizePageName);
@@ -291,11 +330,14 @@ function ancestorsOf(node: SceneNode): { pageName: string; ancestorNames: string
 function describeComponent(node: ComponentNode | ComponentSetNode): LibraryComponent {
   const description = node.description || "";
   const { pageName, ancestorNames } = ancestorsOf(node);
+  const split = splitNameAndVersion(node.name);
   return {
     id: node.id,
-    name: node.name.trim(),
+    name: split.name || node.name.trim(),
+    rawName: node.name,
     type: parseType(description, pageName, ancestorNames),
-    version: parseVersion(description),
+    // The version in the name wins; the description is the fallback.
+    version: split.version || parseVersion(description),
     pageName,
   };
 }
@@ -327,7 +369,7 @@ async function scanComponents(): Promise<void> {
       scanned++;
       const isVariant =
         node.type === "COMPONENT" && node.parent !== null && node.parent.type === "COMPONENT_SET";
-      if (!isVariant && !isHiddenName(node.name)) {
+      if (!isVariant && !isHiddenName(node.name) && !isHiddenName(stripDecorations(node.name))) {
         components.push(describeComponent(node));
       }
       if (scanned % SCAN_PROGRESS_EVERY === 0 && components.length !== lastPosted) {

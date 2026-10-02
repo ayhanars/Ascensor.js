@@ -429,7 +429,7 @@
       show($("list"), true);
       components.forEach(function (c) {
         var item = el("div", "item");
-        item.title = c.pageName ? "Page: " + c.pageName : "";
+        item.title = (c.rawName && c.rawName !== c.name ? "Figma name: " + c.rawName + "\n" : "") + (c.pageName ? "Page: " + c.pageName : "");
         item.appendChild(el("span", "name", c.name));
         item.appendChild(el("span", "type", c.type));
         if (c.version) {

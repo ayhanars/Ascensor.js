@@ -38,7 +38,8 @@ as earlier ones complete.
 
 On open the plugin loads every page and collects the library components, with a
 live counter and the page currently being scanned. These pages are skipped
-(leading markers such as `▸` and extra spaces are ignored): **WIP**,
+(emojis, markers such as `▸` or `🟣`, and extra spaces are ignored, so
+`🟣 WIP Purple` and `WIP Purple` both match): **WIP**, **WIP Purple**,
 **File template assets**, **Annotations**, **Text Resizing & Landscape** and
 **Local components**. The list lives in `SKIPPED_PAGES` in `src/code.ts`.
 
@@ -46,7 +47,13 @@ live counter and the page currently being scanned. These pages are skipped
 - a plain **component** counts only if it is not inside a component set;
 - components whose name starts with `.` or `_` are skipped.
 
-For each component it reads the **description** field:
+Component names are cleaned for the table: emojis are removed and a version
+token in the name (`🔵 Button v2.3.0`, `Card (1.2.0)`, `Modal - v2.0.0`) is
+moved into the Version column, leaving `Button`, `Card`, `Modal`. The cleaned
+name is what JSON names are matched against. The original Figma name is shown
+as a tooltip in the list.
+
+If the name has no version, the plugin reads the **description** field:
 
 | Line in the description | Result |
 | --- | --- |
