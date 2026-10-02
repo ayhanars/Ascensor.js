@@ -304,10 +304,11 @@
           <span>Change log</span>
           <div class="clog-actions">
             <button class="link hidden" id="clog-clear">Clear</button>
-            <button class="btn small" id="clog-use">Use selection as change log</button>
+            <button class="btn small" id="clog-find">Find in file</button>
+            <button class="btn small" id="clog-use">Use selection</button>
           </div>
         </div>
-        <div class="help">Select the change log frame(s) on the canvas, then click the button. Every “Change log Row” inside is read: name, version, status, description and the “Published on” date above it. Version lines in component descriptions are read automatically.</div>
+        <div class="help"><b>Find in file</b> searches every page for change log rows. <b>Use selection</b> reads only the section or frame selected on the canvas. A row is a layer named “Change log Row”, or any layer holding a “Version Table Cell” and a “Description Table Cell”; name, version, status, description and the “Published on” date above it are read. Version lines in component descriptions are read automatically.</div>
         <div class="clog-status" id="clog-status"></div>
       </div>
 
@@ -605,12 +606,16 @@
     $("clog-status").textContent = "Reading selection…";
     postToPlugin({ type: "changelog-from-selection" });
   });
+  $("clog-find").addEventListener("click", function () {
+    $("clog-status").textContent = "Searching every page…";
+    postToPlugin({ type: "changelog-find-in-file" });
+  });
   $("clog-clear").addEventListener("click", function () {
     postToPlugin({ type: "changelog-clear" });
   });
 
   function onChangelog(msg) {
-    state.changelog = { entries: msg.entries || [], rows: msg.rows || 0, frames: msg.frames || 0 };
+    state.changelog = { entries: msg.entries || [], rows: msg.rows || 0, frames: msg.frames || 0, mode: msg.mode || "" };
     renderChangelog();
     renderSummary();
     refresh();
@@ -645,7 +650,8 @@
     var unmatched = Object.keys(names).length - matched;
 
     box.appendChild(el("strong", "", String(cl.entries.length)));
-    box.appendChild(document.createTextNode(" entries from " + cl.rows + " rows in " + cl.frames + " frame" + (cl.frames === 1 ? "" : "s") +
+    var where = cl.mode === "file" ? (cl.frames + " page" + (cl.frames === 1 ? "" : "s")) : (cl.frames + " selected layer" + (cl.frames === 1 ? "" : "s"));
+    box.appendChild(document.createTextNode(" entries from " + cl.rows + " rows in " + where +
       " · " + matched + " component name" + (matched === 1 ? "" : "s") + " matched" +
       (unmatched ? " · " + unmatched + " not in the library" : "") +
       (fromDescriptions ? " · " + fromDescriptions + " more from descriptions" : "") + "."));
@@ -1165,7 +1171,7 @@
         break;
       case "error":
         showError(msg.message || "Something went wrong.");
-        if ($("clog-status").textContent === "Reading selection…") renderChangelog();
+        if (/^(Reading selection|Searching every page)/.test($("clog-status").textContent)) renderChangelog();
         if (state.scanning) {
           state.scanning = false;
           if (counter.timer) { clearInterval(counter.timer); counter.timer = null; }

@@ -88,6 +88,7 @@ type UIMessage =
       history?: HistoryOptions;
     }
   | { type: "changelog-from-selection" }
+  | { type: "changelog-find-in-file" }
   | { type: "changelog-clear" }
   | { type: "rescan" }
   | { type: "save-token"; token: string }
@@ -558,53 +559,115 @@ function describeRemote(item: ApiComponent, file: RemoteFile): LibraryComponent 
 /** Parsed entries of the remembered change log frames, kept for generation. */
 let changelogEntries: LogEntry[] = [];
 
-function loadChangelogIds(): string[] {
+type ChangelogSource = { mode: "selection"; ids: string[] } | { mode: "file" } | null;
+type Container = BaseNode & ChildrenMixin;
+
+function loadChangelogSource(): ChangelogSource {
   try {
     const raw = figma.root.getPluginData(CHANGELOG_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.length ? { mode: "selection", ids: parsed } : null;
+    if (parsed && parsed.mode === "file") return { mode: "file" };
+    if (parsed && parsed.mode === "selection" && Array.isArray(parsed.ids) && parsed.ids.length) return parsed;
+    return null;
   } catch (e) {
-    return [];
+    return null;
   }
 }
 
-function saveChangelogIds(ids: string[]): void {
+function saveChangelogSource(source: ChangelogSource): void {
   try {
-    figma.root.setPluginData(CHANGELOG_KEY, JSON.stringify(ids));
+    figma.root.setPluginData(CHANGELOG_KEY, source ? JSON.stringify(source) : "");
   } catch (e) {
-    console.warn("Could not save change log frames: " + errorMessage(e));
+    console.warn("Could not save change log source: " + errorMessage(e));
   }
 }
 
-function absoluteY(node: SceneNode): number {
+function absoluteY(node: BaseNode): number {
   try {
-    return node.absoluteTransform[1][2];
+    return (node as SceneNode).absoluteTransform[1][2];
   } catch (e) {
     return 0;
   }
 }
 
-function textNamed(root: SceneNode & ChildrenMixin, pattern: RegExp): string {
+function hasChildren(node: BaseNode): node is Container {
+  return "children" in node;
+}
+
+/** True when any ancestor is a main component: the master row holds placeholder text. */
+function insideMainComponent(node: BaseNode): boolean {
+  let p = node.parent;
+  while (p && p.type !== "PAGE" && p.type !== "DOCUMENT") {
+    if (p.type === "COMPONENT" || p.type === "COMPONENT_SET") return true;
+    p = p.parent;
+  }
+  return false;
+}
+
+/** A row is named like "Change log Row" or holds a Version cell and a Description cell. */
+function looksLikeChangelogRow(node: BaseNode): boolean {
+  if (!hasChildren(node)) return false;
+  if (node.type === "COMPONENT" || node.type === "COMPONENT_SET") return false;
+  if (CHANGELOG_ROW_RE.test(node.name)) return true;
+  let version = false;
+  let description = false;
+  for (const child of node.children) {
+    if (/version\s*table\s*cell/i.test(child.name)) version = true;
+    if (/description\s*table\s*cell/i.test(child.name)) description = true;
+  }
+  return version && description;
+}
+
+function findChangelogRows(root: Container): Container[] {
+  const rows = root.findAll((n) => looksLikeChangelogRow(n) && !insideMainComponent(n)) as Container[];
+  const outer = rows.filter((row) => {
+    let p = row.parent;
+    while (p && p.type !== "PAGE" && p.type !== "DOCUMENT") {
+      if (looksLikeChangelogRow(p)) return false;
+      p = p.parent;
+    }
+    return true;
+  });
+  if (root.type !== "PAGE" && looksLikeChangelogRow(root) && !insideMainComponent(root)) outer.push(root);
+  return outer;
+}
+
+function textNamed(root: Container, pattern: RegExp): string {
   const found = root.findOne((n) => n.type === "TEXT" && pattern.test(n.name));
   return found && found.type === "TEXT" ? found.characters.trim() : "";
 }
 
-function textInside(root: SceneNode & ChildrenMixin, cellPattern: RegExp): string {
-  const cell = root.findOne((n) => "children" in n && cellPattern.test(n.name));
-  if (!cell || !("children" in cell)) return "";
+/**
+ * Text of a table cell: the text layer named `preferred` when present,
+ * otherwise the first text layer with real characters (an emoji-only layer
+ * such as the component icon is skipped).
+ */
+function textInside(root: Container, cellPattern: RegExp, preferred?: RegExp): string {
+  const cell = root.findOne((n) => hasChildren(n) && cellPattern.test(n.name));
+  if (!cell || !hasChildren(cell)) return "";
   const texts = cell.findAllWithCriteria({ types: ["TEXT"] });
-  return texts.length ? texts[0].characters.trim() : "";
+  if (preferred) {
+    for (const text of texts) {
+      if (preferred.test(text.name) && stripDecorations(text.characters)) return text.characters.trim();
+    }
+  }
+  for (const text of texts) {
+    if (stripDecorations(text.characters)) return text.characters.trim();
+  }
+  return "";
 }
 
-function parseChangelogRow(row: SceneNode & ChildrenMixin, date: string): LogEntry | null {
-  const rawName = textNamed(row, /^name$/i) || textInside(row, /component table cell/i);
+function parseChangelogRow(row: Container, date: string): LogEntry | null {
+  const rawName = textInside(row, /component\s*table\s*cell/i, /^name$/i) || textNamed(row, /^name$/i);
   if (!rawName) return null;
   const nameSplit = splitNameAndVersion(rawName);
-  const versionText = textNamed(row, /^version$/i) || textInside(row, /version table cell/i);
+  const versionText = textInside(row, /version\s*table\s*cell/i, /^version$/i) || textNamed(row, /^version$/i);
   const versionMatch = /(?:v\.?)?(\d+\.\d+\.\d+)/i.exec(versionText);
   const version = versionMatch ? normalizeVersion(versionMatch[1]) : nameSplit.version;
-  const status = textInside(row, /status table cell/i);
-  const description = textNamed(row, /^description$/i) || textInside(row, /description table cell/i);
+  const status = textInside(row, /status\s*table\s*cell/i);
+  const description = textInside(row, /description\s*table\s*cell/i, /^description$/i) || textNamed(row, /^description$/i);
   return {
     name: nameSplit.name || stripDecorations(rawName),
     version,
@@ -615,33 +678,36 @@ function parseChangelogRow(row: SceneNode & ChildrenMixin, date: string): LogEnt
   };
 }
 
-/** Parse every "Change log Row" inside the given frames; dates come from the nearest "Published on" text above. */
-function parseChangelogFrames(frames: SceneNode[]): { entries: LogEntry[]; rows: number } {
-  const entries: LogEntry[] = [];
-  let rows = 0;
-  for (const frame of frames) {
-    if (!("children" in frame)) continue;
-    const headers: { y: number; date: string }[] = [];
-    for (const text of frame.findAllWithCriteria({ types: ["TEXT"] })) {
-      if (/published\s+on/i.test(text.characters)) {
-        const m = DATE_RE.exec(text.characters);
-        if (m) headers.push({ y: absoluteY(text), date: normalizeDate(m[0]) });
+/**
+ * "Published on 30.09.2026" headers. The date may sit in the same text or in a
+ * separate text layer next to the label.
+ */
+function findDateHeaders(root: Container): { y: number; date: string }[] {
+  const headers: { y: number; date: string }[] = [];
+  for (const text of root.findAllWithCriteria({ types: ["TEXT"] })) {
+    if (!/published\s*on/i.test(text.characters)) continue;
+    let m = DATE_RE.exec(text.characters);
+    if (!m && text.parent && hasChildren(text.parent)) {
+      for (const sibling of text.parent.children) {
+        if (sibling.type === "TEXT" && sibling !== text) {
+          m = DATE_RE.exec(sibling.characters);
+          if (m) break;
+        }
       }
     }
-    headers.sort((a, b) => a.y - b.y);
-    const rowNodes = frame
-      .findAll((n) => "children" in n && CHANGELOG_ROW_RE.test(n.name))
-      .filter((n) => {
-        // Keep only the outermost rows (a row never contains another row).
-        let p = n.parent;
-        while (p && p.type !== "PAGE") {
-          if (CHANGELOG_ROW_RE.test(p.name)) return false;
-          p = p.parent;
-        }
-        return true;
-      }) as (SceneNode & ChildrenMixin)[];
-    if (CHANGELOG_ROW_RE.test(frame.name)) rowNodes.push(frame as SceneNode & ChildrenMixin);
-    for (const row of rowNodes) {
+    if (m) headers.push({ y: absoluteY(text), date: normalizeDate(m[0]) });
+  }
+  headers.sort((a, b) => a.y - b.y);
+  return headers;
+}
+
+/** Parse every change log row inside the given containers (frames, sections, groups or pages). */
+function parseChangelogFrames(containers: Container[]): { entries: LogEntry[]; rows: number } {
+  const entries: LogEntry[] = [];
+  let rows = 0;
+  for (const container of containers) {
+    const headers = findDateHeaders(container);
+    for (const row of findChangelogRows(container)) {
       rows++;
       const y = absoluteY(row);
       let date = "";
@@ -656,12 +722,36 @@ function parseChangelogFrames(frames: SceneNode[]): { entries: LogEntry[]; rows:
   return { entries, rows };
 }
 
-async function loadChangelogFromIds(ids: string[]): Promise<SceneNode[]> {
-  const nodes: SceneNode[] = [];
+/** A short description of what a selection holds, for error messages. */
+function describeNodes(nodes: BaseNode[]): string {
+  const types: { [t: string]: number } = {};
+  const names: { [n: string]: number } = {};
+  let total = 0;
+  for (const node of nodes) {
+    const all: BaseNode[] = hasChildren(node) ? [node, ...node.findAll(() => true)] : [node];
+    for (const n of all) {
+      total++;
+      types[n.type] = (types[n.type] || 0) + 1;
+      if (n.type !== "TEXT") names[n.name] = (names[n.name] || 0) + 1;
+    }
+  }
+  const topNames = Object.keys(names)
+    .sort((a, b) => names[b] - names[a])
+    .slice(0, 6)
+    .map((n) => `“${n}” ×${names[n]}`)
+    .join(", ");
+  const typeList = Object.keys(types)
+    .map((t) => `${t.toLowerCase()} ${types[t]}`)
+    .join(", ");
+  return `${nodes.length} selected, ${total} layers (${typeList}). Most common names: ${topNames || "none"}.`;
+}
+
+async function loadContainersByIds(ids: string[]): Promise<Container[]> {
+  const nodes: Container[] = [];
   for (const id of ids) {
     try {
       const node = await figma.getNodeByIdAsync(id);
-      if (node && node.type !== "DOCUMENT" && node.type !== "PAGE" && !node.removed) nodes.push(node as SceneNode);
+      if (node && node.type !== "DOCUMENT" && !node.removed && hasChildren(node)) nodes.push(node);
     } catch (e) {
       // removed or inaccessible; skip
     }
@@ -669,34 +759,68 @@ async function loadChangelogFromIds(ids: string[]): Promise<SceneNode[]> {
   return nodes;
 }
 
-function postChangelog(entries: LogEntry[], rows: number, frames: number): void {
+function postChangelog(entries: LogEntry[], rows: number, frames: number, mode: string): void {
   changelogEntries = entries;
-  post({ type: "changelog", entries, rows, frames });
+  post({ type: "changelog", entries, rows, frames, mode });
 }
 
 async function changelogFromSelection(): Promise<void> {
-  const selection = figma.currentPage.selection.filter((n) => "children" in n);
+  const selection = figma.currentPage.selection.filter(hasChildren) as Container[];
   if (selection.length === 0) {
-    throw new Error("Select the change log frame(s) on the canvas first, then click “Use selection”.");
+    throw new Error("Select the change log section or frame on the canvas first, then click “Use selection”.");
   }
   const parsed = parseChangelogFrames(selection);
   if (parsed.rows === 0) {
-    throw new Error("No “Change log Row” layers found inside the selection.");
+    throw new Error(
+      "No change log rows found in the selection. " + describeNodes(selection) +
+        " A row is a layer named “Change log Row” or one holding a “Version Table Cell” and a “Description Table Cell”."
+    );
   }
-  saveChangelogIds(selection.map((n) => n.id));
-  postChangelog(parsed.entries, parsed.rows, selection.length);
+  saveChangelogSource({ mode: "selection", ids: selection.map((n) => n.id) });
+  postChangelog(parsed.entries, parsed.rows, selection.length, "selection");
+}
+
+async function changelogFromFile(): Promise<void> {
+  await figma.loadAllPagesAsync();
+  const pages: Container[] = [];
+  let entries: LogEntry[] = [];
+  let rows = 0;
+  for (const page of figma.root.children) {
+    const parsed = parseChangelogFrames([page]);
+    if (parsed.rows > 0) {
+      pages.push(page);
+      rows += parsed.rows;
+      entries = entries.concat(parsed.entries);
+    }
+    await yieldToUI();
+  }
+  if (rows === 0) {
+    throw new Error(
+      "No change log rows found anywhere in this file. Rows are detected by the name “Change log Row” or by holding a “Version Table Cell” and a “Description Table Cell”."
+    );
+  }
+  saveChangelogSource({ mode: "file" });
+  postChangelog(entries, rows, pages.length, "file");
 }
 
 async function restoreChangelog(): Promise<void> {
-  const ids = loadChangelogIds();
-  if (ids.length === 0) return;
-  const frames = await loadChangelogFromIds(ids);
-  if (frames.length === 0) {
-    saveChangelogIds([]);
+  const source = loadChangelogSource();
+  if (!source) return;
+  if (source.mode === "file") {
+    try {
+      await changelogFromFile();
+    } catch (e) {
+      saveChangelogSource(null);
+    }
     return;
   }
-  const parsed = parseChangelogFrames(frames);
-  postChangelog(parsed.entries, parsed.rows, frames.length);
+  const containers = await loadContainersByIds(source.ids);
+  if (containers.length === 0) {
+    saveChangelogSource(null);
+    return;
+  }
+  const parsed = parseChangelogFrames(containers);
+  postChangelog(parsed.entries, parsed.rows, containers.length, "selection");
 }
 
 /** Entries for one component: change log first, then description lines, newest first, deduped by version. */
@@ -1313,9 +1437,12 @@ figma.ui.onmessage = async (msg: UIMessage) => {
       case "changelog-from-selection":
         await changelogFromSelection();
         break;
+      case "changelog-find-in-file":
+        await changelogFromFile();
+        break;
       case "changelog-clear":
-        saveChangelogIds([]);
-        postChangelog([], 0, 0);
+        saveChangelogSource(null);
+        postChangelog([], 0, 0, "");
         break;
       case "save-token":
         await saveToken(msg.token || "");

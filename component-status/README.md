@@ -93,12 +93,15 @@ ones in the other file are not visible to it.
 The table can show the history of every component as sub-rows (version,
 date, change type, description), newest first. Two sources are combined:
 
-- **The change log table on the canvas.** Select its frame(s) once and click
-  **Use selection as change log**. Every layer named "Change log Row" is read
-  through its text layers (`Name`, `version`, the Status cell text,
-  `Description`) and the nearest "Published on dd.mm.yyyy" text above it gives
-  the date. The frames are remembered on the document and re-read on the next
-  run; **Clear** forgets them.
+- **The change log table on the canvas.** Click **Find in file** to search
+  every page, or select the section or frame holding the table and click
+  **Use selection**. A row is any layer named "Change log Row" or any layer
+  holding a "Version Table Cell" and a "Description Table Cell" (the master
+  component is ignored). Each row is read through its cells (Component,
+  Version, Status, Description) and the nearest "Published on dd.mm.yyyy"
+  text above it gives the date, whether the date is in the same text layer or
+  a separate one. The choice is remembered on the document and re-read on the
+  next run; **Clear** forgets it.
 - **Version lines in component descriptions**, for older history:
 
   ```
@@ -185,4 +188,4 @@ component-status/
 | Direction | Message |
 | --- | --- |
 | main → UI | `init {token, remoteFiles}`, `scan-progress {count, scanned, total, pageName}`, `scan-done {components, skippedPages, mappings}`, `remote-done {key, fileName, components, skippedPages}`, `changelog {entries, rows, frames}`, `token-saved {hasToken}`, `generate-progress {done, total}`, `generate-done {count}`, `error {message}` |
-| UI → main | `generate {components, coba, purple, mappings, history}`, `rescan`, `changelog-from-selection`, `changelog-clear`, `remote-parse {key, fileName, componentSets, components}`, `save-token {token}`, `save-files {files}`, `close` |
+| UI → main | `generate {components, coba, purple, mappings, history}`, `rescan`, `changelog-from-selection`, `changelog-find-in-file`, `changelog-clear`, `remote-parse {key, fileName, componentSets, components}`, `save-token {token}`, `save-files {files}`, `close` |
