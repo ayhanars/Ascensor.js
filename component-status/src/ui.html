@@ -18,6 +18,7 @@
     --success: #3F9558;
     --warning: #C9932F;
     --danger: #C0392B;
+    --purple-bg: #F4EFFB;
     --radius: 8px;
     --radius-sm: 6px;
   }
@@ -35,6 +36,7 @@
     --success: var(--figma-color-text-success);
     --warning: var(--figma-color-text-warning);
     --danger: var(--figma-color-text-danger);
+    --purple-bg: rgba(160, 110, 230, 0.18);
   }
 
   * { box-sizing: border-box; }
@@ -134,6 +136,7 @@
     padding: 6px 10px; border-bottom: 1px solid var(--border-light);
   }
   .item:last-child { border-bottom: none; }
+  .item.purple { background: var(--purple-bg); }
   .item .name { font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .item .type { color: var(--text-faint); font-size: 11px; flex: none; width: 70px; }
   .item .version { font-size: 11px; color: var(--text-muted); flex: none; width: 66px; text-align: right; }
@@ -428,7 +431,7 @@
       show($("empty"), false);
       show($("list"), true);
       components.forEach(function (c) {
-        var item = el("div", "item");
+        var item = el("div", "item" + (/purple/i.test(c.name) ? " purple" : ""));
         item.title = (c.rawName && c.rawName !== c.name ? "Figma name: " + c.rawName + "\n" : "") + (c.pageName ? "Page: " + c.pageName : "");
         item.appendChild(el("span", "name", c.name));
         item.appendChild(el("span", "type", c.type));

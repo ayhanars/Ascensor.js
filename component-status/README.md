@@ -51,13 +51,16 @@ Component names are cleaned for the table: emojis are removed and a version
 token in the name (`🔵 Button v2.3.0`, `Card (1.2.0)`, `Modal - v2.0.0`) is
 moved into the Version column, leaving `Button`, `Card`, `Modal`. The cleaned
 name is what JSON names are matched against. The original Figma name is shown
-as a tooltip in the list.
+as a tooltip in the list. Accepted version styles: `v2.3.0`, `2.3.0`, `v.2.3.0`.
+
+Components whose name contains "purple" get a light purple row background in
+the table and in the Step 1 list.
 
 If the name has no version, the plugin reads the **description** field:
 
 | Line in the description | Result |
 | --- | --- |
-| `Version: v2.3.0` (also `Version: 2.3.0`) | version, normalised to `vX.Y.Z` |
+| `Version: v2.3.0` (also `Version: 2.3.0` or `Version: v.2.3.0`) | version, normalised to `vX.Y.Z` |
 | `Type: Atom` or `Type: Component` | type |
 
 If there is no `Type:` line, the component is an **Atom** when its page name or

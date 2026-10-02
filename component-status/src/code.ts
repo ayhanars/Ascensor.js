@@ -96,9 +96,12 @@ const PLATFORMS = [
 type BrandKey = (typeof BRANDS)[number]["key"];
 type PlatformKey = (typeof PLATFORMS)[number]["key"];
 
-const VERSION_RE = /version:\s*(v?\d+\.\d+\.\d+)/i;
-/** A version token inside a component name, e.g. "Button v2.3.0" or "Card (1.2.0)". */
-const NAME_VERSION_RE = /(?:^|[^A-Za-z0-9.])v?(\d+\.\d+\.\d+)(?![A-Za-z0-9.])/i;
+/** Accepts "v2.3.0", "2.3.0" and "v.2.3.0". */
+const VERSION_RE = /version:\s*(v?\.?\d+\.\d+\.\d+)/i;
+/** A version token inside a component name, e.g. "Button v2.3.0", "Card (1.2.0)" or "Tag v.1.1.3". */
+const NAME_VERSION_RE = /(?:^|[^A-Za-z0-9.])(?:v\.?)?(\d+\.\d+\.\d+)(?![A-Za-z0-9.])/i;
+/** Rows of components whose name contains "purple" get this background. */
+const PURPLE_ROW_FILL = "#F4EFFB";
 /** Emojis, pictographs, dingbats, geometric markers and the joiners around them. */
 const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{1FC00}-\u{1FFFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{25A0}-\u{25FF}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{2700}-\u{27BF}\u{FE0F}\u{200D}\u{20E3}\u{E0020}-\u{E007F}]/gu;
 const TYPE_RE = /type:\s*(atom|component)\b/i;
@@ -207,10 +210,14 @@ function normalizeName(name: string): string {
   return name.trim().toLowerCase();
 }
 
-/** "2.3.0" / "V2.3.0" / " v2.3.0 " -> "v2.3.0" */
+/** "2.3.0" / "V2.3.0" / "v.2.3.0" / " v2.3.0 " -> "v2.3.0" */
 function normalizeVersion(version: string): string {
-  const v = version.trim().replace(/^v/i, "");
+  const v = version.trim().replace(/^v\.?/i, "");
   return "v" + v;
+}
+
+function isPurpleName(name: string): boolean {
+  return /purple/i.test(name);
 }
 
 /** Remove emojis and leading/trailing separators, collapse whitespace. */
@@ -702,6 +709,7 @@ function buildStatusCell(row: FrameNode, name: string, status: Status, borderLef
 function buildRow(component: LibraryComponent, lookups: Lookups, aliases: Aliases, fonts: FontSet): FrameNode {
   const row = autoFrame(`Row / ${component.name}`, "HORIZONTAL");
   setBorders(row, COLOR.borderLight, { bottom: true });
+  if (isPurpleName(component.name)) row.fills = solid(PURPLE_ROW_FILL);
   row.setPluginData("componentId", component.id);
 
   const cells: FrameNode[] = [];
