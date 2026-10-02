@@ -7,6 +7,7 @@
   "editorType": ["figma"],
   "documentAccess": "dynamic-page",
   "networkAccess": {
-    "allowedDomains": ["none"]
+    "allowedDomains": ["https://api.figma.com"],
+    "reasoning": "Reads the published components of other library files through the Figma REST API when the user adds a file link and their own personal access token."
   }
 }

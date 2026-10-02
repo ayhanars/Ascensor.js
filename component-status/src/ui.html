@@ -125,6 +125,28 @@
   .scan-bar { height: 3px; background: var(--border-light); border-radius: 2px; overflow: hidden; margin-bottom: 4px; }
   .scan-bar > div { height: 100%; width: 0; background: var(--text); transition: width .15s; }
   .skipped { margin-top: 8px; font-size: 11px; color: var(--text-faint); }
+  .item .src { color: var(--text-faint); font-weight: 400; font-size: 11px; margin-left: 6px; }
+
+  /* Other library files */
+  .remote { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-light); }
+  .remote-head { display: flex; align-items: center; justify-content: space-between; font-weight: 600; margin-bottom: 8px; }
+  .field { display: flex; gap: 6px; }
+  .field input {
+    flex: 1; min-width: 0; height: 28px; font: inherit; font-size: 11px; color: var(--text);
+    background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 8px;
+  }
+  .field input:focus { outline: none; border-color: var(--text-muted); }
+  .btn.small { height: 28px; padding: 0 10px; font-size: 11px; }
+  .help { margin-top: 6px; font-size: 10px; color: var(--text-faint); line-height: 1.4; }
+  .help.err { color: var(--danger); }
+  .token-form { margin-bottom: 10px; padding: 8px; border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--bg); }
+  .remote-list { margin-top: 8px; }
+  .rfile { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--border-light); font-size: 11px; }
+  .rfile .rname { font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rfile .rstatus { color: var(--text-muted); white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+  .rfile .rstatus.err { color: var(--danger); white-space: normal; }
+  .rfile .spinner { width: 11px; height: 11px; border-width: 1.5px; }
+  .rfile .link { white-space: nowrap; }
   .skipped span { color: var(--text-muted); }
 
   .list {
@@ -262,6 +284,28 @@
         <ul id="dupes-list"></ul>
       </details>
       <div class="skipped hidden" id="skipped"></div>
+
+      <div class="remote">
+        <div class="remote-head">
+          <span>Other library files</span>
+          <button class="link" id="token-toggle">Set token</button>
+        </div>
+        <div class="token-form hidden" id="token-form">
+          <div class="field">
+            <input type="password" id="token-input" placeholder="Figma personal access token" autocomplete="off" spellcheck="false">
+            <button class="btn small" id="token-save">Save</button>
+          </div>
+          <div class="help">Figma → Settings → Security → Personal access tokens, with the “File content: read” scope. The token stays on this computer only.</div>
+          <div class="help err hidden" id="token-error"></div>
+        </div>
+        <div class="field">
+          <input type="text" id="file-input" placeholder="Paste a Figma file link or file key" spellcheck="false">
+          <button class="btn small" id="file-add">Add</button>
+        </div>
+        <div class="help err hidden" id="file-error"></div>
+        <div class="remote-list" id="remote-list"></div>
+        <div class="help">Linked files are scanned through the Figma API, which lists their published components only. Links are remembered in this file.</div>
+      </div>
     </div>
   </section>
 
@@ -314,7 +358,11 @@
   // ---------------------------------------------------------------------
   var state = {
     scanning: true,
-    components: null,   // LibraryComponent[] once scanned
+    local: null,        // components of this file once scanned
+    remote: {},         // fileKey -> { key, name, status, components, error }
+    remoteOrder: [],    // fileKeys in the order they were added
+    token: "",
+    components: null,   // merged local + remote list once scanned
     files: { coba: null, purple: null }, // { name, data } once valid
     mappings: {},        // normalised JSON name -> componentId (manual mapping)
     skippedPages: [],
@@ -404,19 +452,43 @@
     }
   }
 
-  function onScanDone(components, skippedPages, savedMappings) {
+  var savedMappings = [];
+
+  function onScanDone(components, skippedPages, mappings) {
     state.scanning = false;
-    state.components = components;
+    state.local = components;
     state.skippedPages = skippedPages || [];
+    savedMappings = mappings || [];
     if (counter.timer) { clearInterval(counter.timer); counter.timer = null; }
+    show($("loading"), false);
+    show($("rescan-link"), true);
+    applyComponents();
+  }
+
+  function compareNames(a, b) {
+    var x = a.name.toLowerCase(), y = b.name.toLowerCase();
+    return x < y ? -1 : x > y ? 1 : 0;
+  }
+
+  /** Merge this file's components with every loaded remote file and re-render step 1. */
+  function applyComponents() {
+    if (!state.local) return;
+    var components = state.local.slice();
+    state.remoteOrder.forEach(function (key) {
+      var file = state.remote[key];
+      if (file && file.components) components = components.concat(file.components);
+    });
+    components.sort(compareNames);
+    state.components = components;
+
     // Restore saved mappings that still point at an existing component.
     var ids = {};
     components.forEach(function (c) { ids[c.id] = true; });
-    (savedMappings || []).forEach(function (m) {
-      if (m && m.jsonName && ids[m.componentId]) state.mappings[normalizeName(m.jsonName)] = m.componentId;
+    savedMappings.forEach(function (m) {
+      if (m && m.jsonName && ids[m.componentId] && !(normalizeName(m.jsonName) in state.mappings)) {
+        state.mappings[normalizeName(m.jsonName)] = m.componentId;
+      }
     });
-    show($("loading"), false);
-    show($("rescan-link"), true);
 
     var badge = $("count-badge");
     badge.textContent = String(components.length);
@@ -433,7 +505,9 @@
       components.forEach(function (c) {
         var item = el("div", "item" + (/purple/i.test(c.name) ? " purple" : ""));
         item.title = (c.rawName && c.rawName !== c.name ? "Figma name: " + c.rawName + "\n" : "") + (c.pageName ? "Page: " + c.pageName : "");
-        item.appendChild(el("span", "name", c.name));
+        var name = el("span", "name", c.name);
+        if (c.source) name.appendChild(el("span", "src", "· " + c.source));
+        item.appendChild(name);
         item.appendChild(el("span", "type", c.type));
         if (c.version) {
           item.appendChild(el("span", "version mono", c.version));
@@ -485,6 +559,177 @@
 
   $("rescan-link").addEventListener("click", startScan);
   $("rescan-btn").addEventListener("click", startScan);
+
+  // ---------------------------------------------------------------------
+  // Step 1b: other library files through the Figma REST API
+  // ---------------------------------------------------------------------
+  var API = "https://api.figma.com/v1";
+
+  function parseFileKey(text) {
+    var t = String(text || "").trim();
+    var m = /(?:file|design|board|proto)\/([A-Za-z0-9]{10,})/.exec(t);
+    if (m) return m[1];
+    if (/^[A-Za-z0-9]{10,}$/.test(t)) return t;
+    return null;
+  }
+
+  function httpMessage(status) {
+    if (status === 403) return "Access denied. Check the token and that you can open this file.";
+    if (status === 404) return "File not found. Check the link.";
+    if (status === 429) return "Figma rate limit hit. Try again in a minute.";
+    return "Figma API error (" + status + ").";
+  }
+
+  function apiGet(path) {
+    return fetch(API + path, { headers: { "X-Figma-Token": state.token } }).then(function (r) {
+      if (!r.ok) throw new Error(httpMessage(r.status));
+      return r.json();
+    });
+  }
+
+  function fetchFileName(key) {
+    return apiGet("/files/" + key + "/meta").then(function (d) {
+      return (d && d.file && d.file.name) || "";
+    }).catch(function () {
+      return apiGet("/files/" + key + "?depth=1").then(function (d) { return (d && d.name) || ""; });
+    });
+  }
+
+  function loadRemote(key) {
+    var file = state.remote[key];
+    if (!file) return;
+    if (!state.token) {
+      file.status = "error"; file.error = "Add a Figma personal access token first.";
+      renderRemote(); return;
+    }
+    file.status = "loading"; file.error = "";
+    renderRemote();
+    Promise.all([
+      fetchFileName(key),
+      apiGet("/files/" + key + "/component_sets"),
+      apiGet("/files/" + key + "/components")
+    ]).then(function (res) {
+      var name = res[0] || file.name || key;
+      file.name = name;
+      postToPlugin({
+        type: "remote-parse",
+        key: key,
+        fileName: name,
+        componentSets: (res[1] && res[1].meta && res[1].meta.component_sets) || [],
+        components: (res[2] && res[2].meta && res[2].meta.components) || []
+      });
+    }).catch(function (e) {
+      file.status = "error"; file.error = (e && e.message) || "Could not load the file.";
+      renderRemote();
+    });
+  }
+
+  function onRemoteDone(msg) {
+    var file = state.remote[msg.key];
+    if (!file) return;
+    file.name = msg.fileName || file.name;
+    file.status = "done";
+    file.components = msg.components || [];
+    file.skippedPages = msg.skippedPages || [];
+    persistFiles();
+    renderRemote();
+    applyComponents();
+  }
+
+  function persistFiles() {
+    postToPlugin({ type: "save-files", files: state.remoteOrder.map(function (k) { return { key: k, name: state.remote[k].name || "" }; }) });
+  }
+
+  function addRemote(key, name, load) {
+    if (!state.remote[key]) {
+      state.remote[key] = { key: key, name: name || "", status: "idle", components: null, error: "" };
+      state.remoteOrder.push(key);
+    }
+    if (load) loadRemote(key);
+    renderRemote();
+  }
+
+  function removeRemote(key) {
+    delete state.remote[key];
+    state.remoteOrder = state.remoteOrder.filter(function (k) { return k !== key; });
+    persistFiles();
+    renderRemote();
+    applyComponents();
+  }
+
+  function renderRemote() {
+    var list = $("remote-list");
+    list.innerHTML = "";
+    state.remoteOrder.forEach(function (key) {
+      var file = state.remote[key];
+      var row = el("div", "rfile");
+      var name = el("span", "rname", file.name || key);
+      name.title = key;
+      row.appendChild(name);
+      var status = el("span", "rstatus");
+      if (file.status === "loading") {
+        status.appendChild(el("span", "spinner"));
+        status.appendChild(document.createTextNode("Loading…"));
+      } else if (file.status === "error") {
+        status.classList.add("err");
+        status.textContent = file.error;
+      } else if (file.status === "done") {
+        status.textContent = file.components.length + " component" + (file.components.length === 1 ? "" : "s");
+      } else {
+        status.textContent = "Not loaded";
+      }
+      row.appendChild(status);
+      var rescan = el("button", "link", "Rescan");
+      rescan.addEventListener("click", function () { loadRemote(key); });
+      row.appendChild(rescan);
+      var remove = el("button", "link", "Remove");
+      remove.addEventListener("click", function () { removeRemote(key); });
+      row.appendChild(remove);
+      list.appendChild(row);
+    });
+    $("token-toggle").textContent = state.token ? "Change token" : "Set token";
+  }
+
+  $("token-toggle").addEventListener("click", function () {
+    var form = $("token-form");
+    show(form, form.classList.contains("hidden"));
+    if (!form.classList.contains("hidden")) $("token-input").focus();
+  });
+  $("token-save").addEventListener("click", function () {
+    var token = $("token-input").value.trim();
+    if (!token) { $("token-error").textContent = "Paste a token first."; show($("token-error"), true); return; }
+    show($("token-error"), false);
+    state.token = token;
+    $("token-input").value = "";
+    postToPlugin({ type: "save-token", token: token });
+    show($("token-form"), false);
+    renderRemote();
+    // Retry files that failed for lack of a token.
+    state.remoteOrder.forEach(function (key) {
+      if (state.remote[key].status !== "done") loadRemote(key);
+    });
+  });
+  $("token-input").addEventListener("keydown", function (e) { if (e.key === "Enter") $("token-save").click(); });
+
+  function addFromInput() {
+    var key = parseFileKey($("file-input").value);
+    if (!key) { $("file-error").textContent = "That does not look like a Figma file link or key."; show($("file-error"), true); return; }
+    show($("file-error"), false);
+    $("file-input").value = "";
+    if (!state.token) show($("token-form"), true);
+    addRemote(key, "", true);
+    persistFiles();
+  }
+  $("file-add").addEventListener("click", addFromInput);
+  $("file-input").addEventListener("keydown", function (e) { if (e.key === "Enter") addFromInput(); });
+
+  function onInit(msg) {
+    state.token = msg.token || "";
+    (msg.remoteFiles || []).forEach(function (f) {
+      if (f && f.key) addRemote(f.key, f.name || "", !!state.token);
+    });
+    renderRemote();
+  }
 
   // ---------------------------------------------------------------------
   // Step 2: files
@@ -784,6 +1029,15 @@
     var msg = event.data && event.data.pluginMessage;
     if (!msg || !msg.type) return;
     switch (msg.type) {
+      case "init":
+        onInit(msg);
+        break;
+      case "remote-done":
+        onRemoteDone(msg);
+        break;
+      case "token-saved":
+        renderRemote();
+        break;
       case "scan-progress":
         onScanProgress(msg);
         break;

@@ -4,7 +4,8 @@ Scans the components of the current Figma library file, takes one JSON file per
 brand (**COBA** and **Purple**) with the versions implemented on iOS and
 Android, and generates a component status table on the canvas.
 
-Plain TypeScript, no UI framework, no runtime dependencies, no network access.
+Plain TypeScript, no UI framework, no runtime dependencies. The only network
+access is to the Figma API, and only when you link other library files.
 
 ## Install
 
@@ -68,6 +69,25 @@ any parent frame name contains "atom", otherwise a **Component**. Components
 with no version get a "no version" tag. Duplicate names are kept and listed as
 a warning.
 
+#### Other library files
+
+A plugin can only read the file it runs in, so other files (an atoms library,
+for example) are scanned through the Figma REST API:
+
+1. Click **Set token** and paste a personal access token
+   (Figma → Settings → Security → Personal access tokens, scope
+   *File content: read*). It is stored with `figma.clientStorage`, on your
+   computer only, never in the file.
+2. Paste a file link (or file key) and click **Add**. The plugin fetches the
+   file's published component sets and components, applies the same page
+   skipping, name cleaning and version rules, and merges them into the list.
+
+Remote components show their file name next to the type, in the list and in
+the table, and their **Go to Component →** button opens the component in its
+own file. Linked files are remembered on the current document so they reload
+on the next run. The API lists **published** components only; unpublished
+ones in the other file are not visible to it.
+
 ### 2 · Upload
 
 Drop (or click to browse) one `.json` file per brand. Both platforms live in
@@ -124,7 +144,7 @@ they cannot be loaded.
 
 ```
 component-status/
-├── manifest.json      Figma plugin manifest (dynamic-page access, no network)
+├── manifest.json      Figma plugin manifest (dynamic-page access, api.figma.com only)
 ├── package.json       build scripts (esbuild + tsc typecheck)
 ├── tsconfig.json
 ├── src/
@@ -140,5 +160,5 @@ component-status/
 
 | Direction | Message |
 | --- | --- |
-| main → UI | `scan-progress {count, scanned, total, pageName}`, `scan-done {components, skippedPages, mappings}`, `generate-progress {done, total}`, `generate-done {count}`, `error {message}` |
-| UI → main | `generate {components, coba, purple, mappings}`, `rescan`, `close` |
+| main → UI | `init {token, remoteFiles}`, `scan-progress {count, scanned, total, pageName}`, `scan-done {components, skippedPages, mappings}`, `remote-done {key, fileName, components, skippedPages}`, `token-saved {hasToken}`, `generate-progress {done, total}`, `generate-done {count}`, `error {message}` |
+| UI → main | `generate {components, coba, purple, mappings}`, `rescan`, `remote-parse {key, fileName, componentSets, components}`, `save-token {token}`, `save-files {files}`, `close` |

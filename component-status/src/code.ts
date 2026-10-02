@@ -15,6 +15,28 @@ interface LibraryComponent {
   type: ComponentType;
   version: string | null;
   pageName: string;
+  /** Name of the other library file this component comes from (remote only). */
+  source?: string;
+  /** Link to the component in its file (remote only). */
+  url?: string;
+}
+
+/** Another library file scanned through the Figma REST API. */
+interface RemoteFile {
+  key: string;
+  name: string;
+}
+
+/** Raw objects from GET /v1/files/:key/components and /component_sets. */
+interface ApiComponent {
+  node_id: string;
+  name: string;
+  description?: string;
+  containing_frame?: {
+    name?: string;
+    pageName?: string;
+    containingStateGroup?: { name: string; nodeId: string };
+  };
 }
 
 /** Component name -> implemented version (null = not started). */
@@ -44,6 +66,15 @@ type UIMessage =
       mappings?: Mapping[];
     }
   | { type: "rescan" }
+  | { type: "save-token"; token: string }
+  | { type: "save-files"; files: RemoteFile[] }
+  | {
+      type: "remote-parse";
+      key: string;
+      fileName: string;
+      componentSets: ApiComponent[];
+      components: ApiComponent[];
+    }
   | { type: "close" };
 
 // ---------------------------------------------------------------------------
@@ -57,6 +88,8 @@ const ROW_BATCH = 20;
 const SCAN_YIELD_EVERY = 50;
 const SCAN_PROGRESS_EVERY = 5;
 const MAPPINGS_KEY = "componentStatusMappings";
+const FILES_KEY = "componentStatusFiles";
+const TOKEN_KEY = "componentStatusFigmaToken";
 
 /**
  * Pages that never hold library components. Compared after stripping
@@ -284,6 +317,37 @@ function saveMappings(mappings: Mapping[]): void {
   }
 }
 
+function loadSavedFiles(): RemoteFile[] {
+  try {
+    const raw = figma.root.getPluginData(FILES_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveFiles(files: RemoteFile[]): void {
+  try {
+    figma.root.setPluginData(FILES_KEY, JSON.stringify(files));
+  } catch (e) {
+    console.warn("Could not save files: " + errorMessage(e));
+  }
+}
+
+async function loadToken(): Promise<string> {
+  try {
+    const token = await figma.clientStorage.getAsync(TOKEN_KEY);
+    return typeof token === "string" ? token : "";
+  } catch (e) {
+    return "";
+  }
+}
+
+async function saveToken(token: string): Promise<void> {
+  await figma.clientStorage.setAsync(TOKEN_KEY, token);
+}
+
 function compareByName(a: { name: string }, b: { name: string }): number {
   const x = a.name.toLowerCase();
   const y = b.name.toLowerCase();
@@ -392,6 +456,58 @@ async function scanComponents(): Promise<void> {
   components.sort(compareByName);
   post({ type: "scan-progress", count: components.length, scanned, total, pageName: "" });
   post({ type: "scan-done", components, skippedPages, mappings: loadSavedMappings() });
+}
+
+// ---------------------------------------------------------------------------
+// Step 1b: components of other files (data fetched by the UI from the REST API)
+// ---------------------------------------------------------------------------
+
+function describeRemote(item: ApiComponent, file: RemoteFile): LibraryComponent {
+  const description = item.description || "";
+  const frame = item.containing_frame || {};
+  const pageName = frame.pageName || "";
+  const split = splitNameAndVersion(item.name);
+  return {
+    id: `${file.key}/${item.node_id}`,
+    name: split.name || item.name.trim(),
+    rawName: item.name,
+    type: parseType(description, pageName, frame.name ? [frame.name] : []),
+    version: split.version || parseVersion(description),
+    pageName,
+    source: file.name,
+    url: `https://www.figma.com/design/${file.key}?node-id=${encodeURIComponent(item.node_id)}`,
+  };
+}
+
+function parseRemote(
+  file: RemoteFile,
+  componentSets: ApiComponent[],
+  components: ApiComponent[]
+): { components: LibraryComponent[]; skippedPages: string[] } {
+  const out: LibraryComponent[] = [];
+  const skipped: { [page: string]: true } = {};
+  const seen: { [id: string]: true } = {};
+
+  const consider = (item: ApiComponent, isVariant: boolean) => {
+    if (isVariant || !item || !item.name) return;
+    const pageName = (item.containing_frame && item.containing_frame.pageName) || "";
+    if (pageName && isSkippedPage(pageName)) {
+      skipped[pageName] = true;
+      return;
+    }
+    if (isHiddenName(item.name) || isHiddenName(stripDecorations(item.name))) return;
+    if (seen[item.node_id]) return;
+    seen[item.node_id] = true;
+    out.push(describeRemote(item, file));
+  };
+
+  for (const set of componentSets || []) consider(set, false);
+  for (const component of components || []) {
+    const inSet = !!(component.containing_frame && component.containing_frame.containingStateGroup);
+    consider(component, inSet);
+  }
+  out.sort(compareByName);
+  return { components: out, skippedPages: Object.keys(skipped) };
 }
 
 // ---------------------------------------------------------------------------
@@ -722,7 +838,8 @@ function buildRow(component: LibraryComponent, lookups: Lookups, aliases: Aliase
   const nameText = makeText(component.name, fonts.medium, 14, COLOR.text);
   componentCell.appendChild(nameText);
   fillWidth(nameText);
-  const typeText = makeText(component.type, fonts.regular, 12, COLOR.faint);
+  const typeLine = component.source ? `${component.type} · ${component.source}` : component.type;
+  const typeText = makeText(typeLine, fonts.regular, 12, COLOR.faint);
   componentCell.appendChild(typeText);
   fillWidth(typeText);
   cells.push(componentCell);
@@ -767,7 +884,10 @@ function buildRow(component: LibraryComponent, lookups: Lookups, aliases: Aliase
   button.layoutSizingVertical = "FIXED";
   button.resize(button.width, 30);
   try {
-    buttonText.setRangeHyperlink(0, buttonText.characters.length, { type: "NODE", value: component.id });
+    const link: HyperlinkTarget = component.url
+      ? { type: "URL", value: component.url }
+      : { type: "NODE", value: component.id };
+    buttonText.setRangeHyperlink(0, buttonText.characters.length, link);
   } catch (e) {
     console.warn(`Could not link to component ${component.name}: ${errorMessage(e)}`);
   }
@@ -868,6 +988,25 @@ figma.ui.onmessage = async (msg: UIMessage) => {
       case "rescan":
         await scanComponents();
         break;
+      case "save-token":
+        await saveToken(msg.token || "");
+        post({ type: "token-saved", hasToken: !!msg.token });
+        break;
+      case "save-files":
+        saveFiles(Array.isArray(msg.files) ? msg.files : []);
+        break;
+      case "remote-parse": {
+        const file: RemoteFile = { key: msg.key, name: msg.fileName };
+        const parsed = parseRemote(file, msg.componentSets, msg.components);
+        post({
+          type: "remote-done",
+          key: msg.key,
+          fileName: msg.fileName,
+          components: parsed.components,
+          skippedPages: parsed.skippedPages,
+        });
+        break;
+      }
       case "generate":
         await generateTable(msg.components, msg.coba, msg.purple, msg.mappings || []);
         break;
@@ -885,6 +1024,7 @@ figma.ui.onmessage = async (msg: UIMessage) => {
 
 (async () => {
   try {
+    post({ type: "init", token: await loadToken(), remoteFiles: loadSavedFiles() });
     await scanComponents();
   } catch (e) {
     const message = errorMessage(e);
