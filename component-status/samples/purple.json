@@ -1,0 +1,20 @@
+{
+  "brand": "purple",
+  "platforms": {
+    "ios": {
+      "Button": "v2.1.0",
+      "Select": "v1.5.0",
+      "Checkbox": "v1.0.0",
+      "Input": "v3.0.0",
+      "Toast": null
+    },
+    "android": {
+      "Button": "v2.3.0",
+      "Select": null,
+      "Checkbox": "v0.9.0",
+      "Input": "v3.1.2",
+      "Toast": "v1.2.0",
+      "Avatar": "v1.0.0"
+    }
+  }
+}

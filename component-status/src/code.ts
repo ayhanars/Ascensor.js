@@ -15,18 +15,31 @@ interface LibraryComponent {
 }
 
 /** Component name -> implemented version (null = not started). */
-type BrandVersions = { [componentName: string]: string | null };
+type Versions = { [componentName: string]: string | null };
 
-interface PlatformFile {
-  platform: "ios" | "android";
-  brands: {
-    coba: BrandVersions;
-    purple: BrandVersions;
+/** One file per brand, both platforms inside. */
+interface BrandFile {
+  brand: "coba" | "purple";
+  platforms: {
+    ios: Versions;
+    android: Versions;
   };
 }
 
+/** A manual link from a JSON component name to a library component. */
+interface Mapping {
+  jsonName: string;
+  componentId: string;
+}
+
 type UIMessage =
-  | { type: "generate"; components: LibraryComponent[]; ios: PlatformFile; android: PlatformFile }
+  | {
+      type: "generate";
+      components: LibraryComponent[];
+      coba: BrandFile;
+      purple: BrandFile;
+      mappings?: Mapping[];
+    }
   | { type: "rescan" }
   | { type: "close" };
 
@@ -39,6 +52,20 @@ const PAD_X = 20;
 const PAD_Y = 15;
 const ROW_BATCH = 20;
 const SCAN_YIELD_EVERY = 50;
+const SCAN_PROGRESS_EVERY = 5;
+const MAPPINGS_KEY = "componentStatusMappings";
+
+/**
+ * Pages that never hold library components. Compared after stripping
+ * leading markers such as "▸" and collapsing whitespace, case-insensitively.
+ */
+const SKIPPED_PAGES = [
+  "WIP",
+  "File template assets",
+  "Annotations",
+  "Text Resizing & Landscape",
+  "Local components",
+];
 
 const COLOR = {
   white: "#FFFFFF",
@@ -177,6 +204,40 @@ function normalizeVersion(version: string): string {
   return "v" + v;
 }
 
+/** "▸  WIP " -> "wip" */
+function normalizePageName(name: string): string {
+  return name
+    .replace(/^[^A-Za-z0-9]+/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+const SKIPPED_PAGE_KEYS = SKIPPED_PAGES.map(normalizePageName);
+
+function isSkippedPage(pageName: string): boolean {
+  return SKIPPED_PAGE_KEYS.indexOf(normalizePageName(pageName)) !== -1;
+}
+
+function loadSavedMappings(): Mapping[] {
+  try {
+    const raw = figma.root.getPluginData(MAPPINGS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveMappings(mappings: Mapping[]): void {
+  try {
+    figma.root.setPluginData(MAPPINGS_KEY, JSON.stringify(mappings));
+  } catch (e) {
+    console.warn("Could not save mappings: " + errorMessage(e));
+  }
+}
+
 function compareByName(a: { name: string }, b: { name: string }): number {
   const x = a.name.toLowerCase();
   const y = b.name.toLowerCase();
@@ -240,28 +301,48 @@ function describeComponent(node: ComponentNode | ComponentSetNode): LibraryCompo
 }
 
 async function scanComponents(): Promise<void> {
-  post({ type: "scan-progress", count: 0 });
+  post({ type: "scan-progress", count: 0, scanned: 0, total: 0, pageName: "" });
 
   await figma.loadAllPagesAsync();
-  const nodes = figma.root.findAllWithCriteria({ types: ["COMPONENT_SET", "COMPONENT"] });
+
+  const skippedPages: string[] = [];
+  const pagesToScan: PageNode[] = [];
+  for (const page of figma.root.children) {
+    if (isSkippedPage(page.name)) skippedPages.push(page.name);
+    else pagesToScan.push(page);
+  }
 
   const components: LibraryComponent[] = [];
-  for (let i = 0; i < nodes.length; i++) {
-    const node = nodes[i];
-    const isVariant =
-      node.type === "COMPONENT" && node.parent !== null && node.parent.type === "COMPONENT_SET";
-    if (!isVariant && !isHiddenName(node.name)) {
-      components.push(describeComponent(node));
-    }
-    if ((i + 1) % SCAN_YIELD_EVERY === 0) {
-      post({ type: "scan-progress", count: components.length });
-      await yieldToUI();
+  let scanned = 0;
+  let lastPosted = -1;
+  const pageNodes = pagesToScan.map((page) => ({
+    page,
+    nodes: page.findAllWithCriteria({ types: ["COMPONENT_SET", "COMPONENT"] }),
+  }));
+  const total = pageNodes.reduce((sum, entry) => sum + entry.nodes.length, 0);
+
+  for (const entry of pageNodes) {
+    const pageName = entry.page.name;
+    for (const node of entry.nodes) {
+      scanned++;
+      const isVariant =
+        node.type === "COMPONENT" && node.parent !== null && node.parent.type === "COMPONENT_SET";
+      if (!isVariant && !isHiddenName(node.name)) {
+        components.push(describeComponent(node));
+      }
+      if (scanned % SCAN_PROGRESS_EVERY === 0 && components.length !== lastPosted) {
+        lastPosted = components.length;
+        post({ type: "scan-progress", count: components.length, scanned, total, pageName });
+      }
+      if (scanned % SCAN_YIELD_EVERY === 0) {
+        await yieldToUI();
+      }
     }
   }
 
   components.sort(compareByName);
-  post({ type: "scan-progress", count: components.length });
-  post({ type: "scan-done", components });
+  post({ type: "scan-progress", count: components.length, scanned, total, pageName: "" });
+  post({ type: "scan-done", components, skippedPages, mappings: loadSavedMappings() });
 }
 
 // ---------------------------------------------------------------------------
@@ -314,8 +395,8 @@ function computeStatus(libraryVersion: string | null, implemented: string | null
   };
 }
 
-/** Build a case-insensitive, trimmed lookup from a brand map. */
-function buildLookup(versions: BrandVersions | undefined): Map<string, string | null> {
+/** Build a case-insensitive, trimmed lookup from a version map. */
+function buildLookup(versions: Versions | undefined): Map<string, string | null> {
   const map = new Map<string, string | null>();
   if (!versions || typeof versions !== "object") return map;
   for (const key of Object.keys(versions)) {
@@ -327,18 +408,46 @@ function buildLookup(versions: BrandVersions | undefined): Map<string, string | 
 
 type Lookups = { [B in BrandKey]: { [P in PlatformKey]: Map<string, string | null> } };
 
-function buildLookups(ios: PlatformFile, android: PlatformFile): Lookups {
-  const files: { [P in PlatformKey]: PlatformFile } = { ios, android };
+function buildLookups(coba: BrandFile, purple: BrandFile): Lookups {
+  const files: { [B in BrandKey]: BrandFile } = { coba, purple };
   const lookups = {} as Lookups;
   for (const brand of BRANDS) {
+    const file = files[brand.key];
     const perPlatform = {} as { [P in PlatformKey]: Map<string, string | null> };
     for (const platform of PLATFORMS) {
-      const file = files[platform.key];
-      perPlatform[platform.key] = buildLookup(file && file.brands ? file.brands[brand.key] : undefined);
+      perPlatform[platform.key] = buildLookup(
+        file && file.platforms ? file.platforms[platform.key] : undefined
+      );
     }
     lookups[brand.key] = perPlatform;
   }
   return lookups;
+}
+
+/** componentId -> extra JSON names (normalised) that map to it. */
+type Aliases = Map<string, string[]>;
+
+function buildAliases(mappings: Mapping[] | undefined): Aliases {
+  const aliases: Aliases = new Map();
+  if (!mappings) return aliases;
+  for (const mapping of mappings) {
+    if (!mapping || !mapping.componentId || !mapping.jsonName) continue;
+    const list = aliases.get(mapping.componentId) || [];
+    list.push(normalizeName(mapping.jsonName));
+    aliases.set(mapping.componentId, list);
+  }
+  return aliases;
+}
+
+/** The component's own name first, then any manually mapped JSON names. */
+function lookupVersion(
+  lookup: Map<string, string | null>,
+  keys: string[]
+): string | null | undefined {
+  for (const key of keys) {
+    if (lookup.has(key)) return lookup.get(key);
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -548,7 +657,7 @@ function buildStatusCell(row: FrameNode, name: string, status: Status, borderLef
   return cell;
 }
 
-function buildRow(component: LibraryComponent, lookups: Lookups, fonts: FontSet): FrameNode {
+function buildRow(component: LibraryComponent, lookups: Lookups, aliases: Aliases, fonts: FontSet): FrameNode {
   const row = autoFrame(`Row / ${component.name}`, "HORIZONTAL");
   setBorders(row, COLOR.borderLight, { bottom: true });
   row.setPluginData("componentId", component.id);
@@ -576,11 +685,11 @@ function buildRow(component: LibraryComponent, lookups: Lookups, fonts: FontSet)
   cells.push(versionCell);
 
   // Status cells
-  const key = normalizeName(component.name);
+  const keys = [normalizeName(component.name)].concat(aliases.get(component.id) || []);
   for (const brand of BRANDS) {
     for (let p = 0; p < PLATFORMS.length; p++) {
       const platform = PLATFORMS[p];
-      const implemented = lookups[brand.key][platform.key].get(key);
+      const implemented = lookupVersion(lookups[brand.key][platform.key], keys);
       const status = computeStatus(component.version, implemented);
       cells.push(buildStatusCell(row, `${brand.label} ${platform.label}`, status, p === 0, fonts));
     }
@@ -634,11 +743,14 @@ function findExistingTable(page: PageNode): FrameNode | null {
 
 async function generateTable(
   components: LibraryComponent[],
-  ios: PlatformFile,
-  android: PlatformFile
+  coba: BrandFile,
+  purple: BrandFile,
+  mappings: Mapping[]
 ): Promise<void> {
   const fonts = await loadFonts();
-  const lookups = buildLookups(ios, android);
+  const lookups = buildLookups(coba, purple);
+  const aliases = buildAliases(mappings);
+  saveMappings(mappings);
   const sorted = components.slice().sort(compareByName);
   const page = figma.currentPage;
   const existing = findExistingTable(page);
@@ -662,7 +774,7 @@ async function generateTable(
     for (let i = 0; i < sorted.length; i += ROW_BATCH) {
       const batch = sorted.slice(i, i + ROW_BATCH);
       for (const component of batch) {
-        body.appendChild(buildRow(component, lookups, fonts));
+        body.appendChild(buildRow(component, lookups, aliases, fonts));
       }
       post({ type: "generate-progress", done: Math.min(i + ROW_BATCH, sorted.length), total: sorted.length });
       await yieldToUI();
@@ -707,7 +819,7 @@ figma.ui.onmessage = async (msg: UIMessage) => {
         await scanComponents();
         break;
       case "generate":
-        await generateTable(msg.components, msg.ios, msg.android);
+        await generateTable(msg.components, msg.coba, msg.purple, msg.mappings || []);
         break;
       case "close":
         figma.closePlugin();

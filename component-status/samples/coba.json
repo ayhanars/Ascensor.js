@@ -1,7 +1,7 @@
 {
-  "platform": "ios",
-  "brands": {
-    "coba": {
+  "brand": "coba",
+  "platforms": {
+    "ios": {
       "Button": "v2.3.0",
       "Select": "v1.5.1",
       "Date Picker": null,
@@ -10,12 +10,13 @@
       "Toast": "v1.2.0",
       "Avatar": "v1.0.0"
     },
-    "purple": {
-      "Button": "v2.1.0",
-      "Select": "v1.5.0",
+    "android": {
+      "Button": "v2.3.0",
+      "Select": "v1.4.0",
+      "Date Picker": "v1.0.0",
       "Checkbox": "v1.0.0",
-      "Input": "v3.0.0",
-      "Toast": null
+      "Input": "v3.1.2",
+      "Toast": "v1.1.0"
     }
   }
 }

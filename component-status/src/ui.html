@@ -118,7 +118,12 @@
     animation: spin .8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .counter { margin-left: auto; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+  .counter { margin-left: auto; color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .scan-page { font-size: 11px; color: var(--text-faint); padding: 0 0 6px 26px; min-height: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .scan-bar { height: 3px; background: var(--border-light); border-radius: 2px; overflow: hidden; margin-bottom: 4px; }
+  .scan-bar > div { height: 100%; width: 0; background: var(--text); transition: width .15s; }
+  .skipped { margin-top: 8px; font-size: 11px; color: var(--text-faint); }
+  .skipped span { color: var(--text-muted); }
 
   .list {
     max-height: 200px; overflow-y: auto;
@@ -180,6 +185,22 @@
   .summary ul { margin: 6px 0 0; padding-left: 16px; max-height: 120px; overflow-y: auto; }
   .summary li { margin: 2px 0; color: var(--text); }
   .summary li .where { color: var(--text-faint); }
+  .map-row {
+    display: grid; grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr); align-items: center; gap: 6px;
+    padding: 5px 0; border-bottom: 1px solid var(--border-light);
+  }
+  .map-row:last-child { border-bottom: none; }
+  .map-row .jname { font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .map-row .jname .where { display: block; font-weight: 400; font-size: 10px; color: var(--text-faint); }
+  .map-row .arrow { color: var(--text-faint); text-align: center; }
+  .map-row select {
+    width: 100%; min-width: 0; height: 26px; font: inherit; font-size: 11px;
+    color: var(--text); background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 0 6px;
+  }
+  .map-row select.mapped { border-color: var(--success); }
+  .map-list { margin-top: 6px; max-height: 190px; overflow-y: auto; }
+  .map-help { margin: 6px 0 0; color: var(--text-faint); font-size: 10px; }
 
   /* Step 3 -------------------------------------------------------------- */
   .btn {
@@ -219,10 +240,14 @@
       <button class="link hidden" id="rescan-link">Rescan</button>
     </div>
     <div class="sec-body">
-      <div class="loading" id="loading">
-        <div class="spinner"></div>
-        <span>Scanning components…</span>
-        <span class="counter" id="counter">0 found</span>
+      <div id="loading">
+        <div class="loading">
+          <div class="spinner"></div>
+          <span>Scanning components…</span>
+          <span class="counter" id="counter">0 found</span>
+        </div>
+        <div class="scan-page" id="scan-page"></div>
+        <div class="scan-bar"><div id="scan-bar"></div></div>
       </div>
       <div class="list hidden" id="list"></div>
       <div class="empty hidden" id="empty">
@@ -233,6 +258,7 @@
         <summary id="dupes-summary"></summary>
         <ul id="dupes-list"></ul>
       </details>
+      <div class="skipped hidden" id="skipped"></div>
     </div>
   </section>
 
@@ -243,22 +269,23 @@
     </div>
     <div class="sec-body">
       <div class="drops">
-        <div class="drop" id="drop-ios" data-platform="ios" tabindex="0" role="button">
+        <div class="drop" id="drop-coba" data-brand="coba" tabindex="0" role="button">
           <input type="file" accept=".json,application/json">
-          <div class="title">iOS file</div>
+          <div class="title">COBA file</div>
           <div class="hint">Drop a .json file or click to browse</div>
           <div class="file hidden"></div>
           <div class="error hidden"></div>
         </div>
-        <div class="drop" id="drop-android" data-platform="android" tabindex="0" role="button">
+        <div class="drop" id="drop-purple" data-brand="purple" tabindex="0" role="button">
           <input type="file" accept=".json,application/json">
-          <div class="title">Android file</div>
+          <div class="title">Purple file</div>
           <div class="hint">Drop a .json file or click to browse</div>
           <div class="file hidden"></div>
           <div class="error hidden"></div>
         </div>
       </div>
       <div class="summary hidden" id="summary"></div>
+      <div class="note">Each brand file holds both platforms: <span class="mono">platforms.ios</span> and <span class="mono">platforms.android</span>.</div>
     </div>
   </section>
 
@@ -285,15 +312,21 @@
   var state = {
     scanning: true,
     components: null,   // LibraryComponent[] once scanned
-    files: { ios: null, android: null }, // { name, data } once valid
+    files: { coba: null, purple: null }, // { name, data } once valid
+    mappings: {},        // normalised JSON name -> componentId (manual mapping)
+    skippedPages: [],
     generating: false
   };
 
   var $ = function (id) { return document.getElementById(id); };
+  var BRAND_LABEL = { coba: "COBA", purple: "Purple" };
   var PLATFORM_LABEL = { ios: "iOS", android: "Android" };
   var BRANDS = ["coba", "purple"];
+  var PLATFORMS = ["ios", "android"];
 
   function normalizeName(name) { return String(name).trim().toLowerCase(); }
+  // Loose key used to suggest a mapping: "Date Picker" ~ "DatePicker" ~ "date-picker"
+  function looseName(name) { return String(name).toLowerCase().replace(/[^a-z0-9]/g, ""); }
   function isObject(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -316,10 +349,37 @@
   // ---------------------------------------------------------------------
   // Step 1: components
   // ---------------------------------------------------------------------
+  // Animated counter: the displayed number ticks up towards the latest count.
+  var counter = { shown: 0, target: 0, timer: null };
+  function setCounterTarget(n) {
+    counter.target = n;
+    if (counter.timer) return;
+    counter.timer = setInterval(function () {
+      if (counter.shown >= counter.target) {
+        counter.shown = counter.target;
+        clearInterval(counter.timer); counter.timer = null;
+      } else {
+        var gap = counter.target - counter.shown;
+        counter.shown += Math.max(1, Math.ceil(gap / 8));
+        if (counter.shown > counter.target) counter.shown = counter.target;
+      }
+      $("counter").textContent = counter.shown + " found";
+    }, 30);
+  }
+  function resetCounter() {
+    if (counter.timer) { clearInterval(counter.timer); counter.timer = null; }
+    counter.shown = 0; counter.target = 0;
+    $("counter").textContent = "0 found";
+    $("scan-page").textContent = "";
+    $("scan-bar").style.width = "0%";
+  }
+
   function startScan() {
     state.scanning = true;
     state.components = null;
-    $("counter").textContent = "0 found";
+    state.skippedPages = [];
+    resetCounter();
+    show($("skipped"), false);
     show($("loading"), true);
     show($("list"), false);
     show($("empty"), false);
@@ -331,13 +391,27 @@
     refresh();
   }
 
-  function onScanProgress(count) {
-    $("counter").textContent = count + " found";
+  function onScanProgress(msg) {
+    setCounterTarget(msg.count || 0);
+    if (msg.pageName) {
+      $("scan-page").textContent = "Scanning page " + msg.pageName + " · " + (msg.scanned || 0) + " of " + (msg.total || 0) + " nodes";
+    }
+    if (msg.total) {
+      $("scan-bar").style.width = Math.min(100, Math.round(100 * (msg.scanned || 0) / msg.total)) + "%";
+    }
   }
 
-  function onScanDone(components) {
+  function onScanDone(components, skippedPages, savedMappings) {
     state.scanning = false;
     state.components = components;
+    state.skippedPages = skippedPages || [];
+    if (counter.timer) { clearInterval(counter.timer); counter.timer = null; }
+    // Restore saved mappings that still point at an existing component.
+    var ids = {};
+    components.forEach(function (c) { ids[c.id] = true; });
+    (savedMappings || []).forEach(function (m) {
+      if (m && m.jsonName && ids[m.componentId]) state.mappings[normalizeName(m.jsonName)] = m.componentId;
+    });
     show($("loading"), false);
     show($("rescan-link"), true);
 
@@ -368,8 +442,18 @@
     }
 
     renderDuplicates(components);
+    renderSkipped();
     renderSummary();
     refresh();
+  }
+
+  function renderSkipped() {
+    var box = $("skipped");
+    if (!state.skippedPages.length) { show(box, false); return; }
+    box.innerHTML = "";
+    box.appendChild(document.createTextNode("Skipped pages: "));
+    box.appendChild(el("span", "", state.skippedPages.map(function (p) { return p.trim(); }).join(", ")));
+    show(box, true);
   }
 
   function renderDuplicates(components) {
@@ -402,7 +486,7 @@
   // ---------------------------------------------------------------------
   // Step 2: files
   // ---------------------------------------------------------------------
-  function validateFile(text, expectedPlatform) {
+  function validateFile(text, expectedBrand) {
     var data;
     try {
       data = JSON.parse(text);
@@ -410,22 +494,22 @@
       return { error: "Not valid JSON." };
     }
     if (!isObject(data)) return { error: "The top level must be an object." };
-    if (data.platform !== "ios" && data.platform !== "android") {
-      return { error: '"platform" must be "ios" or "android".' };
+    if (data.brand !== "coba" && data.brand !== "purple") {
+      return { error: '"brand" must be "coba" or "purple".' };
     }
-    if (data.platform !== expectedPlatform) {
-      return { error: "This file is for " + PLATFORM_LABEL[data.platform] + ". Drop it in the " + PLATFORM_LABEL[data.platform] + " zone." };
+    if (data.brand !== expectedBrand) {
+      return { error: "This file is for " + BRAND_LABEL[data.brand] + ". Drop it in the " + BRAND_LABEL[data.brand] + " zone." };
     }
-    if (!isObject(data.brands)) return { error: '"brands" must be an object.' };
-    for (var i = 0; i < BRANDS.length; i++) {
-      var brand = BRANDS[i];
-      var map = data.brands[brand];
-      if (!isObject(map)) return { error: '"brands.' + brand + '" must be an object.' };
+    if (!isObject(data.platforms)) return { error: '"platforms" must be an object.' };
+    for (var i = 0; i < PLATFORMS.length; i++) {
+      var platform = PLATFORMS[i];
+      var map = data.platforms[platform];
+      if (!isObject(map)) return { error: '"platforms.' + platform + '" must be an object.' };
       var keys = Object.keys(map);
       for (var j = 0; j < keys.length; j++) {
         var value = map[keys[j]];
         if (value !== null && typeof value !== "string") {
-          return { error: '"brands.' + brand + '.' + keys[j] + '" must be a version string or null.' };
+          return { error: '"platforms.' + platform + '.' + keys[j] + '" must be a version string or null.' };
         }
       }
     }
@@ -433,7 +517,7 @@
   }
 
   function setupDrop(zone) {
-    var platform = zone.getAttribute("data-platform");
+    var platform = zone.getAttribute("data-brand");
     var input = zone.querySelector("input");
     var hint = zone.querySelector(".hint");
     var fileRow = zone.querySelector(".file");
@@ -507,35 +591,70 @@
     });
   }
 
-  setupDrop($("drop-ios"));
-  setupDrop($("drop-android"));
+  setupDrop($("drop-coba"));
+  setupDrop($("drop-purple"));
 
   // Block the default browser behaviour for drops outside a zone.
   document.addEventListener("dragover", function (e) { e.preventDefault(); });
   document.addEventListener("drop", function (e) { e.preventDefault(); });
 
-  function renderSummary() {
-    var box = $("summary");
-    var ios = state.files.ios, android = state.files.android;
-    if (!ios || !android || !state.components) { show(box, false); return; }
-
-    var library = {};
-    state.components.forEach(function (c) { library[normalizeName(c.name)] = true; });
-
-    // Every JSON name, with where it appears.
+  /** Every JSON name across both files, keyed by normalised name, with where it appears. */
+  function collectJsonNames() {
     var jsonNames = {};
-    [["iOS", ios.data], ["Android", android.data]].forEach(function (pair) {
-      BRANDS.forEach(function (brand) {
-        Object.keys(pair[1].brands[brand]).forEach(function (name) {
+    BRANDS.forEach(function (brand) {
+      var file = state.files[brand];
+      if (!file) return;
+      PLATFORMS.forEach(function (platform) {
+        Object.keys(file.data.platforms[platform]).forEach(function (name) {
           var key = normalizeName(name);
           if (!jsonNames[key]) jsonNames[key] = { name: name.trim(), where: [] };
-          jsonNames[key].where.push(pair[0] + " · " + brand);
+          jsonNames[key].where.push(BRAND_LABEL[brand] + " · " + PLATFORM_LABEL[platform]);
         });
       });
     });
+    return jsonNames;
+  }
 
-    var matched = state.components.filter(function (c) { return !!jsonNames[normalizeName(c.name)]; }).length;
+  /** Pre-select a library component whose name differs only by spacing or punctuation. */
+  function suggestComponent(jsonName, byLoose) {
+    var list = byLoose[looseName(jsonName)];
+    return list && list.length === 1 ? list[0] : null;
+  }
+
+  function renderSummary() {
+    var box = $("summary");
+    if (!state.files.coba || !state.files.purple || !state.components) { show(box, false); return; }
+
+    var library = {};
+    var byLoose = {};
+    state.components.forEach(function (c) {
+      library[normalizeName(c.name)] = true;
+      var loose = looseName(c.name);
+      (byLoose[loose] = byLoose[loose] || []).push(c);
+    });
+
+    var jsonNames = collectJsonNames();
     var unmatched = Object.keys(jsonNames).filter(function (k) { return !library[k]; }).sort();
+
+    // Drop stale mappings, add suggestions for new unmatched names.
+    var unmatchedSet = {};
+    unmatched.forEach(function (k) { unmatchedSet[k] = true; });
+    Object.keys(state.mappings).forEach(function (k) { if (!unmatchedSet[k]) delete state.mappings[k]; });
+    unmatched.forEach(function (k) {
+      if (!(k in state.mappings)) {
+        var s = suggestComponent(jsonNames[k].name, byLoose);
+        if (s) state.mappings[k] = s.id;
+      }
+    });
+
+    // A component counts as matched by its own name or by a manual mapping.
+    var mappedIds = {};
+    Object.keys(state.mappings).forEach(function (k) { if (state.mappings[k]) mappedIds[state.mappings[k]] = true; });
+    var matched = state.components.filter(function (c) {
+      return !!jsonNames[normalizeName(c.name)] || !!mappedIds[c.id];
+    }).length;
+    var mappedCount = Object.keys(state.mappings).filter(function (k) { return !!state.mappings[k]; }).length;
+    var ignoredCount = unmatched.length - mappedCount;
 
     box.innerHTML = "";
     var line = el("div");
@@ -545,19 +664,52 @@
 
     if (unmatched.length > 0) {
       var details = el("details");
-      details.appendChild(el("summary", "", unmatched.length + " JSON name" + (unmatched.length === 1 ? "" : "s") + " not found in the library"));
-      var ul = el("ul");
+      details.open = ignoredCount > 0;
+      details.appendChild(el("summary", "",
+        unmatched.length + " JSON name" + (unmatched.length === 1 ? "" : "s") + " not found in the library" +
+        (mappedCount ? " · " + mappedCount + " mapped" : "")));
+      var list = el("div", "map-list");
       unmatched.forEach(function (k) {
-        var li = el("li", "", jsonNames[k].name + " ");
-        li.appendChild(el("span", "where", "(" + jsonNames[k].where.join(", ") + ")"));
-        ul.appendChild(li);
+        var row = el("div", "map-row");
+        var jname = el("div", "jname");
+        jname.title = jsonNames[k].name;
+        jname.appendChild(document.createTextNode(jsonNames[k].name));
+        jname.appendChild(el("span", "where", jsonNames[k].where.join(", ")));
+        row.appendChild(jname);
+        row.appendChild(el("div", "arrow", "→"));
+
+        var select = el("select");
+        var none = el("option", "", "Ignore");
+        none.value = "";
+        select.appendChild(none);
+        state.components.forEach(function (c) {
+          var opt = el("option", "", c.name + (c.pageName ? "  (" + c.pageName.trim() + ")" : ""));
+          opt.value = c.id;
+          select.appendChild(opt);
+        });
+        select.value = state.mappings[k] || "";
+        select.classList.toggle("mapped", !!select.value);
+        select.addEventListener("change", function () {
+          state.mappings[k] = select.value || "";
+          renderSummary();
+        });
+        row.appendChild(select);
+        list.appendChild(row);
       });
-      details.appendChild(ul);
+      details.appendChild(list);
+      details.appendChild(el("p", "map-help", "Map a JSON name to the library component it belongs to. Ignored names are left out of the table. Mappings are saved in this file."));
       box.appendChild(details);
     } else {
       box.appendChild(el("div", "muted", "Every JSON name exists in the library."));
     }
     show(box, true);
+  }
+
+  function mappingsForPlugin() {
+    var jsonNames = collectJsonNames();
+    return Object.keys(state.mappings)
+      .filter(function (k) { return !!state.mappings[k] && !!jsonNames[k]; })
+      .map(function (k) { return { jsonName: jsonNames[k].name, componentId: state.mappings[k] }; });
   }
 
   // ---------------------------------------------------------------------
@@ -576,8 +728,9 @@
     postToPlugin({
       type: "generate",
       components: state.components,
-      ios: state.files.ios.data,
-      android: state.files.android.data
+      coba: state.files.coba.data,
+      purple: state.files.purple.data,
+      mappings: mappingsForPlugin()
     });
     refresh();
   });
@@ -602,7 +755,7 @@
   // ---------------------------------------------------------------------
   function refresh() {
     var step1Done = !!state.components && state.components.length > 0;
-    var step2Done = step1Done && !!state.files.ios && !!state.files.android;
+    var step2Done = step1Done && !!state.files.coba && !!state.files.purple;
 
     setStep($("step-1"), step1Done ? "done" : "active");
     setStep($("step-2"), !step1Done ? "" : (step2Done ? "done" : "active"));
@@ -629,10 +782,10 @@
     if (!msg || !msg.type) return;
     switch (msg.type) {
       case "scan-progress":
-        onScanProgress(msg.count);
+        onScanProgress(msg);
         break;
       case "scan-done":
-        onScanDone(msg.components || []);
+        onScanDone(msg.components || [], msg.skippedPages || [], msg.mappings || []);
         break;
       case "generate-progress":
         onGenerateProgress(msg.done, msg.total);
@@ -644,6 +797,7 @@
         showError(msg.message || "Something went wrong.");
         if (state.scanning) {
           state.scanning = false;
+          if (counter.timer) { clearInterval(counter.timer); counter.timer = null; }
           show($("loading"), false);
           show($("empty"), true);
           show($("rescan-link"), true);

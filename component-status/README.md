@@ -1,8 +1,8 @@
 # Component Status — Figma plugin
 
 Scans the components of the current Figma library file, takes one JSON file per
-platform (iOS and Android) with the versions implemented for the **COBA** and
-**Purple** brands, and generates a component status table on the canvas.
+brand (**COBA** and **Purple**) with the versions implemented on iOS and
+Android, and generates a component status table on the canvas.
 
 Plain TypeScript, no UI framework, no runtime dependencies, no network access.
 
@@ -36,7 +36,11 @@ as earlier ones complete.
 
 ### 1 · Components (automatic)
 
-On open the plugin loads every page and collects the library components:
+On open the plugin loads every page and collects the library components, with a
+live counter and the page currently being scanned. These pages are skipped
+(leading markers such as `▸` and extra spaces are ignored): **WIP**,
+**File template assets**, **Annotations**, **Text Resizing & Landscape** and
+**Local components**. The list lives in `SKIPPED_PAGES` in `src/code.ts`.
 
 - a **component set** counts once, by its set name (variants are ignored);
 - a plain **component** counts only if it is not inside a component set;
@@ -56,29 +60,32 @@ a warning.
 
 ### 2 · Upload
 
-Drop (or click to browse) one `.json` file per platform. Both brands live in
+Drop (or click to browse) one `.json` file per brand. Both platforms live in
 the same file:
 
 ```json
 {
-  "platform": "ios",
-  "brands": {
-    "coba":   { "Button": "v2.3.0", "Select": "v1.5.1", "Date Picker": null },
-    "purple": { "Button": "v2.1.0", "Select": "v1.5.0" }
+  "brand": "coba",
+  "platforms": {
+    "ios":     { "Button": "v2.3.0", "Select": "v1.5.1", "Date Picker": null },
+    "android": { "Button": "v2.3.0", "Select": "v1.4.0" }
   }
 }
 ```
 
-- `platform` must be `"ios"` or `"android"` and must match the drop zone.
-- `brands.coba` and `brands.purple` must be objects. Values are version strings
-  or `null`; `null` or a missing key means **Not Started**.
+- `brand` must be `"coba"` or `"purple"` and must match the drop zone.
+- `platforms.ios` and `platforms.android` must be objects. Values are version
+  strings or `null`; `null` or a missing key means **Not Started**.
 - Names are matched against library components case-insensitively, after
   trimming. A JSON name that matches several library components applies to all
   of them.
 
 Once both files are valid the step shows how many library components were
-matched and a collapsible list of JSON names that do not exist in the library
-(warnings only).
+matched and a list of JSON names that do not exist in the library. Each of
+those gets a **manual mapping** dropdown: pick the library component the JSON
+name belongs to, or leave it on *Ignore*. Names that differ only by spacing or
+punctuation (`DatePicker` vs `Date Picker`) are pre-selected. Mappings are
+saved on the Figma file, so they are restored the next time the plugin runs.
 
 Sample files live in [`samples/`](samples).
 
@@ -114,8 +121,8 @@ component-status/
 │   ├── code.ts        main thread: scanning, status logic, table builder
 │   └── ui.html        plugin UI with inline CSS/JS
 ├── samples/
-│   ├── ios.json
-│   └── android.json
+│   ├── coba.json
+│   └── purple.json
 └── dist/code.js       build output (generated, not committed)
 ```
 
@@ -123,5 +130,5 @@ component-status/
 
 | Direction | Message |
 | --- | --- |
-| main → UI | `scan-progress {count}`, `scan-done {components}`, `generate-progress {done, total}`, `generate-done {count}`, `error {message}` |
-| UI → main | `generate {components, ios, android}`, `rescan`, `close` |
+| main → UI | `scan-progress {count, scanned, total, pageName}`, `scan-done {components, skippedPages, mappings}`, `generate-progress {done, total}`, `generate-done {count}`, `error {message}` |
+| UI → main | `generate {components, coba, purple, mappings}`, `rescan`, `close` |
