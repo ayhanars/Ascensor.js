@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Component Status</title>
+<style>
+  :root {
+    --bg: #FAFAF9;
+    --bg-elev: #FFFFFF;
+    --bg-hover: #F1F1EE;
+    --text: #1C1C1A;
+    --text-muted: #6B6B66;
+    --text-faint: #8A8A84;
+    --border: #E6E6E1;
+    --border-light: #EFEFEA;
+    --accent: #1C1C1A;
+    --accent-text: #FFFFFF;
+    --success: #3F9558;
+    --warning: #C9932F;
+    --danger: #C0392B;
+    --radius: 8px;
+    --radius-sm: 6px;
+  }
+  html.figma-dark {
+    --bg: var(--figma-color-bg);
+    --bg-elev: var(--figma-color-bg-secondary);
+    --bg-hover: var(--figma-color-bg-hover);
+    --text: var(--figma-color-text);
+    --text-muted: var(--figma-color-text-secondary);
+    --text-faint: var(--figma-color-text-tertiary);
+    --border: var(--figma-color-border);
+    --border-light: var(--figma-color-border);
+    --accent: var(--figma-color-text);
+    --accent-text: var(--figma-color-bg);
+    --success: var(--figma-color-text-success);
+    --warning: var(--figma-color-text-warning);
+    --danger: var(--figma-color-text-danger);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: "IBM Plex Mono", "Roboto Mono", Menlo, Consolas, monospace; }
+  button { font: inherit; color: inherit; }
+
+  /* Step indicator ------------------------------------------------------ */
+  .steps {
+    position: sticky; top: 0; z-index: 2;
+    display: flex; gap: 8px;
+    padding: 12px 16px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .step {
+    flex: 1; display: flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 500; color: var(--text-faint);
+    white-space: nowrap;
+  }
+  .step .n {
+    width: 18px; height: 18px; border-radius: 50%; flex: none;
+    border: 1px solid var(--border);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 600;
+  }
+  .step.active { color: var(--text); }
+  .step.active .n { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .step.done { color: var(--text-muted); }
+  .step.done .n { border-color: var(--success); color: var(--success); }
+
+  /* Layout -------------------------------------------------------------- */
+  main { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  section {
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--bg-elev);
+    transition: opacity .15s;
+  }
+  section.disabled { opacity: .45; pointer-events: none; }
+  .sec-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 10px 12px; border-bottom: 1px solid var(--border-light);
+  }
+  .sec-title { font-weight: 600; font-size: 12px; display: flex; align-items: center; gap: 8px; }
+  .badge {
+    font-size: 11px; font-weight: 500; color: var(--text-muted);
+    background: var(--bg-hover); border-radius: 999px; padding: 1px 8px;
+  }
+  .sec-body { padding: 12px; }
+  .link {
+    background: none; border: none; padding: 0; cursor: pointer;
+    color: var(--text-muted); font-size: 11px; text-decoration: underline;
+  }
+  .link:hover { color: var(--text); }
+  .hidden { display: none !important; }
+  .muted { color: var(--text-faint); }
+
+  /* Banner -------------------------------------------------------------- */
+  .banner {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 10px 12px; border-radius: var(--radius-sm);
+    border: 1px solid var(--danger); color: var(--danger);
+    background: var(--bg-elev); font-size: 11px;
+  }
+  .banner .msg { flex: 1; word-break: break-word; }
+  .banner .close { background: none; border: none; cursor: pointer; color: inherit; padding: 0; font-size: 14px; line-height: 1; }
+
+  /* Step 1 -------------------------------------------------------------- */
+  .loading { display: flex; align-items: center; gap: 10px; color: var(--text-muted); padding: 6px 0; }
+  .spinner {
+    width: 16px; height: 16px; border-radius: 50%; flex: none;
+    border: 2px solid var(--border); border-top-color: var(--text);
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .counter { margin-left: auto; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+
+  .list {
+    max-height: 200px; overflow-y: auto;
+    border: 1px solid var(--border-light); border-radius: var(--radius-sm);
+  }
+  .item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-bottom: 1px solid var(--border-light);
+  }
+  .item:last-child { border-bottom: none; }
+  .item .name { font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .type { color: var(--text-faint); font-size: 11px; flex: none; width: 70px; }
+  .item .version { font-size: 11px; color: var(--text-muted); flex: none; width: 66px; text-align: right; }
+  .item .tag { width: 66px; text-align: center; }
+  .tag {
+    flex: none; font-size: 10px; font-weight: 500; line-height: 1.3;
+    color: var(--warning); border: 1px solid var(--warning);
+    border-radius: 4px; padding: 0 5px;
+  }
+
+  .empty { text-align: center; padding: 18px 8px; color: var(--text-muted); }
+  .empty p { margin: 0 0 10px; }
+
+  .warn {
+    margin-top: 10px; padding: 8px 10px; font-size: 11px;
+    border: 1px solid var(--warning); border-radius: var(--radius-sm);
+    color: var(--text);
+  }
+  .warn summary { cursor: pointer; color: var(--warning); font-weight: 500; }
+  .warn ul { margin: 6px 0 0; padding-left: 16px; }
+  .warn li { margin: 2px 0; }
+
+  /* Step 2 -------------------------------------------------------------- */
+  .drops { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .drop {
+    border: 1px dashed var(--border); border-radius: var(--radius);
+    padding: 14px 10px; text-align: center; cursor: pointer;
+    background: var(--bg);
+    transition: border-color .12s, background .12s;
+  }
+  .drop:hover, .drop.over { border-color: var(--text-muted); background: var(--bg-hover); }
+  .drop.ok { border-style: solid; border-color: var(--success); }
+  .drop.err { border-color: var(--danger); }
+  .drop .title { font-weight: 600; margin-bottom: 4px; }
+  .drop .hint { color: var(--text-faint); font-size: 11px; }
+  .drop .file {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    font-size: 11px; color: var(--text); margin-top: 2px; min-width: 0;
+  }
+  .drop .file .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 110px; }
+  .drop .file svg { flex: none; }
+  .drop .error { color: var(--danger); font-size: 11px; margin-top: 4px; word-break: break-word; }
+  .drop input { display: none; }
+
+  .summary { margin-top: 10px; font-size: 11px; color: var(--text-muted); }
+  .summary strong { color: var(--text); font-weight: 600; }
+  .summary details { margin-top: 6px; }
+  .summary summary { cursor: pointer; color: var(--warning); font-weight: 500; }
+  .summary ul { margin: 6px 0 0; padding-left: 16px; max-height: 120px; overflow-y: auto; }
+  .summary li { margin: 2px 0; color: var(--text); }
+  .summary li .where { color: var(--text-faint); }
+
+  /* Step 3 -------------------------------------------------------------- */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    height: 32px; padding: 0 14px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: var(--bg-elev);
+    cursor: pointer; font-weight: 500;
+  }
+  .btn:hover { background: var(--bg-hover); }
+  .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); width: 100%; }
+  .btn.primary:hover { opacity: .9; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn:disabled:hover { opacity: .45; background: var(--accent); }
+  .btn.secondary:disabled:hover { background: var(--bg-elev); }
+  .progress { margin-top: 8px; font-size: 11px; color: var(--text-muted); min-height: 16px; font-variant-numeric: tabular-nums; }
+  .note { margin-top: 8px; font-size: 11px; color: var(--text-faint); }
+</style>
+</head>
+<body>
+
+<nav class="steps">
+  <div class="step active" id="step-1"><span class="n">1</span> Components</div>
+  <div class="step" id="step-2"><span class="n">2</span> Upload</div>
+  <div class="step" id="step-3"><span class="n">3</span> Generate</div>
+</nav>
+
+<main>
+  <div class="banner hidden" id="banner">
+    <div class="msg" id="banner-msg"></div>
+    <button class="close" id="banner-close" title="Dismiss" aria-label="Dismiss">×</button>
+  </div>
+
+  <!-- Step 1 -->
+  <section id="sec-1">
+    <div class="sec-head">
+      <div class="sec-title">Components <span class="badge hidden" id="count-badge">0</span></div>
+      <button class="link hidden" id="rescan-link">Rescan</button>
+    </div>
+    <div class="sec-body">
+      <div class="loading" id="loading">
+        <div class="spinner"></div>
+        <span>Scanning components…</span>
+        <span class="counter" id="counter">0 found</span>
+      </div>
+      <div class="list hidden" id="list"></div>
+      <div class="empty hidden" id="empty">
+        <p>No components found in this file.</p>
+        <button class="btn secondary" id="rescan-btn">Rescan</button>
+      </div>
+      <details class="warn hidden" id="dupes">
+        <summary id="dupes-summary"></summary>
+        <ul id="dupes-list"></ul>
+      </details>
+    </div>
+  </section>
+
+  <!-- Step 2 -->
+  <section id="sec-2" class="disabled">
+    <div class="sec-head">
+      <div class="sec-title">Upload implementation files</div>
+    </div>
+    <div class="sec-body">
+      <div class="drops">
+        <div class="drop" id="drop-ios" data-platform="ios" tabindex="0" role="button">
+          <input type="file" accept=".json,application/json">
+          <div class="title">iOS file</div>
+          <div class="hint">Drop a .json file or click to browse</div>
+          <div class="file hidden"></div>
+          <div class="error hidden"></div>
+        </div>
+        <div class="drop" id="drop-android" data-platform="android" tabindex="0" role="button">
+          <input type="file" accept=".json,application/json">
+          <div class="title">Android file</div>
+          <div class="hint">Drop a .json file or click to browse</div>
+          <div class="file hidden"></div>
+          <div class="error hidden"></div>
+        </div>
+      </div>
+      <div class="summary hidden" id="summary"></div>
+    </div>
+  </section>
+
+  <!-- Step 3 -->
+  <section id="sec-3" class="disabled">
+    <div class="sec-head">
+      <div class="sec-title">Generate</div>
+    </div>
+    <div class="sec-body">
+      <button class="btn primary" id="generate" disabled>Generate table</button>
+      <div class="progress" id="progress"></div>
+      <div class="note">The table is placed on the current page. Regenerating replaces the previous table in place.</div>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------------------------------------------------------------------
+  // State
+  // ---------------------------------------------------------------------
+  var state = {
+    scanning: true,
+    components: null,   // LibraryComponent[] once scanned
+    files: { ios: null, android: null }, // { name, data } once valid
+    generating: false
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var PLATFORM_LABEL = { ios: "iOS", android: "Android" };
+  var BRANDS = ["coba", "purple"];
+
+  function normalizeName(name) { return String(name).trim().toLowerCase(); }
+  function isObject(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  function show(node, visible) { node.classList.toggle("hidden", !visible); }
+  function postToPlugin(msg) { parent.postMessage({ pluginMessage: msg }, "*"); }
+
+  // ---------------------------------------------------------------------
+  // Banner
+  // ---------------------------------------------------------------------
+  function showError(message) {
+    $("banner-msg").textContent = message;
+    show($("banner"), true);
+  }
+  $("banner-close").addEventListener("click", function () { show($("banner"), false); });
+
+  // ---------------------------------------------------------------------
+  // Step 1: components
+  // ---------------------------------------------------------------------
+  function startScan() {
+    state.scanning = true;
+    state.components = null;
+    $("counter").textContent = "0 found";
+    show($("loading"), true);
+    show($("list"), false);
+    show($("empty"), false);
+    show($("dupes"), false);
+    show($("count-badge"), false);
+    show($("rescan-link"), false);
+    show($("banner"), false);
+    postToPlugin({ type: "rescan" });
+    refresh();
+  }
+
+  function onScanProgress(count) {
+    $("counter").textContent = count + " found";
+  }
+
+  function onScanDone(components) {
+    state.scanning = false;
+    state.components = components;
+    show($("loading"), false);
+    show($("rescan-link"), true);
+
+    var badge = $("count-badge");
+    badge.textContent = String(components.length);
+    show(badge, true);
+
+    var list = $("list");
+    list.innerHTML = "";
+    if (components.length === 0) {
+      show($("list"), false);
+      show($("empty"), true);
+    } else {
+      show($("empty"), false);
+      show($("list"), true);
+      components.forEach(function (c) {
+        var item = el("div", "item");
+        item.title = c.pageName ? "Page: " + c.pageName : "";
+        item.appendChild(el("span", "name", c.name));
+        item.appendChild(el("span", "type", c.type));
+        if (c.version) {
+          item.appendChild(el("span", "version mono", c.version));
+        } else {
+          item.appendChild(el("span", "tag", "no version"));
+        }
+        list.appendChild(item);
+      });
+    }
+
+    renderDuplicates(components);
+    renderSummary();
+    refresh();
+  }
+
+  function renderDuplicates(components) {
+    var groups = {};
+    components.forEach(function (c) {
+      var key = normalizeName(c.name);
+      (groups[key] = groups[key] || []).push(c);
+    });
+    var dupes = Object.keys(groups).filter(function (k) { return groups[k].length > 1; });
+    var box = $("dupes");
+    if (dupes.length === 0) { show(box, false); return; }
+    $("dupes-summary").textContent = dupes.length + " duplicate component name" + (dupes.length === 1 ? "" : "s") +
+      " — JSON values apply to every match";
+    var ul = $("dupes-list");
+    ul.innerHTML = "";
+    dupes.sort().forEach(function (k) {
+      var items = groups[k];
+      var pages = items.map(function (c) { return c.pageName || "unknown page"; }).join(", ");
+      var li = el("li");
+      li.appendChild(el("strong", "", items[0].name));
+      li.appendChild(document.createTextNode(" × " + items.length + " (" + pages + ")"));
+      ul.appendChild(li);
+    });
+    show(box, true);
+  }
+
+  $("rescan-link").addEventListener("click", startScan);
+  $("rescan-btn").addEventListener("click", startScan);
+
+  // ---------------------------------------------------------------------
+  // Step 2: files
+  // ---------------------------------------------------------------------
+  function validateFile(text, expectedPlatform) {
+    var data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      return { error: "Not valid JSON." };
+    }
+    if (!isObject(data)) return { error: "The top level must be an object." };
+    if (data.platform !== "ios" && data.platform !== "android") {
+      return { error: '"platform" must be "ios" or "android".' };
+    }
+    if (data.platform !== expectedPlatform) {
+      return { error: "This file is for " + PLATFORM_LABEL[data.platform] + ". Drop it in the " + PLATFORM_LABEL[data.platform] + " zone." };
+    }
+    if (!isObject(data.brands)) return { error: '"brands" must be an object.' };
+    for (var i = 0; i < BRANDS.length; i++) {
+      var brand = BRANDS[i];
+      var map = data.brands[brand];
+      if (!isObject(map)) return { error: '"brands.' + brand + '" must be an object.' };
+      var keys = Object.keys(map);
+      for (var j = 0; j < keys.length; j++) {
+        var value = map[keys[j]];
+        if (value !== null && typeof value !== "string") {
+          return { error: '"brands.' + brand + '.' + keys[j] + '" must be a version string or null.' };
+        }
+      }
+    }
+    return { data: data };
+  }
+
+  function setupDrop(zone) {
+    var platform = zone.getAttribute("data-platform");
+    var input = zone.querySelector("input");
+    var hint = zone.querySelector(".hint");
+    var fileRow = zone.querySelector(".file");
+    var errorRow = zone.querySelector(".error");
+
+    function setError(message) {
+      zone.classList.remove("ok");
+      zone.classList.add("err");
+      state.files[platform] = null;
+      errorRow.textContent = message;
+      show(errorRow, true);
+      show(fileRow, false);
+      show(hint, true);
+      renderSummary();
+      refresh();
+    }
+
+    function setValid(name, data) {
+      zone.classList.remove("err");
+      zone.classList.add("ok");
+      state.files[platform] = { name: name, data: data };
+      show(errorRow, false);
+      show(hint, false);
+      fileRow.innerHTML = "";
+      fileRow.insertAdjacentHTML("afterbegin",
+        '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
+        '<circle cx="8" cy="8" r="7" stroke="#3F9558" stroke-width="1.5"/>' +
+        '<path d="M4.5 8.2l2.3 2.3 4.7-4.7" stroke="#3F9558" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>');
+      var fname = el("span", "fname", name);
+      fname.title = name;
+      fileRow.appendChild(fname);
+      var replace = el("button", "link", "Replace");
+      replace.addEventListener("click", function (e) { e.stopPropagation(); input.click(); });
+      fileRow.appendChild(replace);
+      show(fileRow, true);
+      renderSummary();
+      refresh();
+    }
+
+    function handleFile(file) {
+      if (!file) return;
+      if (!/\.json$/i.test(file.name) && file.type !== "application/json") {
+        setError("Only .json files are accepted.");
+        return;
+      }
+      var reader = new FileReader();
+      reader.onload = function () {
+        var result = validateFile(String(reader.result), platform);
+        if (result.error) setError(result.error);
+        else setValid(file.name, result.data);
+      };
+      reader.onerror = function () { setError("Could not read the file."); };
+      reader.readAsText(file);
+    }
+
+    zone.addEventListener("click", function () { input.click(); });
+    zone.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); }
+    });
+    input.addEventListener("change", function () {
+      handleFile(input.files && input.files[0]);
+      input.value = "";
+    });
+    zone.addEventListener("dragover", function (e) { e.preventDefault(); zone.classList.add("over"); });
+    zone.addEventListener("dragleave", function () { zone.classList.remove("over"); });
+    zone.addEventListener("drop", function (e) {
+      e.preventDefault();
+      zone.classList.remove("over");
+      var files = e.dataTransfer && e.dataTransfer.files;
+      handleFile(files && files[0]);
+    });
+  }
+
+  setupDrop($("drop-ios"));
+  setupDrop($("drop-android"));
+
+  // Block the default browser behaviour for drops outside a zone.
+  document.addEventListener("dragover", function (e) { e.preventDefault(); });
+  document.addEventListener("drop", function (e) { e.preventDefault(); });
+
+  function renderSummary() {
+    var box = $("summary");
+    var ios = state.files.ios, android = state.files.android;
+    if (!ios || !android || !state.components) { show(box, false); return; }
+
+    var library = {};
+    state.components.forEach(function (c) { library[normalizeName(c.name)] = true; });
+
+    // Every JSON name, with where it appears.
+    var jsonNames = {};
+    [["iOS", ios.data], ["Android", android.data]].forEach(function (pair) {
+      BRANDS.forEach(function (brand) {
+        Object.keys(pair[1].brands[brand]).forEach(function (name) {
+          var key = normalizeName(name);
+          if (!jsonNames[key]) jsonNames[key] = { name: name.trim(), where: [] };
+          jsonNames[key].where.push(pair[0] + " · " + brand);
+        });
+      });
+    });
+
+    var matched = state.components.filter(function (c) { return !!jsonNames[normalizeName(c.name)]; }).length;
+    var unmatched = Object.keys(jsonNames).filter(function (k) { return !library[k]; }).sort();
+
+    box.innerHTML = "";
+    var line = el("div");
+    line.appendChild(el("strong", "", String(matched)));
+    line.appendChild(document.createTextNode(" of " + state.components.length + " library components matched in the JSON files."));
+    box.appendChild(line);
+
+    if (unmatched.length > 0) {
+      var details = el("details");
+      details.appendChild(el("summary", "", unmatched.length + " JSON name" + (unmatched.length === 1 ? "" : "s") + " not found in the library"));
+      var ul = el("ul");
+      unmatched.forEach(function (k) {
+        var li = el("li", "", jsonNames[k].name + " ");
+        li.appendChild(el("span", "where", "(" + jsonNames[k].where.join(", ") + ")"));
+        ul.appendChild(li);
+      });
+      details.appendChild(ul);
+      box.appendChild(details);
+    } else {
+      box.appendChild(el("div", "muted", "Every JSON name exists in the library."));
+    }
+    show(box, true);
+  }
+
+  // ---------------------------------------------------------------------
+  // Step 3: generate
+  // ---------------------------------------------------------------------
+  var generateBtn = $("generate");
+  var doneTimer = null;
+
+  generateBtn.addEventListener("click", function () {
+    if (generateBtn.disabled) return;
+    if (doneTimer) { clearTimeout(doneTimer); doneTimer = null; }
+    state.generating = true;
+    generateBtn.textContent = "Generating…";
+    $("progress").textContent = "Preparing…";
+    show($("banner"), false);
+    postToPlugin({
+      type: "generate",
+      components: state.components,
+      ios: state.files.ios.data,
+      android: state.files.android.data
+    });
+    refresh();
+  });
+
+  function onGenerateProgress(done, total) {
+    $("progress").textContent = "Building row " + done + " / " + total;
+  }
+
+  function onGenerateDone(count) {
+    state.generating = false;
+    generateBtn.textContent = "Table generated ✓";
+    $("progress").textContent = count + " component" + (count === 1 ? "" : "s") + " in the table.";
+    refresh();
+    doneTimer = setTimeout(function () {
+      generateBtn.textContent = "Generate table";
+      doneTimer = null;
+    }, 3000);
+  }
+
+  // ---------------------------------------------------------------------
+  // Step state
+  // ---------------------------------------------------------------------
+  function refresh() {
+    var step1Done = !!state.components && state.components.length > 0;
+    var step2Done = step1Done && !!state.files.ios && !!state.files.android;
+
+    setStep($("step-1"), step1Done ? "done" : "active");
+    setStep($("step-2"), !step1Done ? "" : (step2Done ? "done" : "active"));
+    setStep($("step-3"), step2Done ? "active" : "");
+
+    $("sec-2").classList.toggle("disabled", !step1Done);
+    $("sec-3").classList.toggle("disabled", !step2Done);
+    generateBtn.disabled = !step2Done || state.generating;
+    if (!state.generating && generateBtn.textContent === "Generating…") {
+      generateBtn.textContent = "Generate table";
+    }
+  }
+
+  function setStep(node, cls) {
+    node.classList.remove("active", "done");
+    if (cls) node.classList.add(cls);
+  }
+
+  // ---------------------------------------------------------------------
+  // Messages from the main thread
+  // ---------------------------------------------------------------------
+  window.onmessage = function (event) {
+    var msg = event.data && event.data.pluginMessage;
+    if (!msg || !msg.type) return;
+    switch (msg.type) {
+      case "scan-progress":
+        onScanProgress(msg.count);
+        break;
+      case "scan-done":
+        onScanDone(msg.components || []);
+        break;
+      case "generate-progress":
+        onGenerateProgress(msg.done, msg.total);
+        break;
+      case "generate-done":
+        onGenerateDone(msg.count);
+        break;
+      case "error":
+        showError(msg.message || "Something went wrong.");
+        if (state.scanning) {
+          state.scanning = false;
+          show($("loading"), false);
+          show($("empty"), true);
+          show($("rescan-link"), true);
+        }
+        if (state.generating) {
+          state.generating = false;
+          $("progress").textContent = "";
+        }
+        refresh();
+        break;
+    }
+  };
+
+  refresh();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "component-status-figma-plugin",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Figma plugin that scans the components of a library file and generates a component status table from iOS and Android implementation JSON files.",
+  "scripts": {
+    "build": "npm run typecheck && esbuild src/code.ts --bundle --target=es2017 --outfile=dist/code.js",
+    "watch": "esbuild src/code.ts --bundle --target=es2017 --outfile=dist/code.js --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.100.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  }
+}
