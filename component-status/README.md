@@ -123,6 +123,7 @@ the same file:
 ```json
 {
   "brand": "coba",
+  "updatedAt": "2026-10-03",
   "platforms": {
     "ios":     { "Button": "v2.3.0", "Select": "v1.5.1", "Date Picker": null },
     "android": { "Button": "v2.3.0", "Select": "v1.4.0" }
@@ -133,6 +134,11 @@ the same file:
 - `brand` must be `"coba"` or `"purple"` and must match the drop zone.
 - `platforms.ios` and `platforms.android` must be objects. Values are version
   strings or `null`; `null` or a missing key means **Not Started**.
+- `updatedAt` is optional: the date the file's data was last updated, as
+  `2026-10-03`, `03.10.2026` or a full ISO timestamp. It is shown in a caption
+  above the table ("COBA · updated 03.10.2026") together with the generation
+  date. Without it the plugin falls back to the file's modified date and says
+  so in the drop zone.
 - Names are matched against library components case-insensitively, after
   trimming. A JSON name that matches several library components applies to all
   of them.
@@ -188,4 +194,4 @@ component-status/
 | Direction | Message |
 | --- | --- |
 | main → UI | `init {token, remoteFiles}`, `scan-progress {count, scanned, total, pageName}`, `scan-done {components, skippedPages, mappings}`, `remote-done {key, fileName, components, skippedPages}`, `changelog {entries, rows, frames}`, `token-saved {hasToken}`, `generate-progress {done, total}`, `generate-done {count}`, `error {message}` |
-| UI → main | `generate {components, coba, purple, mappings, history}`, `rescan`, `changelog-from-selection`, `changelog-find-in-file`, `changelog-clear`, `remote-parse {key, fileName, componentSets, components}`, `save-token {token}`, `save-files {files}`, `close` |
+| UI → main | `generate {components, coba, purple, mappings, history, dates}`, `rescan`, `changelog-from-selection`, `changelog-find-in-file`, `changelog-clear`, `remote-parse {key, fileName, componentSets, components}`, `save-token {token}`, `save-files {files}`, `close` |

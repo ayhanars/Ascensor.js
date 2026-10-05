@@ -1,5 +1,6 @@
 {
   "brand": "purple",
+  "updatedAt": "2026-09-28",
   "platforms": {
     "ios": {
       "Button": "v2.1.0",

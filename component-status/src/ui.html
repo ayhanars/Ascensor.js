@@ -213,6 +213,8 @@
     font-size: 11px; color: var(--text); margin-top: 2px; min-width: 0;
   }
   .drop .file .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 110px; }
+  .drop .updated { font-size: 10px; color: var(--text-faint); margin-top: 4px; }
+  .drop .updated.warn { color: var(--warning); }
   .drop .file svg { flex: none; }
   .drop .error { color: var(--danger); font-size: 11px; margin-top: 4px; word-break: break-word; }
   .drop input { display: none; }
@@ -348,6 +350,7 @@
           <div class="title">COBA file</div>
           <div class="hint">Drop a .json file or click to browse</div>
           <div class="file hidden"></div>
+          <div class="updated hidden"></div>
           <div class="error hidden"></div>
         </div>
         <div class="drop" id="drop-purple" data-brand="purple" tabindex="0" role="button">
@@ -355,11 +358,12 @@
           <div class="title">Purple file</div>
           <div class="hint">Drop a .json file or click to browse</div>
           <div class="file hidden"></div>
+          <div class="updated hidden"></div>
           <div class="error hidden"></div>
         </div>
       </div>
       <div class="summary hidden" id="summary"></div>
-      <div class="note">Each brand file holds both platforms: <span class="mono">platforms.ios</span> and <span class="mono">platforms.android</span>.</div>
+      <div class="note">Each brand file holds both platforms: <span class="mono">platforms.ios</span> and <span class="mono">platforms.android</span>. An optional <span class="mono">updatedAt</span> date is shown above the table; without it the file's modified date is used.</div>
     </div>
   </section>
 
@@ -414,6 +418,21 @@
   var PLATFORMS = ["ios", "android"];
 
   function normalizeName(name) { return String(name).trim().toLowerCase(); }
+
+  function pad2(n) { return n < 10 ? "0" + n : String(n); }
+  function formatDate(d) { return pad2(d.getDate()) + "." + pad2(d.getMonth() + 1) + "." + d.getFullYear(); }
+  /** "2026-10-03", "2026-10-03T09:00:00Z", "03.10.2026", "03/10/2026" or a timestamp -> "03.10.2026"; null when unreadable. */
+  function parseDateInput(value) {
+    if (value === null || value === undefined || value === "") return null;
+    if (typeof value === "number") { var dn = new Date(value); return isNaN(dn.getTime()) ? null : formatDate(dn); }
+    var t = String(value).trim();
+    var m = /^(\d{1,2})[.\/](\d{1,2})[.\/](\d{4})$/.exec(t);
+    if (m) return pad2(+m[1]) + "." + pad2(+m[2]) + "." + m[3];
+    m = /^(\d{4})-(\d{2})-(\d{2})/.exec(t);
+    if (m) return m[3] + "." + m[2] + "." + m[1];
+    var d = new Date(t);
+    return isNaN(d.getTime()) ? null : formatDate(d);
+  }
   // Loose key used to suggest a mapping: "Date Picker" ~ "DatePicker" ~ "date-picker"
   function looseName(name) { return String(name).toLowerCase().replace(/[^a-z0-9]/g, ""); }
   function isObject(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
@@ -849,6 +868,9 @@
     if (data.brand !== expectedBrand) {
       return { error: "This file is for " + BRAND_LABEL[data.brand] + ". Drop it in the " + BRAND_LABEL[data.brand] + " zone." };
     }
+    if (data.updatedAt !== undefined && data.updatedAt !== null && parseDateInput(data.updatedAt) === null) {
+      return { error: '"updatedAt" must be a date such as "2026-10-03" or "03.10.2026".' };
+    }
     if (!isObject(data.platforms)) return { error: '"platforms" must be an object.' };
     for (var i = 0; i < PLATFORMS.length; i++) {
       var platform = PLATFORMS[i];
@@ -870,6 +892,7 @@
     var input = zone.querySelector("input");
     var hint = zone.querySelector(".hint");
     var fileRow = zone.querySelector(".file");
+    var updatedRow = zone.querySelector(".updated");
     var errorRow = zone.querySelector(".error");
 
     function setError(message) {
@@ -879,15 +902,21 @@
       errorRow.textContent = message;
       show(errorRow, true);
       show(fileRow, false);
+      show(updatedRow, false);
       show(hint, true);
       renderSummary();
       refresh();
     }
 
-    function setValid(name, data) {
+    function setValid(name, data, lastModified) {
       zone.classList.remove("err");
       zone.classList.add("ok");
-      state.files[platform] = { name: name, data: data };
+      var explicit = parseDateInput(data.updatedAt);
+      var fallback = parseDateInput(lastModified);
+      state.files[platform] = { name: name, data: data, updated: explicit || fallback || "", updatedSource: explicit ? "file" : (fallback ? "modified" : "none") };
+      updatedRow.className = "updated" + (explicit ? "" : " warn");
+      updatedRow.textContent = explicit ? "Updated " + explicit : (fallback ? "No updatedAt, using file date " + fallback : "No update date");
+      show(updatedRow, true);
       show(errorRow, false);
       show(hint, false);
       fileRow.innerHTML = "";
@@ -916,7 +945,7 @@
       reader.onload = function () {
         var result = validateFile(String(reader.result), platform);
         if (result.error) setError(result.error);
-        else setValid(file.name, result.data);
+        else setValid(file.name, result.data, file.lastModified);
       };
       reader.onerror = function () { setError("Could not read the file."); };
       reader.readAsText(file);
@@ -1094,6 +1123,11 @@
       history: {
         enabled: $("history-enabled").checked,
         limit: Math.max(0, parseInt($("history-limit").value, 10) || 0)
+      },
+      dates: {
+        coba: state.files.coba.updated || "",
+        purple: state.files.purple.updated || "",
+        generated: formatDate(new Date())
       }
     });
     refresh();

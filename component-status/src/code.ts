@@ -63,9 +63,18 @@ interface ApiComponent {
 /** Component name -> implemented version (null = not started). */
 type Versions = { [componentName: string]: string | null };
 
+/** Dates shown in the caption above the table, already formatted dd.mm.yyyy. */
+interface TableDates {
+  coba: string;
+  purple: string;
+  generated: string;
+}
+
 /** One file per brand, both platforms inside. */
 interface BrandFile {
   brand: "coba" | "purple";
+  /** Optional: when this file's data was last updated (any common date format). */
+  updatedAt?: string;
   platforms: {
     ios: Versions;
     android: Versions;
@@ -86,6 +95,7 @@ type UIMessage =
       purple: BrandFile;
       mappings?: Mapping[];
       history?: HistoryOptions;
+      dates?: TableDates;
     }
   | { type: "changelog-from-selection" }
   | { type: "changelog-find-in-file" }
@@ -375,6 +385,12 @@ async function loadToken(): Promise<string> {
 
 async function saveToken(token: string): Promise<void> {
   await figma.clientStorage.setAsync(TOKEN_KEY, token);
+}
+
+function todayString(): string {
+  const d = new Date();
+  const pad = (n: number) => (n < 10 ? "0" + n : String(n));
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
 }
 
 function compareByName(a: { name: string }, b: { name: string }): number {
@@ -1121,6 +1137,48 @@ function equalizeHeights(row: FrameNode, cells: FrameNode[]): void {
 }
 
 // ---------------------------------------------------------------------------
+// Table: caption with the update dates
+// ---------------------------------------------------------------------------
+
+function buildCaption(table: FrameNode, dates: TableDates, fonts: FontSet): void {
+  const caption = autoFrame("Caption", "HORIZONTAL");
+  table.appendChild(caption);
+  caption.paddingLeft = PAD_X;
+  caption.paddingRight = PAD_X;
+  caption.paddingTop = 14;
+  caption.paddingBottom = 14;
+  caption.itemSpacing = 28;
+  caption.counterAxisAlignItems = "CENTER";
+  caption.fills = solid(SUBROW_FILL);
+  setBorders(caption, COLOR.border, { bottom: true });
+  caption.layoutSizingHorizontal = "FIXED";
+  caption.resize(TABLE_WIDTH, caption.height);
+  caption.layoutSizingVertical = "HUG";
+
+  for (const brand of BRANDS) {
+    const date = dates[brand.key];
+    const pair = autoFrame(brand.label, "HORIZONTAL");
+    pair.itemSpacing = 6;
+    pair.counterAxisAlignItems = "CENTER";
+    caption.appendChild(pair);
+    pair.appendChild(makeText(brand.label, fonts.semibold, 13, COLOR.text));
+    pair.appendChild(
+      makeText(date ? `updated ${date}` : "update date unknown", fonts.regular, 13, date ? COLOR.muted : COLOR.faint)
+    );
+  }
+
+  const spacer = autoFrame("Spacer", "HORIZONTAL");
+  caption.appendChild(spacer);
+  spacer.layoutSizingHorizontal = "FILL";
+  spacer.layoutSizingVertical = "FIXED";
+  spacer.resize(spacer.width, 1);
+
+  if (dates.generated) {
+    caption.appendChild(makeText(`Table generated ${dates.generated}`, fonts.regular, 12, COLOR.faint));
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Table: header
 // ---------------------------------------------------------------------------
 
@@ -1355,7 +1413,8 @@ async function generateTable(
   coba: BrandFile,
   purple: BrandFile,
   mappings: Mapping[],
-  history: HistoryOptions
+  history: HistoryOptions,
+  dates: TableDates
 ): Promise<void> {
   const fonts = await loadFonts();
   const lookups = buildLookups(coba, purple);
@@ -1376,6 +1435,7 @@ async function generateTable(
   table.setPluginData("componentStatus", "table");
 
   try {
+    buildCaption(table, dates, fonts);
     buildHeader(table, fonts);
 
     const body = autoFrame("Rows", "VERTICAL");
@@ -1469,7 +1529,8 @@ figma.ui.onmessage = async (msg: UIMessage) => {
           msg.coba,
           msg.purple,
           msg.mappings || [],
-          msg.history || { enabled: false, limit: 0 }
+          msg.history || { enabled: false, limit: 0 },
+          msg.dates || { coba: "", purple: "", generated: todayString() }
         );
         break;
       case "close":

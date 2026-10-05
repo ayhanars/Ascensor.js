@@ -1,5 +1,6 @@
 {
   "brand": "coba",
+  "updatedAt": "2026-10-03",
   "platforms": {
     "ios": {
       "Button": "v2.3.0",
