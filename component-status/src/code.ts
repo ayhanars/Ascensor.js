@@ -102,6 +102,7 @@ type UIMessage =
   | { type: "changelog-clear" }
   | { type: "rescan" }
   | { type: "save-token"; token: string }
+  | { type: "save-mappings"; mappings: Mapping[] }
   | { type: "save-files"; files: RemoteFile[] }
   | {
       type: "remote-parse";
@@ -1450,7 +1451,6 @@ async function generateTable(
   const lookups = buildLookups(coba, purple);
   const aliases = buildAliases(mappings);
   const changelogIndex = buildChangelogIndex(changelogEntries);
-  saveMappings(mappings);
   const sorted = components.slice().sort(compareByName);
   const page = figma.currentPage;
   const existing = findExistingTable(page);
@@ -1533,6 +1533,9 @@ figma.ui.onmessage = async (msg: UIMessage) => {
       case "changelog-clear":
         saveChangelogSource(null);
         postChangelog([], 0, 0, "");
+        break;
+      case "save-mappings":
+        saveMappings(Array.isArray(msg.mappings) ? msg.mappings : []);
         break;
       case "save-token":
         await saveToken(msg.token || "");

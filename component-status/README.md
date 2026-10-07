@@ -152,8 +152,9 @@ name belongs to, or leave it on *Ignore*. A name that is 1:1 with a library
 name apart from spacing, punctuation or case is selected automatically. For
 the others, the closest library name is shown in amber with its similarity
 (character-bigram similarity, 70% or more) and a **Use** link; nothing is
-picked until you click it. Mappings are saved on the Figma file, so they are
-restored the next time the plugin runs. Change log names do not appear in this
+picked until you click it. Every decision, including an explicit *Ignore*, is
+saved on the Figma file the moment you make it and restored the next time the
+plugin runs with the same JSON names. Change log names do not appear in this
 list; it is only about the JSON files.
 
 **Download mapping CSV** exports every JSON name with the library component it
@@ -205,4 +206,4 @@ component-status/
 | Direction | Message |
 | --- | --- |
 | main → UI | `init {token, remoteFiles}`, `scan-progress {count, scanned, total, pageName}`, `scan-done {components, skippedPages, mappings}`, `remote-done {key, fileName, components, skippedPages}`, `changelog {entries, rows, frames}`, `token-saved {hasToken}`, `generate-progress {done, total}`, `generate-done {count}`, `error {message}` |
-| UI → main | `generate {components, coba, purple, mappings, history, dates}`, `rescan`, `changelog-from-selection`, `changelog-find-in-file`, `changelog-clear`, `remote-parse {key, fileName, componentSets, components}`, `save-token {token}`, `save-files {files}`, `close` |
+| UI → main | `generate {components, coba, purple, mappings, history, dates}`, `rescan`, `changelog-from-selection`, `changelog-find-in-file`, `changelog-clear`, `remote-parse {key, fileName, componentSets, components}`, `save-token {token}`, `save-files {files}`, `save-mappings {mappings}`, `close` |

@@ -575,9 +575,11 @@
     var ids = {};
     components.forEach(function (c) { ids[c.id] = true; });
     savedMappings.forEach(function (m) {
-      if (m && m.jsonName && ids[m.componentId] && !(normalizeName(m.jsonName) in state.mappings)) {
-        state.mappings[normalizeName(m.jsonName)] = m.componentId;
-      }
+      if (!m || !m.jsonName) return;
+      var key = normalizeName(m.jsonName);
+      if (key in state.mappings) return;
+      if (m.componentId === "" || m.componentId === null) state.mappings[key] = "";   // an explicit Ignore
+      else if (ids[m.componentId]) state.mappings[key] = m.componentId;
     });
 
     var badge = $("count-badge");
@@ -1031,6 +1033,7 @@
     return best ? { component: best.component, score: best.score, exact: false } : null;
   }
   var suggestions = {};
+  var mapUi = { open: null, scroll: 0 };   // user's open/closed state and scroll of the mapping list
 
   function renderSummary() {
     var box = $("summary");
@@ -1047,7 +1050,7 @@
     var jsonNames = collectJsonNames();
     var unmatched = Object.keys(jsonNames).filter(function (k) { return !library[k]; }).sort();
 
-    // Drop stale mappings, add suggestions for new unmatched names.
+    // Keep only decisions about names that are still unmatched; add 1:1 suggestions for new ones.
     var unmatchedSet = {};
     unmatched.forEach(function (k) { unmatchedSet[k] = true; });
     Object.keys(state.mappings).forEach(function (k) { if (!unmatchedSet[k]) delete state.mappings[k]; });
@@ -1071,6 +1074,12 @@
     var mappedCount = Object.keys(state.mappings).filter(function (k) { return !!state.mappings[k]; }).length;
     var ignoredCount = unmatched.length - mappedCount;
 
+    // Keep the list where the user left it when re-rendering after a change.
+    var prevList = box.querySelector(".map-list");
+    if (prevList) mapUi.scroll = prevList.scrollTop;
+    var prevDetails = box.querySelector("details");
+    if (prevDetails) mapUi.open = prevDetails.open;
+
     box.innerHTML = "";
     var line = el("div");
     line.appendChild(el("strong", "", String(matched)));
@@ -1079,7 +1088,8 @@
 
     if (unmatched.length > 0) {
       var details = el("details");
-      details.open = ignoredCount > 0;
+      details.open = mapUi.open === null ? ignoredCount > 0 : mapUi.open;
+      details.addEventListener("toggle", function () { mapUi.open = details.open; });
       details.appendChild(el("summary", "",
         unmatched.length + " JSON name" + (unmatched.length === 1 ? "" : "s") + " not found in the library" +
         (mappedCount ? " · " + mappedCount + " mapped" : "")));
@@ -1101,8 +1111,10 @@
           line.appendChild(document.createTextNode("Similar: " + sug.component.name + " (" + Math.round(sug.score * 100) + "%)"));
           var apply = el("button", "link", "Use");
           apply.title = "Map to " + sug.component.name;
-          apply.addEventListener("click", function () {
+          apply.addEventListener("click", function (e) {
+            e.preventDefault();
             state.mappings[k] = sug.component.id;
+            persistMappings();
             renderSummary();
           });
           line.appendChild(apply);
@@ -1122,6 +1134,7 @@
         select.classList.toggle("mapped", !!select.value);
         select.addEventListener("change", function () {
           state.mappings[k] = select.value || "";
+          persistMappings();
           renderSummary();
         });
         row.appendChild(select);
@@ -1130,6 +1143,7 @@
       details.appendChild(list);
       details.appendChild(el("p", "map-help", "Map a JSON name to the library component it belongs to. Only 1:1 matches (same name apart from spacing, punctuation or case) are selected for you. Similar names are shown in amber with a “Use” link; nothing is picked until you do. Ignored names are left out of the table. Mappings are saved in this file."));
       box.appendChild(details);
+      list.scrollTop = mapUi.scroll;   // only effective once the list is in the document
     } else {
       box.appendChild(el("div", "muted", "Every JSON name exists in the library."));
     }
@@ -1199,6 +1213,15 @@
     return Object.keys(state.mappings)
       .filter(function (k) { return !!state.mappings[k] && !!jsonNames[k]; })
       .map(function (k) { return { jsonName: jsonNames[k].name, componentId: state.mappings[k] }; });
+  }
+
+  /** Save every decision on the Figma file right away, "Ignore" included, so it is restored next time. */
+  function persistMappings() {
+    var jsonNames = collectJsonNames();
+    var all = Object.keys(state.mappings)
+      .filter(function (k) { return !!jsonNames[k]; })
+      .map(function (k) { return { jsonName: jsonNames[k].name, componentId: state.mappings[k] || "" }; });
+    postToPlugin({ type: "save-mappings", mappings: all });
   }
 
   // ---------------------------------------------------------------------
