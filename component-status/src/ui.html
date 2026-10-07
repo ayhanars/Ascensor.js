@@ -231,7 +231,8 @@
     padding: 5px 0; border-bottom: 1px solid var(--border-light);
   }
   .map-row:last-child { border-bottom: none; }
-  .map-row .jname { font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .map-row .jname { font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; }
+  .map-row .jname { white-space: normal; }
   .map-row .jname .where { display: block; font-weight: 400; font-size: 10px; color: var(--text-faint); }
   .map-row .arrow { color: var(--text-faint); text-align: center; }
   .map-row select {
@@ -435,6 +436,34 @@
   }
   // Loose key used to suggest a mapping: "Date Picker" ~ "DatePicker" ~ "date-picker"
   function looseName(name) { return String(name).toLowerCase().replace(/[^a-z0-9]/g, ""); }
+
+  // Similarity in 0..1: Sørensen–Dice on character bigrams of the loose names,
+  // which tolerates reordering, prefixes and small typos.
+  function bigrams(str) {
+    var out = {};
+    for (var i = 0; i < str.length - 1; i++) { var b = str.substr(i, 2); out[b] = (out[b] || 0) + 1; }
+    return out;
+  }
+  function similarity(a, b) {
+    var x = looseName(a), y = looseName(b);
+    if (!x || !y) return 0;
+    if (x === y) return 1;
+    if (x.length < 2 || y.length < 2) return 0;
+    var ba = bigrams(x), bb = bigrams(y), shared = 0, total = 0;
+    Object.keys(ba).forEach(function (k) { total += ba[k]; if (bb[k]) shared += Math.min(ba[k], bb[k]); });
+    Object.keys(bb).forEach(function (k) { total += bb[k]; });
+    return (2 * shared) / total;
+  }
+  var SUGGEST_THRESHOLD = 0.7;
+  /** Best library match for a JSON name: { component, score } or null. */
+  function bestMatch(jsonName, components) {
+    var best = null;
+    components.forEach(function (c) {
+      var score = similarity(jsonName, c.name);
+      if (!best || score > best.score) best = { component: c, score: score };
+    });
+    return best && best.score >= SUGGEST_THRESHOLD ? best : null;
+  }
   function isObject(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -674,9 +703,6 @@
       " · " + matched + " component name" + (matched === 1 ? "" : "s") + " matched" +
       (unmatched ? " · " + unmatched + " not in the library" : "") +
       (fromDescriptions ? " · " + fromDescriptions + " more from descriptions" : "") + "."));
-    if (unmatched) {
-      box.appendChild(el("div", "help", "Names not in the library can be mapped in step 2 once both brand files are loaded."));
-    }
     show($("clog-clear"), true);
   }
 
@@ -979,11 +1005,6 @@
   /** Every JSON name across both files, keyed by normalised name, with where it appears. */
   function collectJsonNames() {
     var jsonNames = {};
-    state.changelog.entries.forEach(function (e) {
-      var key = normalizeName(e.name);
-      if (!jsonNames[key]) jsonNames[key] = { name: e.name, where: [] };
-      if (jsonNames[key].where.indexOf("Change log") === -1) jsonNames[key].where.push("Change log");
-    });
     BRANDS.forEach(function (brand) {
       var file = state.files[brand];
       if (!file) return;
@@ -998,11 +1019,13 @@
     return jsonNames;
   }
 
-  /** Pre-select a library component whose name differs only by spacing or punctuation. */
+  /** Suggestions per unmatched JSON name: exact loose match first, else best similarity ≥ 70%. */
   function suggestComponent(jsonName, byLoose) {
     var list = byLoose[looseName(jsonName)];
-    return list && list.length === 1 ? list[0] : null;
+    if (list && list.length === 1) return { component: list[0], score: 1 };
+    return bestMatch(jsonName, state.components);
   }
+  var suggestions = {};
 
   function renderSummary() {
     var box = $("summary");
@@ -1024,10 +1047,8 @@
     unmatched.forEach(function (k) { unmatchedSet[k] = true; });
     Object.keys(state.mappings).forEach(function (k) { if (!unmatchedSet[k]) delete state.mappings[k]; });
     unmatched.forEach(function (k) {
-      if (!(k in state.mappings)) {
-        var s = suggestComponent(jsonNames[k].name, byLoose);
-        if (s) state.mappings[k] = s.id;
-      }
+      if (!(k in suggestions)) suggestions[k] = suggestComponent(jsonNames[k].name, byLoose);
+      if (!(k in state.mappings) && suggestions[k]) state.mappings[k] = suggestions[k].component.id;
     });
 
     // A component counts as matched by its own name or by a manual mapping.
@@ -1055,7 +1076,7 @@
       var details = el("details");
       details.open = ignoredCount > 0;
       details.appendChild(el("summary", "",
-        unmatched.length + " name" + (unmatched.length === 1 ? "" : "s") + " from the files or change log not found in the library" +
+        unmatched.length + " JSON name" + (unmatched.length === 1 ? "" : "s") + " not found in the library" +
         (mappedCount ? " · " + mappedCount + " mapped" : "")));
       var list = el("div", "map-list");
       unmatched.forEach(function (k) {
@@ -1068,6 +1089,11 @@
         row.appendChild(el("div", "arrow", "→"));
 
         var select = el("select");
+        var sug = suggestions[k];
+        if (sug) {
+          var hint = el("span", "where", "Suggested: " + sug.component.name + " (" + Math.round(sug.score * 100) + "%)");
+          jname.appendChild(hint);
+        }
         var none = el("option", "", "Ignore");
         none.value = "";
         select.appendChild(none);
@@ -1086,7 +1112,7 @@
         list.appendChild(row);
       });
       details.appendChild(list);
-      details.appendChild(el("p", "map-help", "Map a JSON name to the library component it belongs to. Ignored names are left out of the table. Mappings are saved in this file."));
+      details.appendChild(el("p", "map-help", "Map a JSON name to the library component it belongs to. Suggestions with at least 70% name similarity are pre-selected; check them. Ignored names are left out of the table. Mappings are saved in this file."));
       box.appendChild(details);
     } else {
       box.appendChild(el("div", "muted", "Every JSON name exists in the library."));

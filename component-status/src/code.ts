@@ -144,6 +144,13 @@ const SKIPPED_PAGES = [
   "Local components",
 ];
 
+/**
+ * Sections or frames whose components are ignored wherever they sit, in this
+ * file (any ancestor) and in linked files (the containing frame reported by
+ * the API). Matched like pages: emojis, markers and case are ignored.
+ */
+const SKIPPED_SECTIONS = ["Organisational"];
+
 const COLOR = {
   white: "#FFFFFF",
   text: "#1C1C1A",
@@ -337,6 +344,22 @@ function isSkippedPage(pageName: string): boolean {
   return SKIPPED_PAGE_KEYS.indexOf(normalizePageName(pageName)) !== -1;
 }
 
+const SKIPPED_SECTION_KEYS = SKIPPED_SECTIONS.map(normalizePageName);
+
+function isSkippedSection(name: string): boolean {
+  return SKIPPED_SECTION_KEYS.indexOf(normalizePageName(name)) !== -1;
+}
+
+/** True when any ancestor (section, frame, group) is in SKIPPED_SECTIONS. */
+function insideSkippedSection(node: SceneNode): boolean {
+  let p: BaseNode | null = node.parent;
+  while (p && p.type !== "PAGE" && p.type !== "DOCUMENT") {
+    if (isSkippedSection(p.name)) return true;
+    p = p.parent;
+  }
+  return false;
+}
+
 function loadSavedMappings(): Mapping[] {
   try {
     const raw = figma.root.getPluginData(MAPPINGS_KEY);
@@ -528,7 +551,12 @@ async function scanComponents(): Promise<void> {
       scanned++;
       const isVariant =
         node.type === "COMPONENT" && node.parent !== null && node.parent.type === "COMPONENT_SET";
-      if (!isVariant && !isHiddenName(node.name) && !isHiddenName(stripDecorations(node.name))) {
+      if (
+        !isVariant &&
+        !isHiddenName(node.name) &&
+        !isHiddenName(stripDecorations(node.name)) &&
+        !insideSkippedSection(node)
+      ) {
         components.push(describeComponent(node));
       }
       if (scanned % SCAN_PROGRESS_EVERY === 0 && components.length !== lastPosted) {
@@ -902,6 +930,8 @@ function parseRemote(
       return;
     }
     if (isHiddenName(item.name) || isHiddenName(stripDecorations(item.name))) return;
+    const frameName = (item.containing_frame && item.containing_frame.name) || "";
+    if (frameName && isSkippedSection(frameName)) return;
     if (seen[item.node_id]) return;
     seen[item.node_id] = true;
     out.push(describeRemote(item, file));
