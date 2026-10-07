@@ -245,7 +245,10 @@
   .map-row.suggested { background: rgba(201, 147, 47, 0.08); border-radius: var(--radius-sm); padding-left: 4px; padding-right: 4px; }
   .map-row .suggest { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--warning); margin-top: 2px; }
   .map-row .suggest .link { color: var(--warning); font-weight: 600; font-size: 10px; }
-  .summary-actions { display: flex; gap: 8px; margin-top: 10px; }
+  .summary-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+  .summary-actions input[type="file"] { display: none; }
+  .import-result { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+  .import-result.err { color: var(--danger); }
   .map-help { margin: 6px 0 0; color: var(--text-faint); font-size: 10px; }
 
   /* Step 3 -------------------------------------------------------------- */
@@ -1151,8 +1154,130 @@
     var csv = el("button", "btn small", "Download mapping CSV");
     csv.addEventListener("click", downloadMappingCsv);
     actions.appendChild(csv);
+    var importBtn = el("button", "btn small", "Import mapping CSV");
+    var importInput = el("input");
+    importInput.type = "file";
+    importInput.accept = ".csv,text/csv";
+    importBtn.addEventListener("click", function () { importInput.click(); });
+    importInput.addEventListener("change", function () {
+      var file = importInput.files && importInput.files[0];
+      importInput.value = "";
+      if (file) importMappingCsv(file);
+    });
+    actions.appendChild(importBtn);
+    actions.appendChild(importInput);
     box.appendChild(actions);
+    if (importResult) {
+      box.appendChild(el("div", "import-result" + (importResult.error ? " err" : ""), importResult.text));
+    }
     show(box, true);
+  }
+
+  // ---------------------------------------------------------------------
+  // Import a mapping CSV (the exported format, or any CSV with a JSON-name and a library-name column)
+  // ---------------------------------------------------------------------
+  var importResult = null;
+
+  function parseCsv(text) {
+    text = String(text).replace(/^\uFEFF/, "");
+    var firstLine = text.split(/\r?\n/)[0] || "";
+    var sep = (firstLine.split(";").length > firstLine.split(",").length) ? ";" : ",";
+    var rows = [], row = [], field = "", inQuotes = false;
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (text[i + 1] === '"') { field += '"'; i++; } else { inQuotes = false; }
+        } else field += ch;
+      } else if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === sep) {
+        row.push(field); field = "";
+      } else if (ch === "\n" || ch === "\r") {
+        if (ch === "\r" && text[i + 1] === "\n") i++;
+        row.push(field); field = "";
+        if (row.some(function (f) { return f.trim() !== ""; })) rows.push(row);
+        row = [];
+      } else field += ch;
+    }
+    row.push(field);
+    if (row.some(function (f) { return f.trim() !== ""; })) rows.push(row);
+    return rows;
+  }
+
+  function findColumn(header, patterns, fallback) {
+    for (var p = 0; p < patterns.length; p++) {
+      for (var i = 0; i < header.length; i++) {
+        if (patterns[p].test(header[i].trim())) return i;
+      }
+    }
+    return fallback;
+  }
+
+  function importMappingCsv(file) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        applyImportedCsv(String(reader.result));
+      } catch (e) {
+        importResult = { error: true, text: "Could not read the CSV: " + ((e && e.message) || e) };
+        renderSummary();
+      }
+    };
+    reader.onerror = function () { importResult = { error: true, text: "Could not read the file." }; renderSummary(); };
+    reader.readAsText(file);
+  }
+
+  function applyImportedCsv(text) {
+    var rows = parseCsv(text);
+    if (rows.length < 2) { importResult = { error: true, text: "The CSV has no data rows." }; renderSummary(); return; }
+    var header = rows[0];
+    var jsonCol = findColumn(header, [/^json\s*name$/i, /json/i], 0);
+    var libCol = findColumn(header, [/^library\s*component$/i, /library/i, /figma/i, /component/i], 1);
+    var matchCol = findColumn(header, [/^match$/i], -1);
+    if (jsonCol === libCol) libCol = jsonCol === 0 ? 1 : 0;
+
+    var jsonNames = collectJsonNames();
+    var library = {};
+    var byName = {};
+    (state.components || []).forEach(function (c) {
+      var k = normalizeName(c.name);
+      library[k] = true;
+      (byName[k] = byName[k] || []).push(c);
+    });
+
+    var applied = 0, ignored = 0, unknownLibrary = [], notInJson = 0, unchanged = 0;
+    for (var r = 1; r < rows.length; r++) {
+      var jsonName = (rows[r][jsonCol] || "").trim();
+      var libName = (rows[r][libCol] || "").trim();
+      var match = matchCol >= 0 ? (rows[r][matchCol] || "").trim().toLowerCase() : "";
+      if (!jsonName) continue;
+      var key = normalizeName(jsonName);
+      if (!jsonNames[key]) { notInJson++; continue; }
+      if (library[key]) { unchanged++; continue; }   // matches by its own name already
+      if (!libName || match === "ignored") {
+        state.mappings[key] = "";
+        ignored++;
+        continue;
+      }
+      var targets = byName[normalizeName(libName)];
+      if (!targets) {
+        // tolerate spacing/punctuation differences in the library column
+        var loose = looseName(libName);
+        targets = (state.components || []).filter(function (c) { return looseName(c.name) === loose; });
+      }
+      if (!targets || targets.length === 0) { unknownLibrary.push(libName); continue; }
+      state.mappings[key] = targets[0].id;
+      applied++;
+    }
+    persistMappings();
+    var parts = [applied + " mapped", ignored + " set to Ignore"];
+    if (unchanged) parts.push(unchanged + " already match by name");
+    if (notInJson) parts.push(notInJson + " not in the loaded JSON files");
+    var text = "Imported: " + parts.join(" · ") + ".";
+    if (unknownLibrary.length) text += " Library names not found: " + unknownLibrary.slice(0, 5).join(", ") + (unknownLibrary.length > 5 ? " +" + (unknownLibrary.length - 5) + " more" : "") + ".";
+    importResult = { error: applied === 0 && ignored === 0, text: text };
+    renderSummary();
   }
 
   // ---------------------------------------------------------------------

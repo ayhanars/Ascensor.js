@@ -162,6 +162,13 @@ resolves to, for the dev team to align names later. Columns: JSON name,
 Library component, Match (`exact`, `manual` or `ignored`), Type, Library
 version, Location (file / page) and Used in (brand · platform).
 
+**Import mapping CSV** reads such a file back (or any CSV with a "JSON name"
+and a "Library component" column, comma or semicolon separated) and applies it
+to the dropdowns: a library name maps the JSON name to that component, an
+empty one or `ignored` sets Ignore. Names already matching by themselves are
+left alone. The result line says what was applied and lists library names it
+could not find. Use it as a backup if the mappings saved on the file are lost.
+
 Sample files live in [`samples/`](samples).
 
 ### 3 · Generate
