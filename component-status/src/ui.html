@@ -241,7 +241,11 @@
     padding: 0 6px;
   }
   .map-row select.mapped { border-color: var(--success); }
-  .map-list { margin-top: 6px; max-height: 190px; overflow-y: auto; }
+  .map-list { margin-top: 6px; max-height: 220px; overflow-y: auto; }
+  .map-row.suggested { background: rgba(201, 147, 47, 0.08); border-radius: var(--radius-sm); padding-left: 4px; padding-right: 4px; }
+  .map-row .suggest { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--warning); margin-top: 2px; }
+  .map-row .suggest .link { color: var(--warning); font-weight: 600; font-size: 10px; }
+  .summary-actions { display: flex; gap: 8px; margin-top: 10px; }
   .map-help { margin: 6px 0 0; color: var(--text-faint); font-size: 10px; }
 
   /* Step 3 -------------------------------------------------------------- */
@@ -1019,11 +1023,12 @@
     return jsonNames;
   }
 
-  /** Suggestions per unmatched JSON name: exact loose match first, else best similarity ≥ 70%. */
+  /** Suggestion per unmatched JSON name: { component, score, exact }. Only exact (1:1 after cleaning) ones are applied automatically. */
   function suggestComponent(jsonName, byLoose) {
     var list = byLoose[looseName(jsonName)];
-    if (list && list.length === 1) return { component: list[0], score: 1 };
-    return bestMatch(jsonName, state.components);
+    if (list && list.length === 1) return { component: list[0], score: 1, exact: true };
+    var best = bestMatch(jsonName, state.components);
+    return best ? { component: best.component, score: best.score, exact: false } : null;
   }
   var suggestions = {};
 
@@ -1048,7 +1053,7 @@
     Object.keys(state.mappings).forEach(function (k) { if (!unmatchedSet[k]) delete state.mappings[k]; });
     unmatched.forEach(function (k) {
       if (!(k in suggestions)) suggestions[k] = suggestComponent(jsonNames[k].name, byLoose);
-      if (!(k in state.mappings) && suggestions[k]) state.mappings[k] = suggestions[k].component.id;
+      if (!(k in state.mappings) && suggestions[k] && suggestions[k].exact) state.mappings[k] = suggestions[k].component.id;
     });
 
     // A component counts as matched by its own name or by a manual mapping.
@@ -1090,9 +1095,20 @@
 
         var select = el("select");
         var sug = suggestions[k];
-        if (sug) {
-          var hint = el("span", "where", "Suggested: " + sug.component.name + " (" + Math.round(sug.score * 100) + "%)");
-          jname.appendChild(hint);
+        if (sug && !sug.exact && state.mappings[k] !== sug.component.id) {
+          row.classList.add("suggested");
+          var line = el("div", "suggest");
+          line.appendChild(document.createTextNode("Similar: " + sug.component.name + " (" + Math.round(sug.score * 100) + "%)"));
+          var apply = el("button", "link", "Use");
+          apply.title = "Map to " + sug.component.name;
+          apply.addEventListener("click", function () {
+            state.mappings[k] = sug.component.id;
+            renderSummary();
+          });
+          line.appendChild(apply);
+          jname.appendChild(line);
+        } else if (sug && sug.exact) {
+          jname.appendChild(el("span", "where", "1:1 match after cleaning"));
         }
         var none = el("option", "", "Ignore");
         none.value = "";
@@ -1112,12 +1128,70 @@
         list.appendChild(row);
       });
       details.appendChild(list);
-      details.appendChild(el("p", "map-help", "Map a JSON name to the library component it belongs to. Suggestions with at least 70% name similarity are pre-selected; check them. Ignored names are left out of the table. Mappings are saved in this file."));
+      details.appendChild(el("p", "map-help", "Map a JSON name to the library component it belongs to. Only 1:1 matches (same name apart from spacing, punctuation or case) are selected for you. Similar names are shown in amber with a “Use” link; nothing is picked until you do. Ignored names are left out of the table. Mappings are saved in this file."));
       box.appendChild(details);
     } else {
       box.appendChild(el("div", "muted", "Every JSON name exists in the library."));
     }
+    var actions = el("div", "summary-actions");
+    var csv = el("button", "btn small", "Download mapping CSV");
+    csv.addEventListener("click", downloadMappingCsv);
+    actions.appendChild(csv);
+    box.appendChild(actions);
     show(box, true);
+  }
+
+  // ---------------------------------------------------------------------
+  // Mapping CSV for the dev team: JSON name on the left, library name on the right
+  // ---------------------------------------------------------------------
+  function csvCell(value) {
+    var v = value === null || value === undefined ? "" : String(value);
+    return /[",\n\r;]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+  }
+
+  function buildMappingRows() {
+    var jsonNames = collectJsonNames();
+    var byName = {};
+    var byId = {};
+    (state.components || []).forEach(function (c) {
+      (byName[normalizeName(c.name)] = byName[normalizeName(c.name)] || []).push(c);
+      byId[c.id] = c;
+    });
+    return Object.keys(jsonNames).sort().map(function (k) {
+      var entry = jsonNames[k];
+      var exact = byName[k];
+      var mapped = state.mappings[k] ? byId[state.mappings[k]] : null;
+      var target = exact ? exact[0] : mapped;
+      var match = exact ? "exact" : (mapped ? "manual" : "ignored");
+      return {
+        jsonName: entry.name,
+        libraryName: target ? target.name : "",
+        match: match,
+        type: target ? target.type : "",
+        version: target ? (target.version || "") : "",
+        location: target ? (target.source || "This file") + (target.pageName ? " / " + target.pageName : "") : "",
+        usedIn: entry.where.join("; ")
+      };
+    });
+  }
+
+  function downloadMappingCsv() {
+    var rows = buildMappingRows();
+    var header = ["JSON name", "Library component", "Match", "Type", "Library version", "Location", "Used in"];
+    var lines = [header.join(",")].concat(rows.map(function (r) {
+      return [r.jsonName, r.libraryName, r.match, r.type, r.version, r.location, r.usedIn].map(csvCell).join(",");
+    }));
+    var content = "\uFEFF" + lines.join("\r\n") + "\r\n";
+    var blob = new Blob([content], { type: "text/csv;charset=utf-8" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    var d = new Date();
+    a.href = url;
+    a.download = "component-mapping-" + d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) + ".csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   }
 
   function mappingsForPlugin() {

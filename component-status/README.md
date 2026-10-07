@@ -148,12 +148,18 @@ the same file:
 Once both files are valid the step shows how many library components were
 matched and a list of JSON names that do not exist in the library. Each of
 those gets a **manual mapping** dropdown: pick the library component the JSON
-name belongs to, or leave it on *Ignore*. The closest library name is
-suggested and pre-selected when it is at least 70% similar (character-bigram
-similarity on the names with spacing, punctuation and case removed), with the
-percentage shown under the JSON name. Mappings are saved on the Figma file, so
-they are restored the next time the plugin runs. Change log names do not
-appear in this list; it is only about the JSON files.
+name belongs to, or leave it on *Ignore*. A name that is 1:1 with a library
+name apart from spacing, punctuation or case is selected automatically. For
+the others, the closest library name is shown in amber with its similarity
+(character-bigram similarity, 70% or more) and a **Use** link; nothing is
+picked until you click it. Mappings are saved on the Figma file, so they are
+restored the next time the plugin runs. Change log names do not appear in this
+list; it is only about the JSON files.
+
+**Download mapping CSV** exports every JSON name with the library component it
+resolves to, for the dev team to align names later. Columns: JSON name,
+Library component, Match (`exact`, `manual` or `ignored`), Type, Library
+version, Location (file / page) and Used in (brand · platform).
 
 Sample files live in [`samples/`](samples).
 
