@@ -203,24 +203,42 @@ its own.
 ## Component Status lookup
 
 The plugin has two tabs: **Inspector** (everything above) and
-**Settings**. Settings is where you set up a Figma access token and the
-Component Status source (file + page name) — see below for both. Once
-both are set, the Inspector tab cross-references every component it
-finds against the "Component Status" page in the CO/CO Design Library
-file, and shows that component's Implemented / Update available / Not
-Started status for the selected brand right inside its expanded detail.
+**Settings**, which holds only the Figma access token now (see below).
+The Inspector tab cross-references every component it finds against the
+Component Status table in the CO/CO Design Library file, and shows that
+component's Implemented / Update available / Not Started status for the
+selected brand right inside its expanded detail — no setup beyond the
+token is needed to see it.
+
+**Where the table lives is fixed in `code.js`, not something each
+person configures.** It's a file key and a stable container node id
+(`STATUS_FILE_KEY` / `STATUS_ROOT_NODE_ID` near the top of the file),
+set by whoever maintains this plugin — these aren't secrets, just a
+pointer, so there's nothing sensitive about having them in source. If
+that table ever moves to a different file or section, the maintainer
+updates those two constants and redistributes the plugin; nobody using
+it needs to find or paste in a file link or page name. The fetch reads
+everything under that container and recursively collects every
+`Row / ...` instance it finds, so it doesn't care about the exact
+internal frame structure around the rows — only that stable top-level
+container needs to stay put.
 
 **Brand dropdown.** Top of the Inspector tab, next to the language
-dropdown: **COBA** / **Purple**. Switching it re-renders the already
-expanded rows' Status block for that brand — no re-fetch needed, since
-both brands' data was already pulled in the same table read.
+dropdown, with a small ↻ refresh icon beside it: **COBA** / **Purple**.
+Switching brands re-renders the already-expanded rows' Status block —
+no re-fetch needed, since both brands' data comes back in the same
+table read.
 
 **When it loads.** The status table is fetched once per plugin session,
 automatically, the first time a screen is analyzed — not re-fetched on
-every screen switch or brand change. Use **"Refresh status now"** in
-Settings to force a fresh read (e.g. after the table's been updated, or
-after changing the file/page source). Saving a new source also clears
-the cache so the next load reflects the new location.
+every screen switch or brand change. Click the ↻ icon to force a fresh
+read (e.g. after the table's been updated).
+
+**Loading/error feedback shows in the Inspector tab itself** (a banner
+right under the Brand/Language row), not hidden in Settings where it'd
+go unnoticed — Settings is only visited once, for the token. A
+successful load shows no lingering banner; the status pills that then
+appear under each component are the confirmation.
 
 **How matching works.** Each row's **Component** cell text, matched
 case-insensitively against each component's base name (not the variant
@@ -240,7 +258,7 @@ guessed).
 **Why a token at all:** the Figma Plugin API can only read the file it's
 currently running in — it has no way to reach into a different file, by
 design (a sandboxing boundary, not a limitation of this plugin). Reading
-the Component Status page, which lives in a separate file, requires
+the Component Status table, which lives in a separate file, requires
 Figma's REST API instead, which needs a personal access token.
 
 **How it's stored:** entered once via the Settings tab, saved with
@@ -268,14 +286,6 @@ onboarding) made by whoever administers this plugin for your team, not
 something the plugin itself decides. Whatever the case, the mechanism
 here (settings field → `clientStorage`) is the same either way, and
 never involves committing the token to source.
-
-**Where the status table lives** is also set in the Settings tab, not
-hardcoded — a "Design library file link or key" field (paste the full
-figma.com URL or just the key) and a "Page name" field. The file field
-ships pre-filled with the CO/CO Design Library branch key already, so
-that part needs no typing; the page name still needs to be filled in
-once (whatever the actual page is called in that file — e.g. "Component
-Status"), since that hasn't been confirmed yet.
 
 **Token validation.** Rather than guessing whether a token will still
 work, the plugin actually tests it: every time the plugin opens (if a

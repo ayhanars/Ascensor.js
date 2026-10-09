@@ -263,6 +263,31 @@
     cursor: pointer;
   }
 
+  .status-refresh-icon-btn {
+    border: 1px solid var(--border);
+    background: var(--bg);
+    border-radius: 4px;
+    width: 22px;
+    height: 22px;
+    line-height: 1;
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--text-muted);
+    margin-left: 6px;
+    padding: 0;
+  }
+  .status-refresh-icon-btn:hover { background: var(--bg-subtle); color: var(--text); }
+
+  .status-table-banner {
+    padding: 7px 16px;
+    font-size: 11px;
+    line-height: 1.5;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .status-table-banner.loading { background: var(--bg-subtle); color: var(--text-muted); }
+  .status-table-banner.error { background: #fdeeec; color: #b3261e; }
+
   .toolbar {
     display: flex;
     justify-content: space-between;
@@ -610,12 +635,15 @@
     <option value="coba">COBA</option>
     <option value="purple">Purple</option>
   </select>
+  <button type="button" class="status-refresh-icon-btn" id="status-refresh-btn" title="Refresh component status">↻</button>
   <label for="language-select" style="margin-left:10px;">Content language</label>
   <select id="language-select">
     <option value="EN">EN</option>
     <option value="DE" selected>DE</option>
   </select>
 </div>
+
+<div class="status-table-banner" id="status-table-banner" style="display:none;"></div>
 
 <header>
   <div class="toolbar">
@@ -699,35 +727,6 @@
       <div class="token-check stale" id="token-stale-notice" style="display:none;"></div>
     </div>
 
-    <div class="settings-section">
-      <div class="settings-label">Component status source</div>
-      <p class="settings-help">
-        Which file and page the plugin reads the status table from. Not
-        hardcoded — if this ever moves to a different file, branch, or page
-        name, update it here rather than needing a new version of the plugin.
-      </p>
-
-      <div class="settings-field">
-        <label class="settings-field-label" for="status-file-input">Design library file link or key</label>
-        <input type="text" id="status-file-input" class="settings-text-input"
-          value="4eG2NdH7jFnPSllUCiSMrV"
-          placeholder="Paste the figma.com/design/... link, or just the file/branch key" />
-      </div>
-
-      <div class="settings-field">
-        <label class="settings-field-label" for="status-page-input">Page name</label>
-        <input type="text" id="status-page-input" class="settings-text-input"
-          placeholder="e.g. Component Status" />
-      </div>
-
-      <div class="token-actions">
-        <button type="button" class="token-save-btn" id="status-source-save-btn">Save</button>
-        <button type="button" class="token-clear-btn" id="status-refresh-btn">Refresh status now</button>
-        <span class="token-status unset" id="status-source-status">Not set</span>
-      </div>
-      <div class="token-check" id="status-fetch-check" style="display:none;"></div>
-    </div>
-
     <div class="settings-note">
       Stored only on this computer, inside Figma's own local storage for this plugin.
       It's never written into any file, never committed anywhere, and never leaves
@@ -756,7 +755,7 @@
   var brandSelect = document.getElementById('brand-select');
   var toastEl = document.getElementById('toast');
   var statusRefreshBtn = document.getElementById('status-refresh-btn');
-  var statusFetchCheckEl = document.getElementById('status-fetch-check');
+  var statusTableBannerEl = document.getElementById('status-table-banner');
 
   var tabBtnInspector = document.getElementById('tab-btn-inspector');
   var tabBtnSettings = document.getElementById('tab-btn-settings');
@@ -767,10 +766,6 @@
   var tokenSaveBtn = document.getElementById('token-save-btn');
   var tokenClearBtn = document.getElementById('token-clear-btn');
   var tokenStatusEl = document.getElementById('token-status');
-  var statusFileInput = document.getElementById('status-file-input');
-  var statusPageInput = document.getElementById('status-page-input');
-  var statusSourceSaveBtn = document.getElementById('status-source-save-btn');
-  var statusSourceStatusEl = document.getElementById('status-source-status');
   var tokenCheckEl = document.getElementById('token-check');
   var tokenStaleNoticeEl = document.getElementById('token-stale-notice');
   var topBannerEl = document.getElementById('top-banner');
@@ -829,28 +824,28 @@
   var statusLoadState = 'idle'; // idle | loading | error | loaded
   var statusLoadErrorText = '';
 
+  // Loading/error feedback for the status table lives in the Inspector tab
+  // itself (this banner), not tucked away in Settings — people are looking
+  // at the Inspector tab, not Settings, when this matters to them. A
+  // successful load shows no lingering banner; the status pills that then
+  // appear under each component are the confirmation.
   function renderStatusFetchCheck() {
-    if (statusLoadState === 'idle') {
-      statusFetchCheckEl.style.display = 'none';
-      return;
-    }
-    statusFetchCheckEl.style.display = 'block';
     if (statusLoadState === 'loading') {
-      statusFetchCheckEl.className = 'token-check checking';
-      statusFetchCheckEl.textContent = 'Loading component status…';
-    } else if (statusLoadState === 'loaded') {
-      statusFetchCheckEl.className = 'token-check ok';
-      statusFetchCheckEl.textContent = '✓ Status table loaded (' + Object.keys(statusByName).length + ' components).';
+      statusTableBannerEl.style.display = 'block';
+      statusTableBannerEl.className = 'status-table-banner loading';
+      statusTableBannerEl.textContent = 'Loading component status…';
+    } else if (statusLoadState === 'error') {
+      statusTableBannerEl.style.display = 'block';
+      statusTableBannerEl.className = 'status-table-banner error';
+      statusTableBannerEl.textContent = statusLoadErrorText;
     } else {
-      statusFetchCheckEl.className = 'token-check bad';
-      statusFetchCheckEl.textContent = '✗ ' + statusLoadErrorText;
+      statusTableBannerEl.style.display = 'none';
     }
   }
 
   function statusErrorMessage(reason, message) {
-    if (reason === 'missing-config') return 'Set up your token and the Component Status source in Settings first.';
-    if (reason === 'page-not-found') return 'Could not find a page with that name in the design library file — check the Page name in Settings.';
-    if (reason === 'page-fetch-failed') return 'Found the page but could not read its contents — try again.';
+    if (reason === 'missing-token') return 'Add a Figma access token in Settings to see component status.';
+    if (reason === 'section-not-found') return 'Could not find the Component Status section — it may have moved. Ask the plugin admin to check.';
     if (reason === 'fetch-failed') return 'Could not reach Figma (' + (message || 'network error') + ').';
     return 'Something went wrong loading the status table (' + (message || reason) + ').';
   }
@@ -914,38 +909,6 @@
   // Ask the plugin thread for whatever token is already stored, so the field
   // reflects the real saved state (not just "empty on open").
   parent.postMessage({ pluginMessage: { type: 'get-token' } }, '*');
-
-  // Accepts either a bare file/branch key or a full figma.com URL and pulls
-  // out just the key, the same resolution rule Figma's own tools use: a
-  // /design/:fileKey/branch/:branchKey/... URL identifies the branch by its
-  // own branchKey, not the parent file's key.
-  function extractFileKey(input) {
-    var value = (input || '').trim();
-    if (!value) return '';
-    var branchMatch = value.match(/\/branch\/([0-9a-zA-Z]{10,})/);
-    if (branchMatch) return branchMatch[1];
-    var designMatch = value.match(/\/design\/([0-9a-zA-Z]{10,})/);
-    if (designMatch) return designMatch[1];
-    return value; // assume they pasted a bare key already
-  }
-
-  function setStatusSourceStatus(hasSource) {
-    statusSourceStatusEl.textContent = hasSource ? 'Source saved' : 'Not set';
-    statusSourceStatusEl.className = 'token-status ' + (hasSource ? 'set' : 'unset');
-  }
-
-  statusSourceSaveBtn.addEventListener('click', function () {
-    var fileKey = extractFileKey(statusFileInput.value);
-    var pageName = statusPageInput.value.trim();
-    if (!fileKey || !pageName) {
-      showToast('Fill in both the file and the page name');
-      return;
-    }
-    statusFileInput.value = fileKey;
-    parent.postMessage({ pluginMessage: { type: 'save-status-source', fileKey: fileKey, pageName: pageName } }, '*');
-  });
-
-  parent.postMessage({ pluginMessage: { type: 'get-status-source' } }, '*');
 
   var lastComponents = [];
   var lastFilteredComponents = [];
@@ -1431,26 +1394,6 @@
         renderStaleNotice(lastTokenSavedAt, false);
         setTopBannerVisible(true, 'Your Figma token isn’t working — it may be expired or revoked.');
       }
-      return;
-    }
-
-    if (msg.type === 'status-source') {
-      // Only overwrite the file field if something was actually saved —
-      // otherwise keep the pre-filled default already in the markup.
-      if (msg.fileKey) statusFileInput.value = msg.fileKey;
-      if (msg.pageName) statusPageInput.value = msg.pageName;
-      setStatusSourceStatus(!!(msg.fileKey && msg.pageName));
-      return;
-    }
-
-    if (msg.type === 'status-source-saved') {
-      setStatusSourceStatus(true);
-      showToast('Source saved');
-      // Settings changed, so any cached table is for the old source — force
-      // a fresh lookup next time something needs it.
-      statusByName = null;
-      statusLoadState = 'idle';
-      renderStatusFetchCheck();
       return;
     }
 

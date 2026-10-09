@@ -306,17 +306,25 @@ figma.on('selectionchange', function () {
   analyzeSelection();
 });
 
-// The Figma access token (for reading the Component Status page from the
-// separate CO/CO Design Library file) lives only in this plugin's own
-// clientStorage — local to this machine, never written into any source
-// file, never part of what gets committed or shared as the plugin. The
-// target file/page for that status table is configurable the same way,
-// rather than hardcoded, since the branch key or page name can change
-// without needing a new version of the plugin.
+// The Figma access token lives only in this plugin's own clientStorage —
+// local to this machine, never written into any source file, never part
+// of what gets committed or shared as the plugin.
 var FIGMA_TOKEN_STORAGE_KEY = 'figmaAccessToken';
 var FIGMA_TOKEN_SAVED_AT_KEY = 'figmaTokenSavedAt';
-var STATUS_FILE_KEY_STORAGE_KEY = 'figmaStatusFileKey';
-var STATUS_PAGE_NAME_STORAGE_KEY = 'figmaStatusPageName';
+
+// Where the Component Status table lives. Unlike the token, this isn't a
+// secret — it's just a pointer — so it's fixed here by whoever maintains
+// this plugin rather than something every designer has to go find and
+// paste in. STATUS_ROOT_NODE_ID is the stable container the table lives
+// under (confirmed directly from the file owner as "always goes to the
+// page with the table"); the table's own row/frame ids inside it move
+// around as it's regenerated, which is exactly why this points at the
+// stable container and then recursively scans everything under it for
+// "Row / ..." instances, rather than depending on exact internal
+// structure. If this table ever moves to a different file/branch or
+// section, update these two constants and redistribute the plugin.
+var STATUS_FILE_KEY = '4eG2NdH7jFnPSllUCiSMrV';
+var STATUS_ROOT_NODE_ID = '9511:38471';
 
 // Validates a token against Figma's own API (GET /v1/me is the cheapest
 // authenticated call — it just returns the token owner's identity) rather
@@ -469,41 +477,22 @@ function collectRowNodes(node, out) {
 
 async function fetchComponentStatusTable() {
   var token = await figma.clientStorage.getAsync(FIGMA_TOKEN_STORAGE_KEY);
-  var fileKey = await figma.clientStorage.getAsync(STATUS_FILE_KEY_STORAGE_KEY);
-  var pageName = await figma.clientStorage.getAsync(STATUS_PAGE_NAME_STORAGE_KEY);
+  if (!token) return { error: 'missing-token' };
 
-  if (!token || !fileKey || !pageName) {
-    return { error: 'missing-config' };
-  }
-
-  var page;
+  var rootDoc;
   try {
-    // Resolve the page by name first — only the page is stable; the table's
-    // own node ids inside it move around, per how this table gets rebuilt.
-    var fileShallow = await figmaApiGet('/files/' + fileKey + '?depth=1', token);
-    var pages = (fileShallow.document && fileShallow.document.children) || [];
-    for (var i = 0; i < pages.length; i++) {
-      if (pages[i].name.trim().toLowerCase() === pageName.trim().toLowerCase()) {
-        page = pages[i];
-        break;
-      }
-    }
+    var deep = await figmaApiGet(
+      '/files/' + STATUS_FILE_KEY + '/nodes?ids=' + encodeURIComponent(STATUS_ROOT_NODE_ID),
+      token
+    );
+    rootDoc = deep.nodes && deep.nodes[STATUS_ROOT_NODE_ID] && deep.nodes[STATUS_ROOT_NODE_ID].document;
   } catch (e) {
     return { error: 'fetch-failed', message: e.message };
   }
-  if (!page) return { error: 'page-not-found' };
-
-  var pageDoc;
-  try {
-    var pageDeep = await figmaApiGet('/files/' + fileKey + '/nodes?ids=' + encodeURIComponent(page.id), token);
-    pageDoc = pageDeep.nodes && pageDeep.nodes[page.id] && pageDeep.nodes[page.id].document;
-  } catch (e) {
-    return { error: 'fetch-failed', message: e.message };
-  }
-  if (!pageDoc) return { error: 'page-fetch-failed' };
+  if (!rootDoc) return { error: 'section-not-found' };
 
   var rowNodes = [];
-  collectRowNodes(pageDoc, rowNodes);
+  collectRowNodes(rootDoc, rowNodes);
 
   var byName = {};
   rowNodes.forEach(function (rowNode) {
@@ -551,14 +540,6 @@ figma.ui.onmessage = async function (msg) {
     await figma.clientStorage.deleteAsync(FIGMA_TOKEN_STORAGE_KEY);
     await figma.clientStorage.deleteAsync(FIGMA_TOKEN_SAVED_AT_KEY);
     figma.ui.postMessage({ type: 'token-cleared' });
-  } else if (msg.type === 'get-status-source') {
-    var existingFileKey = await figma.clientStorage.getAsync(STATUS_FILE_KEY_STORAGE_KEY);
-    var existingPageName = await figma.clientStorage.getAsync(STATUS_PAGE_NAME_STORAGE_KEY);
-    figma.ui.postMessage({ type: 'status-source', fileKey: existingFileKey || null, pageName: existingPageName || null });
-  } else if (msg.type === 'save-status-source' && typeof msg.fileKey === 'string' && typeof msg.pageName === 'string') {
-    await figma.clientStorage.setAsync(STATUS_FILE_KEY_STORAGE_KEY, msg.fileKey.trim());
-    await figma.clientStorage.setAsync(STATUS_PAGE_NAME_STORAGE_KEY, msg.pageName.trim());
-    figma.ui.postMessage({ type: 'status-source-saved' });
   }
 };
 
