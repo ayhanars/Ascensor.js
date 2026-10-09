@@ -200,15 +200,42 @@ the component set's description — the plugin falls back to the set's
 description and documentation links when a specific variant has none of
 its own.
 
-## Component Status token (Settings tab)
+## Component Status lookup
 
-The plugin has two tabs now: **Inspector** (everything above) and
-**Settings**, where you set up a Figma access token. This is groundwork
-for an in-progress feature — cross-referencing each component against a
-"Component Status" page in a separate CO/CO Design Library file, so the
-plugin can show whether it's Implemented / Update available / Not
-Started for COBA and Purple. The Settings tab currently handles getting
-the token saved; the actual status lookup/fetch is being built next.
+The plugin has two tabs: **Inspector** (everything above) and
+**Settings**. Settings is where you set up a Figma access token and the
+Component Status source (file + page name) — see below for both. Once
+both are set, the Inspector tab cross-references every component it
+finds against the "Component Status" page in the CO/CO Design Library
+file, and shows that component's Implemented / Update available / Not
+Started status for the selected brand right inside its expanded detail.
+
+**Brand dropdown.** Top of the Inspector tab, next to the language
+dropdown: **COBA** / **Purple**. Switching it re-renders the already
+expanded rows' Status block for that brand — no re-fetch needed, since
+both brands' data was already pulled in the same table read.
+
+**When it loads.** The status table is fetched once per plugin session,
+automatically, the first time a screen is analyzed — not re-fetched on
+every screen switch or brand change. Use **"Refresh status now"** in
+Settings to force a fresh read (e.g. after the table's been updated, or
+after changing the file/page source). Saving a new source also clears
+the cache so the next load reflects the new location.
+
+**How matching works.** Each row's **Component** cell text, matched
+case-insensitively against each component's base name (not the variant
+name) — this is deliberately the same text the status table itself
+displays, not the Figma layer name of either side, since layer names can
+drift from what's actually shown. A component that isn't found in the
+table shows "No status entry found" rather than silently omitting
+anything.
+
+**What each row's Status block shows:** iOS and Android status pills for
+the selected brand (green = Implemented, amber = Update available with
+its "on vX.X.X" note, gray = Not Started), the library version from the
+table, and a "Go to Component ↗" link when the table row has one (read
+from the real Figma hyperlink on that row's "Go to Component" text, not
+guessed).
 
 **Why a token at all:** the Figma Plugin API can only read the file it's
 currently running in — it has no way to reach into a different file, by

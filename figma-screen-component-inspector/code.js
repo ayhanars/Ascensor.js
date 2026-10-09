@@ -353,8 +353,183 @@ async function sendTokenCheckResult(token) {
   });
 }
 
+// ---- Component Status table (cross-file lookup) ----
+//
+// Reads the "Component Status" page from the separate CO/CO Design
+// Library file via Figma's REST API, and parses it into a lookup keyed
+// by each row's Component-cell text. Row shape (confirmed against a real
+// row's layer tree):
+//
+//   Row / <name>                  (INSTANCE, name starts with "Row /")
+//     Component                     (group) -> two TEXT children: name, type/library
+//     Version                       (group) -> one TEXT child: version string
+//     COBA iOS / COBA Android /
+//     Purple iOS / Purple Android   (group, exact name) ->
+//         Status (group) -> two TEXT children: glyph, status label
+//         a sibling TEXT (not inside Status) -> "on vX.X.X", only when relevant
+//     Link                          (group) -> Go to Component (instance) -> TEXT with a real hyperlink
+
+async function figmaApiGet(path, token) {
+  var res = await fetch('https://api.figma.com/v1' + path, {
+    headers: { 'X-Figma-Token': token }
+  });
+  if (!res.ok) {
+    var err = new Error('Figma API returned HTTP ' + res.status);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+function findChildByName(node, name) {
+  if (!node || !node.children) return null;
+  for (var i = 0; i < node.children.length; i++) {
+    if (node.children[i].name === name) return node.children[i];
+  }
+  return null;
+}
+
+function nthTextChild(node, index) {
+  if (!node || !node.children) return '';
+  var texts = node.children.filter(function (c) { return c.type === 'TEXT'; });
+  return texts[index] ? (texts[index].characters || '') : '';
+}
+
+function parseBrandPlatformGroup(groupNode) {
+  if (!groupNode) return null;
+  var statusGroup = findChildByName(groupNode, 'Status');
+  var glyph = nthTextChild(statusGroup, 0);
+  var label = nthTextChild(statusGroup, 1).trim();
+
+  var note = '';
+  if (groupNode.children) {
+    for (var i = 0; i < groupNode.children.length; i++) {
+      var c = groupNode.children[i];
+      if (c !== statusGroup && c.type === 'TEXT') {
+        note = (c.characters || '').trim();
+        break;
+      }
+    }
+  }
+  return { glyph: glyph, label: label, note: note };
+}
+
+function parseRowNode(rowNode) {
+  var componentGroup = findChildByName(rowNode, 'Component');
+  var versionGroup = findChildByName(rowNode, 'Version');
+  var linkGroup = findChildByName(rowNode, 'Link');
+
+  var name = nthTextChild(componentGroup, 0).trim();
+  if (!name) return null;
+
+  var link = null;
+  if (linkGroup) {
+    var goToComponent = findChildByName(linkGroup, 'Go to Component');
+    var linkTexts = goToComponent && goToComponent.children ? goToComponent.children : [];
+    for (var i = 0; i < linkTexts.length; i++) {
+      var t = linkTexts[i];
+      if (t.type === 'TEXT' && t.style && t.style.hyperlink && t.style.hyperlink.url) {
+        link = t.style.hyperlink.url;
+        break;
+      }
+    }
+  }
+
+  return {
+    name: name,
+    typeLibrary: nthTextChild(componentGroup, 1).trim(),
+    version: nthTextChild(versionGroup, 0).trim(),
+    link: link,
+    brands: {
+      coba: {
+        ios: parseBrandPlatformGroup(findChildByName(rowNode, 'COBA iOS')),
+        android: parseBrandPlatformGroup(findChildByName(rowNode, 'COBA Android'))
+      },
+      purple: {
+        ios: parseBrandPlatformGroup(findChildByName(rowNode, 'Purple iOS')),
+        android: parseBrandPlatformGroup(findChildByName(rowNode, 'Purple Android'))
+      }
+    }
+  };
+}
+
+// Finds every "Row / ..." instance in the subtree without descending into
+// an already-matched row's own children (rows aren't nested in each other,
+// but this keeps the walk cheap either way).
+function collectRowNodes(node, out) {
+  if (!node) return;
+  if (node.type === 'INSTANCE' && typeof node.name === 'string' && node.name.indexOf('Row /') === 0) {
+    out.push(node);
+    return;
+  }
+  if (node.children) {
+    for (var i = 0; i < node.children.length; i++) collectRowNodes(node.children[i], out);
+  }
+}
+
+async function fetchComponentStatusTable() {
+  var token = await figma.clientStorage.getAsync(FIGMA_TOKEN_STORAGE_KEY);
+  var fileKey = await figma.clientStorage.getAsync(STATUS_FILE_KEY_STORAGE_KEY);
+  var pageName = await figma.clientStorage.getAsync(STATUS_PAGE_NAME_STORAGE_KEY);
+
+  if (!token || !fileKey || !pageName) {
+    return { error: 'missing-config' };
+  }
+
+  var page;
+  try {
+    // Resolve the page by name first — only the page is stable; the table's
+    // own node ids inside it move around, per how this table gets rebuilt.
+    var fileShallow = await figmaApiGet('/files/' + fileKey + '?depth=1', token);
+    var pages = (fileShallow.document && fileShallow.document.children) || [];
+    for (var i = 0; i < pages.length; i++) {
+      if (pages[i].name.trim().toLowerCase() === pageName.trim().toLowerCase()) {
+        page = pages[i];
+        break;
+      }
+    }
+  } catch (e) {
+    return { error: 'fetch-failed', message: e.message };
+  }
+  if (!page) return { error: 'page-not-found' };
+
+  var pageDoc;
+  try {
+    var pageDeep = await figmaApiGet('/files/' + fileKey + '/nodes?ids=' + encodeURIComponent(page.id), token);
+    pageDoc = pageDeep.nodes && pageDeep.nodes[page.id] && pageDeep.nodes[page.id].document;
+  } catch (e) {
+    return { error: 'fetch-failed', message: e.message };
+  }
+  if (!pageDoc) return { error: 'page-fetch-failed' };
+
+  var rowNodes = [];
+  collectRowNodes(pageDoc, rowNodes);
+
+  var byName = {};
+  rowNodes.forEach(function (rowNode) {
+    var parsed = parseRowNode(rowNode);
+    if (parsed) byName[parsed.name.toLowerCase()] = parsed;
+  });
+
+  return { byName: byName, count: rowNodes.length };
+}
+
 figma.ui.onmessage = async function (msg) {
   if (!msg) return;
+
+  if (msg.type === 'fetch-status-table') {
+    try {
+      var tableResult = await fetchComponentStatusTable();
+      if (tableResult.error) {
+        figma.ui.postMessage({ type: 'status-table-error', reason: tableResult.error, message: tableResult.message });
+      } else {
+        figma.ui.postMessage({ type: 'status-table-loaded', byName: tableResult.byName, count: tableResult.count });
+      }
+    } catch (e) {
+      figma.ui.postMessage({ type: 'status-table-error', reason: 'unexpected', message: e.message });
+    }
+    return;
+  }
 
   if (msg.type === 'refresh') {
     analyzeSelection();
