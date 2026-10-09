@@ -922,7 +922,9 @@
         (statusDebug.tableFrameFound ? ' (found by name).' : ' (named frame not found — scanned the page itself instead).'));
     }
     if (statusDebug.historyFramesFound != null) {
-      lines.push('History frames found: ' + statusDebug.historyFramesFound);
+      lines.push('History frames found: ' + statusDebug.historyFramesFound +
+        (statusDebug.rowsWithHistoryAttached != null ? ' (attached to ' + statusDebug.rowsWithHistoryAttached + ' row' +
+          (statusDebug.rowsWithHistoryAttached === 1 ? '' : 's') + ').' : '.'));
     }
     if (statusDebug.rows && statusDebug.rows.length) {
       lines.push('');
@@ -1315,8 +1317,10 @@
   //      trailing text the plain component name doesn't — matched against
   //      the shortest row name that the component's name is a clean
   //      prefix of.
-  function findStatusRow(compName) {
-    var key = normalizeName(compName);
+  // Runs the exact + both-direction prefix match (see findStatusRow) against
+  // a single already-normalized key.
+  function matchKeyAgainstStatusTable(key) {
+    if (!key) return null;
     if (statusByName[key]) return statusByName[key];
 
     var bestKey = null;
@@ -1338,6 +1342,27 @@
       }
     }
     return bestReverseKey ? statusByName[bestReverseKey] : null;
+  }
+
+  // Strips a leading run of non-alphanumeric characters — an emoji, a
+  // bullet, a status glyph — that some library components (atoms in
+  // particular) carry at the start of their own Figma name but the table's
+  // plain-text Component cell never has.
+  function stripLeadingDecoration(key) {
+    return key.replace(/^[^a-z0-9]+/i, '');
+  }
+
+  function findStatusRow(compName) {
+    var key = normalizeName(compName);
+    var row = matchKeyAgainstStatusTable(key);
+    if (row) return row;
+
+    var strippedKey = stripLeadingDecoration(key);
+    if (strippedKey && strippedKey !== key) {
+      row = matchKeyAgainstStatusTable(strippedKey);
+      if (row) return row;
+    }
+    return null;
   }
 
   // Looks up this row's status for the brand currently selected in the

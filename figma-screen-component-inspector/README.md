@@ -320,6 +320,12 @@ point (so "Bot" can never wrongly match "Bot_Agent Dialog"):
    component name doesn't. Prefers the shortest row name the component
    matches a prefix of.
 
+If both of those still fail, a leading run of non-alphanumeric
+characters is stripped from the component's name and the same two
+checks run again — some library components (atoms especially) carry a
+leading emoji or glyph in their own Figma name that the table's
+plain-text Component cell never has.
+
 A component that still isn't found shows "No status entry found" (with
 the loaded row count, so you know whether it's a genuine naming
 mismatch or nothing loaded at all) rather than silently omitting

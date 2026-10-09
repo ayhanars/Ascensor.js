@@ -650,12 +650,14 @@ async function fetchComponentStatusTable() {
 
   var byName = {};
   var debugRows = [];
+  var rowsWithHistory = 0;
   rowNodes.forEach(function (rowNode) {
     var parsed = parseRowNode(rowNode);
     debugRows.push({ layerName: rowNode.name, parsedName: parsed ? parsed.name : null });
     if (!parsed) return;
     var layerSuffix = rowNode.name.replace(/^row\s*\/\s*/i, '').trim();
     parsed.history = historyByKey[normalizeName(layerSuffix)] || historyByKey[normalizeName(parsed.name)] || [];
+    if (parsed.history.length) rowsWithHistory++;
     byName[normalizeName(parsed.name)] = parsed;
   });
 
@@ -669,6 +671,7 @@ async function fetchComponentStatusTable() {
     tableFrameName: tableRoot.name,
     tableFrameFound: tableRoot !== rootDoc,
     historyFramesFound: historyNodes.length,
+    rowsWithHistoryAttached: rowsWithHistory,
     rows: debugRows.slice(0, 300)
   };
   if (rowNodes.length === 0) {
