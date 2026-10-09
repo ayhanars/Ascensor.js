@@ -1411,8 +1411,16 @@
   // Matches the Component Status table's own history layout — a compact
   // 4-column grid (version / date / type / description) with one row per
   // changelog entry, rather than a stacked list.
+  // Always renders the "Version history" label — even with nothing under
+  // it — so the section has a fixed, findable position in the expanded
+  // detail instead of silently vanishing whenever a component has no
+  // history entries attached (which, before this, was indistinguishable
+  // from the feature not working at all).
   function buildHistoryHtml(history) {
-    if (!history || !history.length) return '';
+    var label = '<div class="detail-label" style="margin-top:10px;">Version history</div>';
+    if (!history || !history.length) {
+      return label + '<div class="detail-value muted">No version history found for this component.</div>';
+    }
     var headHtml = '<span class="history-head">Version</span><span class="history-head">Date</span>' +
       '<span class="history-head">Type</span><span class="history-head">Description</span>';
     var rows = history.map(function (h) {
@@ -1421,8 +1429,7 @@
         '<span class="history-type">' + escapeHtml(h.type || '') + '</span>' +
         '<span class="history-desc">' + escapeHtml(h.description || '') + '</span>';
     }).join('');
-    return '<div class="detail-label" style="margin-top:10px;">Version history</div>' +
-      '<div class="status-history">' + headHtml + rows + '</div>';
+    return label + '<div class="status-history">' + headHtml + rows + '</div>';
   }
 
   function buildCompactStatusChip(platformLabel, data) {
