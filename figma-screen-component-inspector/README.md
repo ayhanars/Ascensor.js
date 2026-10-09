@@ -250,6 +250,26 @@ that part needs no typing; the page name still needs to be filled in
 once (whatever the actual page is called in that file — e.g. "Component
 Status"), since that hasn't been confirmed yet.
 
+**Token validation.** Rather than guessing whether a token will still
+work, the plugin actually tests it: every time the plugin opens (if a
+token is already saved) and right after you click Save, it calls
+Figma's `GET /v1/me` — the cheapest authenticated endpoint, it just
+returns the token owner's identity — and shows the real result in
+Settings:
+- ✓ green — "Connected as `<handle>`."
+- ✗ red — "This token isn't working (invalid or expired)." — and a red
+  banner appears at the top of **both** tabs with a "Fix in Settings"
+  shortcut, so a broken token doesn't fail silently while you're using
+  the Inspector tab.
+
+There's also a softer, separate nudge: Figma tokens can be created with
+an expiration as short as 90 days, but the API gives no way to ask a
+token when it expires — so the plugin tracks when you *saved* it
+locally, and once a currently-still-working token is 80+ days old, shows
+an amber "this was added N days ago, consider generating a fresh one"
+note. That's a heuristic based on your own save date, not a confirmed
+expiry — the ✗ red check above is the actual, authoritative signal.
+
 ## Technical notes & known limitations (MVP)
 
 - **Component links.** Figma exposes two independent, unrelated link

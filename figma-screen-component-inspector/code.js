@@ -314,8 +314,44 @@ figma.on('selectionchange', function () {
 // rather than hardcoded, since the branch key or page name can change
 // without needing a new version of the plugin.
 var FIGMA_TOKEN_STORAGE_KEY = 'figmaAccessToken';
+var FIGMA_TOKEN_SAVED_AT_KEY = 'figmaTokenSavedAt';
 var STATUS_FILE_KEY_STORAGE_KEY = 'figmaStatusFileKey';
 var STATUS_PAGE_NAME_STORAGE_KEY = 'figmaStatusPageName';
+
+// Validates a token against Figma's own API (GET /v1/me is the cheapest
+// authenticated call — it just returns the token owner's identity) rather
+// than guessing from an expiration date we have no way to know: Figma
+// doesn't expose a token's own expiry to the token itself, so the only
+// reliable signal is "does an authenticated call actually succeed right now".
+async function checkFigmaToken(token) {
+  try {
+    var res = await fetch('https://api.figma.com/v1/me', {
+      headers: { 'X-Figma-Token': token }
+    });
+    if (!res.ok) {
+      var reason = (res.status === 401 || res.status === 403)
+        ? 'invalid or expired token'
+        : ('Figma API returned HTTP ' + res.status);
+      return { ok: false, message: reason };
+    }
+    var data = await res.json();
+    return { ok: true, handle: data.handle, email: data.email };
+  } catch (e) {
+    return { ok: false, message: 'could not reach Figma — check your connection' };
+  }
+}
+
+async function sendTokenCheckResult(token) {
+  figma.ui.postMessage({ type: 'token-check-result', state: 'checking' });
+  var result = await checkFigmaToken(token);
+  figma.ui.postMessage({
+    type: 'token-check-result',
+    state: result.ok ? 'ok' : 'bad',
+    handle: result.handle,
+    email: result.email,
+    message: result.message
+  });
+}
 
 figma.ui.onmessage = async function (msg) {
   if (!msg) return;
@@ -326,12 +362,19 @@ figma.ui.onmessage = async function (msg) {
     selectInstancesOnCanvas(msg.ids);
   } else if (msg.type === 'get-token') {
     var existingToken = await figma.clientStorage.getAsync(FIGMA_TOKEN_STORAGE_KEY);
-    figma.ui.postMessage({ type: 'token-status', token: existingToken || null });
+    var existingSavedAt = await figma.clientStorage.getAsync(FIGMA_TOKEN_SAVED_AT_KEY);
+    figma.ui.postMessage({ type: 'token-status', token: existingToken || null, savedAt: existingSavedAt || null });
+    if (existingToken) await sendTokenCheckResult(existingToken);
   } else if (msg.type === 'save-token' && typeof msg.token === 'string') {
-    await figma.clientStorage.setAsync(FIGMA_TOKEN_STORAGE_KEY, msg.token.trim());
-    figma.ui.postMessage({ type: 'token-saved' });
+    var trimmedToken = msg.token.trim();
+    var savedAtNow = Date.now();
+    await figma.clientStorage.setAsync(FIGMA_TOKEN_STORAGE_KEY, trimmedToken);
+    await figma.clientStorage.setAsync(FIGMA_TOKEN_SAVED_AT_KEY, savedAtNow);
+    figma.ui.postMessage({ type: 'token-saved', savedAt: savedAtNow });
+    await sendTokenCheckResult(trimmedToken);
   } else if (msg.type === 'clear-token') {
     await figma.clientStorage.deleteAsync(FIGMA_TOKEN_STORAGE_KEY);
+    await figma.clientStorage.deleteAsync(FIGMA_TOKEN_SAVED_AT_KEY);
     figma.ui.postMessage({ type: 'token-cleared' });
   } else if (msg.type === 'get-status-source') {
     var existingFileKey = await figma.clientStorage.getAsync(STATUS_FILE_KEY_STORAGE_KEY);

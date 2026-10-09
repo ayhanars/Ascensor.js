@@ -194,6 +194,44 @@
   }
   .token-status.set { color: #0f9d58; }
   .token-status.unset { color: var(--text-muted); }
+
+  .token-check {
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 9px 11px;
+    border-radius: 8px;
+    margin: 10px 0 0 0;
+  }
+  .token-check.checking { background: var(--bg-subtle); color: var(--text-muted); }
+  .token-check.ok { background: #eefbf3; color: #0f7a40; }
+  .token-check.bad { background: #fdeeec; color: #b3261e; }
+  .token-check.stale { background: #fff1e0; color: #b35c00; margin-top: 6px; }
+
+  .top-banner {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 14px;
+    background: #fdeeec;
+    color: #b3261e;
+    font-size: 12px;
+    border-bottom: 1px solid #f3c9c4;
+    flex-shrink: 0;
+  }
+  .top-banner.visible { display: flex; }
+  .top-banner button {
+    flex-shrink: 0;
+    border: 1px solid #b3261e;
+    background: transparent;
+    color: #b3261e;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 9px;
+    cursor: pointer;
+  }
+  .top-banner button:hover { background: rgba(179, 38, 30, 0.08); }
   .settings-note {
     font-size: 11px;
     line-height: 1.6;
@@ -533,6 +571,11 @@
   <button class="tab-btn" id="tab-btn-settings" type="button">Settings</button>
 </div>
 
+<div class="top-banner" id="top-banner">
+  <span id="top-banner-text">Your Figma token isn't working — it may be expired or revoked.</span>
+  <button type="button" id="top-banner-fix-btn">Fix in Settings</button>
+</div>
+
 <div class="tab-panel" id="tab-panel-inspector">
 
 <div class="lang-bar">
@@ -621,6 +664,8 @@
         <button type="button" class="token-clear-btn" id="token-clear-btn">Clear</button>
         <span class="token-status unset" id="token-status">No token set</span>
       </div>
+      <div class="token-check" id="token-check" style="display:none;"></div>
+      <div class="token-check stale" id="token-stale-notice" style="display:none;"></div>
     </div>
 
     <div class="settings-section">
@@ -690,6 +735,54 @@
   var statusPageInput = document.getElementById('status-page-input');
   var statusSourceSaveBtn = document.getElementById('status-source-save-btn');
   var statusSourceStatusEl = document.getElementById('status-source-status');
+  var tokenCheckEl = document.getElementById('token-check');
+  var tokenStaleNoticeEl = document.getElementById('token-stale-notice');
+  var topBannerEl = document.getElementById('top-banner');
+  var topBannerTextEl = document.getElementById('top-banner-text');
+  var topBannerFixBtn = document.getElementById('top-banner-fix-btn');
+
+  var lastTokenSavedAt = null;
+  var STALE_WARNING_DAYS = 80; // nudge ahead of the common 90-day expiration window
+
+  topBannerFixBtn.addEventListener('click', function () { setActiveTab('settings'); });
+
+  function setTopBannerVisible(visible, message) {
+    if (message) topBannerTextEl.textContent = message;
+    topBannerEl.classList.toggle('visible', !!visible);
+  }
+
+  function renderTokenCheck(result) {
+    if (!result) {
+      tokenCheckEl.style.display = 'none';
+      return;
+    }
+    tokenCheckEl.style.display = 'block';
+    if (result.state === 'checking') {
+      tokenCheckEl.className = 'token-check checking';
+      tokenCheckEl.textContent = 'Checking token against Figma…';
+    } else if (result.state === 'ok') {
+      tokenCheckEl.className = 'token-check ok';
+      tokenCheckEl.textContent = '✓ Connected as ' + (result.handle || result.email || 'your Figma account') + '.';
+    } else {
+      tokenCheckEl.className = 'token-check bad';
+      tokenCheckEl.textContent = '✗ This token isn’t working (' + (result.message || 'invalid or expired') + '). Generate a new one above and save it again.';
+    }
+  }
+
+  function renderStaleNotice(savedAt, isCurrentlyValid) {
+    if (!savedAt || !isCurrentlyValid) {
+      tokenStaleNoticeEl.style.display = 'none';
+      return;
+    }
+    var ageDays = Math.floor((Date.now() - savedAt) / 86400000);
+    if (ageDays >= STALE_WARNING_DAYS) {
+      tokenStaleNoticeEl.style.display = 'block';
+      tokenStaleNoticeEl.textContent = 'This token was added ' + ageDays + ' days ago. Figma tokens can be ' +
+        'set to expire in as little as 90 days — if this one was, it may stop working soon. Worth generating a fresh one.';
+    } else {
+      tokenStaleNoticeEl.style.display = 'none';
+    }
+  }
 
   function setActiveTab(tab) {
     var isInspector = tab === 'inspector';
@@ -1158,19 +1251,46 @@
 
     if (msg.type === 'token-status') {
       tokenInput.value = msg.token || '';
+      lastTokenSavedAt = msg.savedAt || null;
       setTokenStatus(!!msg.token);
+      if (!msg.token) {
+        renderTokenCheck(null);
+        renderStaleNotice(null, false);
+        setTopBannerVisible(false);
+      }
       return;
     }
 
     if (msg.type === 'token-saved') {
       setTokenStatus(true);
+      lastTokenSavedAt = msg.savedAt || Date.now();
       showToast('Token saved');
       return;
     }
 
     if (msg.type === 'token-cleared') {
       setTokenStatus(false);
+      lastTokenSavedAt = null;
+      renderTokenCheck(null);
+      renderStaleNotice(null, false);
+      setTopBannerVisible(false);
       showToast('Token cleared');
+      return;
+    }
+
+    if (msg.type === 'token-check-result') {
+      if (msg.state === 'checking') {
+        renderTokenCheck({ state: 'checking' });
+        setTopBannerVisible(false);
+      } else if (msg.state === 'ok') {
+        renderTokenCheck({ state: 'ok', handle: msg.handle, email: msg.email });
+        setTopBannerVisible(false);
+        renderStaleNotice(lastTokenSavedAt, true);
+      } else {
+        renderTokenCheck({ state: 'bad', message: msg.message });
+        renderStaleNotice(lastTokenSavedAt, false);
+        setTopBannerVisible(true, 'Your Figma token isn’t working — it may be expired or revoked.');
+      }
       return;
     }
 
