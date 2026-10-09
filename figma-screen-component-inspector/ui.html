@@ -287,6 +287,21 @@
   }
   .status-table-banner.loading { background: var(--bg-subtle); color: var(--text-muted); }
   .status-table-banner.error { background: #fdeeec; color: #b3261e; }
+  .status-table-banner.info { background: var(--bg-subtle); color: var(--text-muted); }
+  .status-table-banner a { color: inherit; }
+  .status-debug-panel {
+    margin-top: 6px;
+    max-height: 140px;
+    overflow-y: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 10px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 8px;
+  }
 
   .toolbar {
     display: flex;
@@ -823,21 +838,79 @@
   var statusByName = null;
   var statusLoadState = 'idle'; // idle | loading | error | loaded
   var statusLoadErrorText = '';
+  var statusRowCount = 0;
+  var statusDebug = null;
+
+  // Normalizes a component name the same way code.js normalizes the status
+  // table's "Component" cell text, so the lookup below isn't a brittle 1:1
+  // string match: collapses whitespace around "/" and other whitespace, and
+  // lowercases.
+  function normalizeName(str) {
+    return (str || '')
+      .replace(/\s*\/\s*/g, '/')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  // Renders whatever raw row data code.js found, so a mismatch (wrong root
+  // node, zero rows parsed, or rows that parsed but don't match a
+  // component's name) can be diagnosed directly from inside the plugin
+  // instead of guessing from a screenshot.
+  function statusDebugHtml() {
+    if (!statusDebug) return '';
+    var lines = [];
+    if (statusDebug.rootName != null) {
+      lines.push('Root node: "' + statusDebug.rootName + '" (' + statusDebug.rootType + '), ' +
+        statusDebug.rootChildCount + ' direct children.');
+    }
+    if (statusDebug.rows && statusDebug.rows.length) {
+      lines.push('');
+      lines.push('Rows found (layer name → parsed Component-cell name):');
+      statusDebug.rows.forEach(function (r) {
+        lines.push('  "' + r.layerName + '" → ' + (r.parsedName ? '"' + r.parsedName + '"' : '(could not parse a name)'));
+      });
+    } else if (statusDebug.nodeKeysReturned) {
+      lines.push('Figma returned node keys: ' + (statusDebug.nodeKeysReturned.join(', ') || '(none)'));
+    }
+    if (!lines.length) return '';
+    return ' <a href="#" id="status-details-toggle">details</a>' +
+      '<div class="status-debug-panel" id="status-details-panel" style="display:none;">' +
+      escapeHtml(lines.join('\n')) + '</div>';
+  }
+
+  function wireStatusDetailsToggle() {
+    var toggle = document.getElementById('status-details-toggle');
+    if (!toggle) return;
+    toggle.addEventListener('click', function (e) {
+      e.preventDefault();
+      var panel = document.getElementById('status-details-panel');
+      if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    });
+  }
 
   // Loading/error feedback for the status table lives in the Inspector tab
   // itself (this banner), not tucked away in Settings — people are looking
-  // at the Inspector tab, not Settings, when this matters to them. A
-  // successful load shows no lingering banner; the status pills that then
-  // appear under each component are the confirmation.
+  // at the Inspector tab, not Settings, when this matters to them. Unlike
+  // before, a successful load still leaves a small persistent line showing
+  // how many rows were found — a silent "0 rows loaded" was exactly what
+  // made a real failure look identical to success.
   function renderStatusFetchCheck() {
     if (statusLoadState === 'loading') {
       statusTableBannerEl.style.display = 'block';
       statusTableBannerEl.className = 'status-table-banner loading';
-      statusTableBannerEl.textContent = 'Loading component status…';
+      statusTableBannerEl.innerHTML = 'Loading component status…';
     } else if (statusLoadState === 'error') {
       statusTableBannerEl.style.display = 'block';
       statusTableBannerEl.className = 'status-table-banner error';
-      statusTableBannerEl.textContent = statusLoadErrorText;
+      statusTableBannerEl.innerHTML = escapeHtml(statusLoadErrorText) + statusDebugHtml();
+      wireStatusDetailsToggle();
+    } else if (statusLoadState === 'loaded') {
+      statusTableBannerEl.style.display = 'block';
+      statusTableBannerEl.className = 'status-table-banner info';
+      statusTableBannerEl.innerHTML = 'Component status: ' + statusRowCount + ' row' +
+        (statusRowCount === 1 ? '' : 's') + ' loaded.' + statusDebugHtml();
+      wireStatusDetailsToggle();
     } else {
       statusTableBannerEl.style.display = 'none';
     }
@@ -1168,10 +1241,13 @@
       return '<div class="detail-value muted">' + escapeHtml(statusLoadErrorText) + '</div>';
     }
 
-    var key = (comp.name || '').trim().toLowerCase();
+    var key = normalizeName(comp.name);
     var row = statusByName[key];
     if (!row) {
-      return '<div class="detail-value muted">No status entry found for “' + escapeHtml(comp.name) + '”.</div>';
+      var hint = statusRowCount
+        ? ' ' + statusRowCount + ' row' + (statusRowCount === 1 ? '' : 's') + ' are loaded — open “details” in the banner above to compare names.'
+        : '';
+      return '<div class="detail-value muted">No status entry found for “' + escapeHtml(comp.name) + '”.' + hint + '</div>';
     }
 
     var brandData = row.brands[brandSelect.value] || {};
@@ -1399,7 +1475,20 @@
 
     if (msg.type === 'status-table-loaded') {
       statusByName = msg.byName || {};
-      statusLoadState = 'loaded';
+      statusDebug = msg.debug || null;
+      statusRowCount = msg.count || 0;
+      // A successful fetch that parsed zero rows looks identical to a real
+      // success from the component list's point of view (every row just
+      // says "no status entry found") — treat it as an error instead of
+      // silently succeeding, since it almost certainly means the root node
+      // or table structure has changed.
+      if (statusRowCount === 0) {
+        statusLoadState = 'error';
+        statusLoadErrorText = 'Connected to Figma, but found 0 rows in the Component Status table. ' +
+          'The table structure or location may have changed — ask the plugin admin to check.';
+      } else {
+        statusLoadState = 'loaded';
+      }
       renderStatusFetchCheck();
       renderFilteredList();
       return;
@@ -1408,6 +1497,7 @@
     if (msg.type === 'status-table-error') {
       statusLoadState = 'error';
       statusLoadErrorText = statusErrorMessage(msg.reason, msg.message);
+      statusDebug = msg.debug || null;
       renderStatusFetchCheck();
       renderFilteredList();
       return;

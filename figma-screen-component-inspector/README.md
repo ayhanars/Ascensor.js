@@ -172,6 +172,29 @@ This plugin is plain JavaScript/HTML — there is nothing to compile or
     Files and Folders** (or Full Disk Access), then fully quitting and
     reopening Figma — this setting can be flaky and sometimes needs a
     restart to actually take effect.
+- **Component status shows "No status entry found" for everything, or
+  the status banner says 0 rows loaded.** Open the **"details"** link
+  in the status banner (next to the Brand dropdown) first — it shows
+  exactly what the plugin found: the root node's name, and every row's
+  layer name next to the name it actually parsed out of the Component
+  cell. That tells you which of these it is:
+  - **0 rows, or a `fetch-failed` / HTTP 404 error** — `STATUS_FILE_KEY`
+    no longer resolves. If it was set from a **branch** URL (Figma
+    branch links look like `.../design/<fileKey>/branch/<branchKey>/...`
+    — the branch key, not the main file key, was used), merging or
+    deleting that branch invalidates the branch key. Re-check the
+    current URL to the Component Status page and update
+    `STATUS_FILE_KEY`/`STATUS_ROOT_NODE_ID` in `code.js` if it changed.
+  - **Rows found, but a given component's name never appears on the
+    right-hand side of any line in "details"** — either that
+    component genuinely isn't in the table yet, or its name in the
+    table differs from its Figma component name by more than
+    whitespace (the matching already tolerates spacing differences
+    around `/` and elsewhere).
+  - **Every row's parsed name is empty ("could not parse a name")** —
+    the row's internal structure (a `Component` group with the name as
+    its first text layer) has changed; `parseRowNode` in `code.js`
+    needs updating to match the table's current structure.
 
 ## Files
 
@@ -236,17 +259,35 @@ read (e.g. after the table's been updated).
 
 **Loading/error feedback shows in the Inspector tab itself** (a banner
 right under the Brand/Language row), not hidden in Settings where it'd
-go unnoticed — Settings is only visited once, for the token. A
-successful load shows no lingering banner; the status pills that then
-appear under each component are the confirmation.
+go unnoticed — Settings is only visited once, for the token. Unlike
+earlier versions, a successful load still leaves a small persistent
+line ("Component status: N rows loaded") rather than disappearing
+entirely — a fetch that technically "succeeds" but parses **zero** rows
+(wrong root node, table restructured, etc.) is treated as an error
+instead, since it would otherwise look identical to a real success
+while every component silently shows "No status entry found". Both the
+error and success banners have a **"details"** link that expands a raw
+dump of what was actually found — the root node's name/type, and, for
+every row, its layer name next to the name the plugin actually parsed
+out of its Component cell — so a mismatch can be diagnosed from inside
+the plugin itself rather than from a screenshot.
 
-**How matching works.** Each row's **Component** cell text, matched
-case-insensitively against each component's base name (not the variant
-name) — this is deliberately the same text the status table itself
-displays, not the Figma layer name of either side, since layer names can
-drift from what's actually shown. A component that isn't found in the
-table shows "No status entry found" rather than silently omitting
-anything.
+**How matching works.** Each row's **Component** cell text, normalized
+(whitespace around `/` and elsewhere collapsed, lowercased) and matched
+against each component's base name (not the variant name) normalized
+the same way — this is deliberately the same text the status table
+itself displays, not the Figma layer name of either side, since layer
+names can drift from what's actually shown, and deliberately not a
+strict byte-for-byte match, since minor spacing differences (e.g.
+"Button / Standard" vs "Button/Standard") shouldn't break the lookup. A
+component that isn't found in the table shows "No status entry found"
+(with the loaded row count, so you know whether it's a naming mismatch
+or nothing loaded at all) rather than silently omitting anything.
+
+**Version cell.** Looks for a group literally named `Version` first;
+if that's empty, falls back to scanning the whole row for a short text
+layer that looks like a version string (`v1.2.0`, `2.3`, etc.), since
+this table's exact "version" cell location isn't fully nailed down yet.
 
 **What each row's Status block shows:** iOS and Android status pills for
 the selected brand (green = Implemented, amber = Update available with

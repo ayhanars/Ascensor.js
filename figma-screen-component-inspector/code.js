@@ -397,6 +397,45 @@ function findChildByName(node, name) {
   return null;
 }
 
+// Normalizes a component name for matching between the inspected screen and
+// the status table's "Component" cell text: collapses any whitespace around
+// "/" (Figma's own variant/grouping separator — "Button / Standard" and
+// "Button/Standard" should be the same key), collapses other runs of
+// whitespace, and lowercases. This is deliberately forgiving rather than an
+// exact 1:1 string match, since the two sources (a live component name vs.
+// hand-typed table text) are never guaranteed to be byte-identical.
+function normalizeName(str) {
+  return (str || '')
+    .replace(/\s*\/\s*/g, '/')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+// Fallback for when a row has no group literally named "Version" (or it's
+// empty) — scans the whole row for a text layer that looks like a version
+// string (e.g. "v1.2.0", "2.3"), since the "versions are stored in a
+// different cell" per the plugin admin's own suspicion about this table.
+var VERSION_PATTERN = /\bv?\d+(?:\.\d+){1,3}\b/i;
+function findVersionFallback(rowNode) {
+  var found = '';
+  function walk(n) {
+    if (found || !n) return;
+    if (n.type === 'TEXT' && typeof n.characters === 'string') {
+      var text = n.characters.trim();
+      if (text.length && text.length < 24 && VERSION_PATTERN.test(text)) {
+        found = text;
+        return;
+      }
+    }
+    if (n.children) {
+      for (var i = 0; i < n.children.length && !found; i++) walk(n.children[i]);
+    }
+  }
+  walk(rowNode);
+  return found;
+}
+
 function nthTextChild(node, index) {
   if (!node || !node.children) return '';
   var texts = node.children.filter(function (c) { return c.type === 'TEXT'; });
@@ -430,6 +469,9 @@ function parseRowNode(rowNode) {
   var name = nthTextChild(componentGroup, 0).trim();
   if (!name) return null;
 
+  var version = nthTextChild(versionGroup, 0).trim();
+  if (!version) version = findVersionFallback(rowNode);
+
   var link = null;
   if (linkGroup) {
     var goToComponent = findChildByName(linkGroup, 'Go to Component');
@@ -446,7 +488,7 @@ function parseRowNode(rowNode) {
   return {
     name: name,
     typeLibrary: nthTextChild(componentGroup, 1).trim(),
-    version: nthTextChild(versionGroup, 0).trim(),
+    version: version,
     link: link,
     brands: {
       coba: {
@@ -489,18 +531,35 @@ async function fetchComponentStatusTable() {
   } catch (e) {
     return { error: 'fetch-failed', message: e.message };
   }
-  if (!rootDoc) return { error: 'section-not-found' };
+  if (!rootDoc) {
+    return {
+      error: 'section-not-found',
+      debug: { responseHadNodes: !!(deep && deep.nodes), nodeKeysReturned: deep && deep.nodes ? Object.keys(deep.nodes) : [] }
+    };
+  }
 
   var rowNodes = [];
   collectRowNodes(rootDoc, rowNodes);
 
   var byName = {};
+  var debugRows = [];
   rowNodes.forEach(function (rowNode) {
     var parsed = parseRowNode(rowNode);
-    if (parsed) byName[parsed.name.toLowerCase()] = parsed;
+    debugRows.push({ layerName: rowNode.name, parsedName: parsed ? parsed.name : null });
+    if (parsed) byName[normalizeName(parsed.name)] = parsed;
   });
 
-  return { byName: byName, count: rowNodes.length };
+  // Surfaced to the UI regardless of outcome so a mismatch (wrong root node,
+  // zero rows, or rows that parsed but don't match any on-screen component)
+  // can be diagnosed directly from the plugin instead of guessing blind.
+  var debug = {
+    rootName: rootDoc.name,
+    rootType: rootDoc.type,
+    rootChildCount: (rootDoc.children || []).length,
+    rows: debugRows.slice(0, 300)
+  };
+
+  return { byName: byName, count: rowNodes.length, debug: debug };
 }
 
 figma.ui.onmessage = async function (msg) {
@@ -510,9 +569,9 @@ figma.ui.onmessage = async function (msg) {
     try {
       var tableResult = await fetchComponentStatusTable();
       if (tableResult.error) {
-        figma.ui.postMessage({ type: 'status-table-error', reason: tableResult.error, message: tableResult.message });
+        figma.ui.postMessage({ type: 'status-table-error', reason: tableResult.error, message: tableResult.message, debug: tableResult.debug });
       } else {
-        figma.ui.postMessage({ type: 'status-table-loaded', byName: tableResult.byName, count: tableResult.count });
+        figma.ui.postMessage({ type: 'status-table-loaded', byName: tableResult.byName, count: tableResult.count, debug: tableResult.debug });
       }
     } catch (e) {
       figma.ui.postMessage({ type: 'status-table-error', reason: 'unexpected', message: e.message });
