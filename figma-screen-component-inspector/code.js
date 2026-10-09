@@ -189,8 +189,16 @@ async function analyzeSelection() {
   // content (pass 2 below), since a component's own content extraction
   // needs to know the classification of instances nested *inside* it —
   // which may appear later in this array than the component itself.
+  // getMainComponentAsync() can be slow per instance (especially for
+  // instances of external library components), so every instance is
+  // resolved concurrently via Promise.all rather than one at a time —
+  // on a screen with many instances this is the difference between a
+  // multi-second wait and a near-instant one.
+  var resolvedInfos = await Promise.all(instances.map(function (inst) {
+    return resolveComponentInfo(inst);
+  }));
   for (var i = 0; i < instances.length; i++) {
-    var info = await resolveComponentInfo(instances[i]);
+    var info = resolvedInfos[i];
     if (!info) continue;
 
     var box = instances[i].absoluteBoundingBox;
@@ -303,6 +311,7 @@ figma.on('selectionchange', function () {
     suppressNextSelectionChange = false;
     return;
   }
+  figma.ui.postMessage({ type: 'analyzing' });
   analyzeSelection();
 });
 
@@ -503,17 +512,47 @@ function parseRowNode(rowNode) {
   };
 }
 
-// Finds every "Row / ..." instance in the subtree without descending into
-// an already-matched row's own children (rows aren't nested in each other,
-// but this keeps the walk cheap either way).
+// A row is identified by its actual structure (a "Component" cell plus at
+// least one brand/platform cell) rather than by its layer name — "Row / ..."
+// turned out not to be a safe assumption (0 rows matched against a real
+// table that does have content), whereas the Component/brand group names
+// were directly confirmed from a real row's layer tree. This also means
+// renaming the row instances on the Figma side can't break this lookup.
+var BRAND_PLATFORM_GROUP_NAMES = ['COBA iOS', 'COBA Android', 'Purple iOS', 'Purple Android'];
+function looksLikeRowNode(node) {
+  if (!node || !node.children || !findChildByName(node, 'Component')) return false;
+  for (var i = 0; i < BRAND_PLATFORM_GROUP_NAMES.length; i++) {
+    if (findChildByName(node, BRAND_PLATFORM_GROUP_NAMES[i])) return true;
+  }
+  return false;
+}
+
+// Walks the subtree looking for row-shaped nodes, without descending into a
+// node once it's already been matched as a row (rows aren't nested in each
+// other, but this keeps the walk cheap either way).
 function collectRowNodes(node, out) {
   if (!node) return;
-  if (node.type === 'INSTANCE' && typeof node.name === 'string' && node.name.indexOf('Row /') === 0) {
+  if (looksLikeRowNode(node)) {
     out.push(node);
     return;
   }
   if (node.children) {
     for (var i = 0; i < node.children.length; i++) collectRowNodes(node.children[i], out);
+  }
+}
+
+// A shallow, size-capped dump of the subtree's shape (name/type/children
+// count per node, a few levels deep) — used only when 0 rows are found, so
+// the actual structure under STATUS_ROOT_NODE_ID can be seen directly
+// instead of guessing at a second wrong assumption.
+function summarizeTree(node, depth, maxDepth, lines) {
+  if (!node || depth > maxDepth || lines.length >= 200) return;
+  lines.push(new Array(depth + 1).join('  ') + '- ' + node.name + ' (' + node.type + ')' +
+    (node.children ? ' [' + node.children.length + ' children]' : ''));
+  if (node.children && depth < maxDepth) {
+    for (var i = 0; i < node.children.length && lines.length < 200; i++) {
+      summarizeTree(node.children[i], depth + 1, maxDepth, lines);
+    }
   }
 }
 
@@ -558,6 +597,11 @@ async function fetchComponentStatusTable() {
     rootChildCount: (rootDoc.children || []).length,
     rows: debugRows.slice(0, 300)
   };
+  if (rowNodes.length === 0) {
+    var treeLines = [];
+    summarizeTree(rootDoc, 0, 3, treeLines);
+    debug.tree = treeLines;
+  }
 
   return { byName: byName, count: rowNodes.length, debug: debug };
 }
@@ -580,6 +624,7 @@ figma.ui.onmessage = async function (msg) {
   }
 
   if (msg.type === 'refresh') {
+    figma.ui.postMessage({ type: 'analyzing' });
     analyzeSelection();
   } else if (msg.type === 'select' && Array.isArray(msg.ids)) {
     selectInstancesOnCanvas(msg.ids);
@@ -602,4 +647,5 @@ figma.ui.onmessage = async function (msg) {
   }
 };
 
+figma.ui.postMessage({ type: 'analyzing' });
 analyzeSelection();

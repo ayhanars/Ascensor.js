@@ -195,6 +195,15 @@ This plugin is plain JavaScript/HTML — there is nothing to compile or
     the row's internal structure (a `Component` group with the name as
     its first text layer) has changed; `parseRowNode` in `code.js`
     needs updating to match the table's current structure.
+  - **0 rows found but the request clearly succeeded (root node name
+    shown, no fetch error)** — rows are identified structurally (a
+    `Component` cell plus at least one `COBA iOS`/`COBA Android`/
+    `Purple iOS`/`Purple Android` cell, see above), not by layer name,
+    so this means no node under `STATUS_ROOT_NODE_ID` has that shape.
+    "details" in this case also prints a shallow dump of what's
+    actually nested under that frame (name/type/child count, a few
+    levels deep) — use it to see whether `STATUS_ROOT_NODE_ID` points
+    at the table at all, or at a sibling/wrapper frame next to it.
 
 ## Files
 
@@ -242,9 +251,12 @@ that table ever moves to a different file or section, the maintainer
 updates those two constants and redistributes the plugin; nobody using
 it needs to find or paste in a file link or page name. The fetch reads
 everything under that container and recursively collects every
-`Row / ...` instance it finds, so it doesn't care about the exact
-internal frame structure around the rows — only that stable top-level
-container needs to stay put.
+row-shaped node it finds — identified by its structure (a `Component`
+cell plus at least one of the four brand/platform cells), not by its
+layer name — so renaming row instances on the Figma side, or the exact
+frame structure around the rows, can't break this lookup; only that
+stable top-level container and the row's own internal cell names need
+to stay put.
 
 **Brand dropdown.** Top of the Inspector tab, next to the language
 dropdown: **COBA** / **Purple**. Switching brands re-renders the

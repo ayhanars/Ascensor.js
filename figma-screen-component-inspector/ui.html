@@ -408,6 +408,17 @@
     line-height: 1.5;
   }
 
+  .spinner {
+    width: 22px;
+    height: 22px;
+    margin: 0 auto 10px;
+    border-radius: 50%;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
   .filtered-empty {
     padding: 24px 16px;
     text-align: center;
@@ -661,6 +672,10 @@
 <div class="toast" id="toast"></div>
 
 <main id="main">
+  <div class="empty-state" id="analyzing-state" style="display:none;">
+    <div class="spinner"></div>
+    <div class="title">Analyzing screen…</div>
+  </div>
   <div class="empty-state" id="empty-state">
     <div class="title">Select a screen to inspect.</div>
     <div class="subtitle">Select a Figma frame to see its<br/>components and metadata.</div>
@@ -738,6 +753,7 @@
 
 <script>
   var mainEl = document.getElementById('main');
+  var analyzingStateEl = document.getElementById('analyzing-state');
   var emptyStateEl = document.getElementById('empty-state');
   var componentSectionEl = document.getElementById('component-section');
   var componentListEl = document.getElementById('component-list');
@@ -853,6 +869,10 @@
       statusDebug.rows.forEach(function (r) {
         lines.push('  "' + r.layerName + '" → ' + (r.parsedName ? '"' + r.parsedName + '"' : '(could not parse a name)'));
       });
+    } else if (statusDebug.tree && statusDebug.tree.length) {
+      lines.push('');
+      lines.push('No row-shaped node found. Actual structure under this frame:');
+      lines = lines.concat(statusDebug.tree);
     } else if (statusDebug.nodeKeysReturned) {
       lines.push('Figma returned node keys: ' + (statusDebug.nodeKeysReturned.join(', ') || '(none)'));
     }
@@ -1172,6 +1192,7 @@
     var state = EMPTY_STATES[reason] || EMPTY_STATES['no-selection'];
     emptyStateEl.querySelector('.title').innerHTML = escapeHtml(state.title);
     emptyStateEl.querySelector('.subtitle').innerHTML = state.subtitle;
+    analyzingStateEl.style.display = 'none';
     emptyStateEl.style.display = 'block';
     componentSectionEl.style.display = 'none';
   }
@@ -1380,6 +1401,7 @@
       return;
     }
 
+    analyzingStateEl.style.display = 'none';
     emptyStateEl.style.display = 'none';
     componentSectionEl.style.display = 'block';
     renderFilteredList();
@@ -1388,6 +1410,13 @@
   window.onmessage = function (event) {
     var msg = event.data.pluginMessage;
     if (!msg) return;
+
+    if (msg.type === 'analyzing') {
+      emptyStateEl.style.display = 'none';
+      componentSectionEl.style.display = 'none';
+      analyzingStateEl.style.display = 'block';
+      return;
+    }
 
     if (msg.type === 'empty') {
       lastComponents = [];
