@@ -127,9 +127,18 @@
   .skipped { margin-top: 8px; font-size: 11px; color: var(--text-faint); }
   .item .src { color: var(--text-faint); font-weight: 400; font-size: 11px; margin-left: 6px; }
 
-  /* Change log */
-  .clog { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-light); }
-  .clog-head { display: flex; align-items: center; justify-content: space-between; font-weight: 600; margin-bottom: 6px; }
+  /* Sub-blocks inside a step (change log, other library files) */
+  .sub { padding: 10px 12px 12px; border-top: 1px solid var(--border); background: var(--bg); }
+  .sub:last-child { border-radius: 0 0 var(--radius) var(--radius); }
+  .sub-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .sub-title { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); }
+  .sub-title .q {
+    display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; margin-left: 4px;
+    border: 1px solid var(--border); border-radius: 50%; font-size: 9px; color: var(--text-faint); cursor: help; vertical-align: middle; text-transform: none;
+  }
+  .filter { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 11px; color: var(--text); }
+  .filter input { margin: 0; }
+  .filter .muted { margin-left: auto; }
   .clog-status { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
   .clog-status strong { color: var(--text); font-weight: 600; }
   .clog-actions { display: flex; gap: 8px; align-items: center; }
@@ -142,8 +151,6 @@
   .opt .muted { margin-left: auto; }
 
   /* Other library files */
-  .remote { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-light); }
-  .remote-head { display: flex; align-items: center; justify-content: space-between; font-weight: 600; margin-bottom: 8px; }
   .field { display: flex; gap: 6px; }
   .field input {
     flex: 1; min-width: 0; height: 28px; font: inherit; font-size: 11px; color: var(--text);
@@ -152,6 +159,7 @@
   .field input:focus { outline: none; border-color: var(--text-muted); }
   .btn.small { height: 28px; padding: 0 10px; font-size: 11px; }
   .help { margin-top: 6px; font-size: 10px; color: var(--text-faint); line-height: 1.4; }
+  .help.below { margin-top: 8px; }
   .help.err { color: var(--danger); }
   .token-form { margin-bottom: 10px; padding: 8px; border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--bg); }
   .remote-list { margin-top: 8px; }
@@ -308,41 +316,44 @@
         <ul id="dupes-list"></ul>
       </details>
       <div class="skipped hidden" id="skipped"></div>
+      <label class="filter hidden" id="filter-row">
+        <input type="checkbox" id="hide-noversion" checked>
+        <span>Hide components without a version</span>
+        <span class="muted" id="hidden-count"></span>
+      </label>
+    </div>
 
-      <div class="clog">
-        <div class="clog-head">
-          <span>Change log</span>
-          <div class="clog-actions">
-            <button class="link hidden" id="clog-clear">Clear</button>
-            <button class="btn small" id="clog-find">Find in file</button>
-            <button class="btn small" id="clog-use">Use selection</button>
-          </div>
+    <div class="sub">
+      <div class="sub-head">
+        <span class="sub-title">Change log <span class="q" title="Find in file searches every page; Use selection reads the selected section or frame. A row is a layer named “Change log Row” or one holding a Version Table Cell and a Description Table Cell. The “Published on” date above a row is used. Version lines in component descriptions are read automatically.">?</span></span>
+        <div class="clog-actions">
+          <button class="link hidden" id="clog-clear">Clear</button>
+          <button class="btn small" id="clog-find">Find in file</button>
+          <button class="btn small" id="clog-use">Use selection</button>
         </div>
-        <div class="help"><b>Find in file</b> searches every page for change log rows. <b>Use selection</b> reads only the section or frame selected on the canvas. A row is a layer named “Change log Row”, or any layer holding a “Version Table Cell” and a “Description Table Cell”; name, version, status, description and the “Published on” date above it are read. Version lines in component descriptions are read automatically.</div>
-        <div class="clog-status" id="clog-status"></div>
       </div>
+      <div class="clog-status" id="clog-status"></div>
+    </div>
 
-      <div class="remote">
-        <div class="remote-head">
-          <span>Other library files</span>
-          <button class="link" id="token-toggle">Set token</button>
-        </div>
-        <div class="token-form hidden" id="token-form">
-          <div class="field">
-            <input type="password" id="token-input" placeholder="Figma personal access token" autocomplete="off" spellcheck="false">
-            <button class="btn small" id="token-save">Save</button>
-          </div>
-          <div class="help">Figma → Settings → Security → Personal access tokens, with the “File content: read” scope. The token stays on this computer only.</div>
-          <div class="help err hidden" id="token-error"></div>
-        </div>
+    <div class="sub">
+      <div class="sub-head">
+        <span class="sub-title">Other library files <span class="q" title="Linked files are read through the Figma API with your personal access token, so only their published components are listed. Links are remembered in this file; the token stays on this computer.">?</span></span>
+        <button class="link" id="token-toggle">Set token</button>
+      </div>
+      <div class="token-form hidden" id="token-form">
         <div class="field">
-          <input type="text" id="file-input" placeholder="Paste a Figma file link or file key" spellcheck="false">
-          <button class="btn small" id="file-add">Add</button>
+          <input type="password" id="token-input" placeholder="Figma personal access token" autocomplete="off" spellcheck="false">
+          <button class="btn small" id="token-save">Save</button>
         </div>
-        <div class="help err hidden" id="file-error"></div>
-        <div class="remote-list" id="remote-list"></div>
-        <div class="help">Linked files are scanned through the Figma API, which lists their published components only. Links are remembered in this file.</div>
+        <div class="help">Figma → Settings → Security → Personal access tokens, scope “File content: read”.</div>
+        <div class="help err hidden" id="token-error"></div>
       </div>
+      <div class="field">
+        <input type="text" id="file-input" placeholder="Paste a Figma file link or key" spellcheck="false">
+        <button class="btn small" id="file-add">Add</button>
+      </div>
+      <div class="help err hidden" id="file-error"></div>
+      <div class="remote-list" id="remote-list"></div>
     </div>
   </section>
 
@@ -371,7 +382,7 @@
         </div>
       </div>
       <div class="summary hidden" id="summary"></div>
-      <div class="note">Each brand file holds both platforms: <span class="mono">platforms.ios</span> and <span class="mono">platforms.android</span>. An optional <span class="mono">updatedAt</span> date is shown above the table; without it the file's modified date is used.</div>
+      <div class="note">One file per brand with <span class="mono">platforms.ios</span> and <span class="mono">platforms.android</span>. Optional <span class="mono">updatedAt</span> is shown above the table.</div>
     </div>
   </section>
 
@@ -393,7 +404,7 @@
         <span>versions</span>
         <span class="muted">0 = all</span>
       </div>
-      <div class="note">The table is placed on the current page. Regenerating replaces the previous table in place.</div>
+      <div class="note">Placed on the current page. Regenerating replaces the previous table.</div>
     </div>
   </section>
 </main>
@@ -411,7 +422,9 @@
     remote: {},         // fileKey -> { key, name, status, components, error }
     remoteOrder: [],    // fileKeys in the order they were added
     token: "",
-    components: null,   // merged local + remote list once scanned
+    hideNoVersion: true,
+    allComponents: null, // merged local + remote list once scanned, before the filter
+    components: null,   // the same after the "hide without version" filter
     files: { coba: null, purple: null }, // { name, data } once valid
     mappings: {},        // normalised JSON name -> componentId (manual mapping)
     changelog: { entries: [], rows: 0, frames: 0 },
@@ -530,6 +543,7 @@
     show($("dupes"), false);
     show($("count-badge"), false);
     show($("rescan-link"), false);
+    show($("filter-row"), false);
     show($("banner"), false);
     postToPlugin({ type: "rescan" });
     refresh();
@@ -572,7 +586,12 @@
       if (file && file.components) components = components.concat(file.components);
     });
     components.sort(compareNames);
-    state.components = components;
+    state.allComponents = components;
+    var hidden = state.hideNoVersion ? components.filter(function (c) { return !c.version; }).length : 0;
+    state.components = state.hideNoVersion ? components.filter(function (c) { return !!c.version; }) : components;
+    components = state.components;
+    $("hidden-count").textContent = hidden ? hidden + " hidden" : "";
+    show($("filter-row"), state.allComponents.length > 0);
 
     // Restore saved mappings that still point at an existing component.
     var ids = {};
@@ -594,6 +613,9 @@
     if (components.length === 0) {
       show($("list"), false);
       show($("empty"), true);
+      $("empty").querySelector("p").textContent = state.allComponents.length
+        ? "All " + state.allComponents.length + " components are hidden by the filter."
+        : "No components found in this file.";
     } else {
       show($("empty"), false);
       show($("list"), true);
@@ -654,6 +676,10 @@
   }
 
   $("rescan-link").addEventListener("click", startScan);
+  $("hide-noversion").addEventListener("change", function () {
+    state.hideNoVersion = $("hide-noversion").checked;
+    applyComponents();
+  });
   $("rescan-btn").addEventListener("click", startScan);
 
   // ---------------------------------------------------------------------
@@ -1049,6 +1075,11 @@
       var loose = looseName(c.name);
       (byLoose[loose] = byLoose[loose] || []).push(c);
     });
+    // Components removed by the "hide without version" filter, to explain why a name is unmatched.
+    var hiddenByName = {};
+    (state.allComponents || []).forEach(function (c) {
+      if (!c.version) hiddenByName[normalizeName(c.name)] = c;
+    });
 
     var jsonNames = collectJsonNames();
     var unmatched = Object.keys(jsonNames).filter(function (k) { return !library[k]; }).sort();
@@ -1124,6 +1155,8 @@
           jname.appendChild(line);
         } else if (sug && sug.exact) {
           jname.appendChild(el("span", "where", "1:1 match after cleaning"));
+        } else if (hiddenByName[k] && state.hideNoVersion) {
+          jname.appendChild(el("span", "where", "Library component hidden: no version"));
         }
         var none = el("option", "", "Ignore");
         none.value = "";
@@ -1144,7 +1177,7 @@
         list.appendChild(row);
       });
       details.appendChild(list);
-      details.appendChild(el("p", "map-help", "Map a JSON name to the library component it belongs to. Only 1:1 matches (same name apart from spacing, punctuation or case) are selected for you. Similar names are shown in amber with a “Use” link; nothing is picked until you do. Ignored names are left out of the table. Mappings are saved in this file."));
+      details.appendChild(el("p", "map-help", "Only 1:1 names are pre-selected. Amber rows show a similar name; click Use to apply it. Ignored names are left out of the table. Choices are saved in this file."));
       box.appendChild(details);
       list.scrollTop = mapUi.scroll;   // only effective once the list is in the document
     } else {

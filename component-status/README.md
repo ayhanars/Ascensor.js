@@ -69,7 +69,8 @@ If the name has no version, the plugin reads the **description** field:
 If there is no `Type:` line, the component is an **Atom** when its page name or
 any parent frame name contains "atom", otherwise a **Component**. Components
 with no version get a "no version" tag. Duplicate names are kept and listed as
-a warning.
+a warning. **Hide components without a version** (on by default) removes
+them from the list and from the generated table; untick it to include them.
 
 #### Other library files
 
