@@ -268,13 +268,19 @@ renaming row instances on the Figma side, or the exact frame structure
 around the rows, can't break this lookup either.
 
 **Version history.** Each row's changelog lives in a separate sibling
-node right after it (not nested inside the row), named
-`"History / <component name>"`, with one `Entry` instance per line
-(version, date, change type, description). The fetch collects these the
-same pass as the rows and attaches each one to its matching row by name;
-expanding a component shows its full history underneath the Status
+node right after it (not nested inside the row), with one `Entry`
+instance per line (version, date, change type, description). It's
+paired to its row **by sibling position — the very next node after the
+row — not by name**: a history frame's own `"History / <name>"` layer
+name has turned out not to reliably describe which row it actually
+belongs to (confirmed against the real table — one has turned up right
+after a *different* row than its own name would suggest), whereas every
+row has consistently been followed immediately by its own history frame.
+Expanding a component shows its full history underneath the Status
 block as a compact 4-column table (Version / Date / Type / Description),
-matching the table's own layout, in a scrollable list if it's long.
+matching the table's own layout, in a scrollable list if it's long — or
+"No version history found for this component" if this row had no
+history frame right after it.
 
 **Brand dropdown.** Top of the Inspector tab, next to the language
 dropdown: **COBA** / **Purple**. Switching brands re-renders the

@@ -576,21 +576,45 @@ function parseHistoryContainer(node) {
   return entries;
 }
 
-// Walks the subtree once, collecting both row-shaped nodes and
-// "History / ..." containers, without descending into either once matched
-// (a row's own children never contain another row or a history container).
-function collectRowAndHistoryNodes(node, rows, histories) {
-  if (!node) return;
-  if (looksLikeRowNode(node)) {
-    rows.push(node);
-    return;
-  }
-  if (typeof node.name === 'string' && /^history\s*\//i.test(node.name)) {
-    histories.push(node);
-    return;
-  }
+// Identifies a history container by its "History / ..." name first, and
+// falls back to its structure (has at least one "Entry" instance child) if
+// the name doesn't match — a history frame's own layer name has turned out
+// not to reliably describe which row it belongs to (see below), so this
+// only needs to recognize "this is a history container", not associate it.
+function looksLikeHistoryNode(node) {
+  if (!node) return false;
+  if (typeof node.name === 'string' && /^history\s*\//i.test(node.name)) return true;
   if (node.children) {
-    for (var i = 0; i < node.children.length; i++) collectRowAndHistoryNodes(node.children[i], rows, histories);
+    for (var i = 0; i < node.children.length; i++) {
+      if (node.children[i].type === 'INSTANCE' && node.children[i].name === 'Entry') return true;
+    }
+  }
+  return false;
+}
+
+// Pairs each row with its history by sibling position, not by name:
+// "History / <name>" doesn't reliably name the row it actually belongs
+// to (confirmed against the real table — a history frame has turned up
+// sitting right after a *different* row than the one its own name
+// suggests), but every row has consistently been followed immediately by
+// its own history frame as the very next sibling. Walks each node's
+// children in order; whenever one is row-shaped, checks whether the next
+// sibling is a history container and pairs them if so, then skips past a
+// row's own children (never descends into them) but still recurses into
+// any other child (including an unpaired history frame, harmlessly, since
+// it won't contain a nested row or history of its own).
+function collectRowsWithHistory(node, out) {
+  if (!node || !node.children) return;
+  var children = node.children;
+  for (var i = 0; i < children.length; i++) {
+    var child = children[i];
+    if (looksLikeRowNode(child)) {
+      var next = children[i + 1];
+      var historyNode = (next && !looksLikeRowNode(next) && looksLikeHistoryNode(next)) ? next : null;
+      out.push({ rowNode: child, historyNode: historyNode });
+      continue;
+    }
+    collectRowsWithHistory(child, out);
   }
 }
 
@@ -638,28 +662,27 @@ async function fetchComponentStatusTable() {
   // pointed directly at the table frame instead of its page.
   var tableRoot = findNodeByName(rootDoc, STATUS_FRAME_NAME) || rootDoc;
 
-  var rowNodes = [];
-  var historyNodes = [];
-  collectRowAndHistoryNodes(tableRoot, rowNodes, historyNodes);
-
-  var historyByKey = {};
-  historyNodes.forEach(function (h) {
-    var suffix = h.name.replace(/^history\s*\/\s*/i, '').trim();
-    if (suffix) historyByKey[normalizeName(suffix)] = parseHistoryContainer(h);
-  });
+  var pairs = [];
+  collectRowsWithHistory(tableRoot, pairs);
 
   var byName = {};
   var debugRows = [];
   var rowsWithHistory = 0;
-  rowNodes.forEach(function (rowNode) {
-    var parsed = parseRowNode(rowNode);
-    debugRows.push({ layerName: rowNode.name, parsedName: parsed ? parsed.name : null });
+  var historyFramesFound = 0;
+  pairs.forEach(function (pair) {
+    if (pair.historyNode) historyFramesFound++;
+    var parsed = parseRowNode(pair.rowNode);
+    debugRows.push({
+      layerName: pair.rowNode.name,
+      parsedName: parsed ? parsed.name : null,
+      historySiblingName: pair.historyNode ? pair.historyNode.name : null
+    });
     if (!parsed) return;
-    var layerSuffix = rowNode.name.replace(/^row\s*\/\s*/i, '').trim();
-    parsed.history = historyByKey[normalizeName(layerSuffix)] || historyByKey[normalizeName(parsed.name)] || [];
+    parsed.history = pair.historyNode ? parseHistoryContainer(pair.historyNode) : [];
     if (parsed.history.length) rowsWithHistory++;
     byName[normalizeName(parsed.name)] = parsed;
   });
+  var rowNodes = pairs.map(function (p) { return p.rowNode; });
 
   // Surfaced to the UI regardless of outcome so a mismatch (wrong root node,
   // zero rows, or rows that parsed but don't match any on-screen component)
@@ -670,7 +693,7 @@ async function fetchComponentStatusTable() {
     rootChildCount: (rootDoc.children || []).length,
     tableFrameName: tableRoot.name,
     tableFrameFound: tableRoot !== rootDoc,
-    historyFramesFound: historyNodes.length,
+    historyFramesFound: historyFramesFound,
     rowsWithHistoryAttached: rowsWithHistory,
     rows: debugRows.slice(0, 300)
   };

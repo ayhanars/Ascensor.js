@@ -945,7 +945,8 @@
       lines.push('');
       lines.push('Rows found (layer name → parsed Component-cell name):');
       statusDebug.rows.forEach(function (r) {
-        lines.push('  "' + r.layerName + '" → ' + (r.parsedName ? '"' + r.parsedName + '"' : '(could not parse a name)'));
+        lines.push('  "' + r.layerName + '" → ' + (r.parsedName ? '"' + r.parsedName + '"' : '(could not parse a name)') +
+          (r.historySiblingName ? ' [history: "' + r.historySiblingName + '"]' : ' [no history sibling]'));
       });
     } else if (statusDebug.tree && statusDebug.tree.length) {
       lines.push('');
