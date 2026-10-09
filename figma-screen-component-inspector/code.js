@@ -333,7 +333,14 @@ var FIGMA_TOKEN_SAVED_AT_KEY = 'figmaTokenSavedAt';
 // structure. If this table ever moves to a different file/branch or
 // section, update these two constants and redistribute the plugin.
 var STATUS_FILE_KEY = '4eG2NdH7jFnPSllUCiSMrV';
-var STATUS_ROOT_NODE_ID = '111416:42958';
+// Points at the stable Page, not a specific frame inside it — the frame
+// that actually holds the table gets regenerated/moved around internally,
+// but the Page itself doesn't. The fetch below reads this whole page, then
+// searches it by name for a frame called "Component Status" to use as the
+// real scanning root, so the admin never has to chase a new frame id every
+// time the table is rebuilt.
+var STATUS_ROOT_NODE_ID = '9511:38471';
+var STATUS_FRAME_NAME = 'Component Status';
 
 // Validates a token against Figma's own API (GET /v1/me is the cheapest
 // authenticated call — it just returns the token owner's identity) rather
@@ -402,6 +409,21 @@ function findChildByName(node, name) {
   if (!node || !node.children) return null;
   for (var i = 0; i < node.children.length; i++) {
     if (node.children[i].name === name) return node.children[i];
+  }
+  return null;
+}
+
+// Depth-first search for a node whose name matches exactly (trimmed,
+// case-insensitive) — used to locate the "Component Status" frame
+// somewhere inside the page, regardless of how deep it's nested.
+function findNodeByName(node, name) {
+  if (!node) return null;
+  if (typeof node.name === 'string' && node.name.trim().toLowerCase() === name.toLowerCase()) return node;
+  if (node.children) {
+    for (var i = 0; i < node.children.length; i++) {
+      var found = findNodeByName(node.children[i], name);
+      if (found) return found;
+    }
   }
   return null;
 }
@@ -527,17 +549,48 @@ function looksLikeRowNode(node) {
   return false;
 }
 
-// Walks the subtree looking for row-shaped nodes, without descending into a
-// node once it's already been matched as a row (rows aren't nested in each
-// other, but this keeps the walk cheap either way).
-function collectRowNodes(node, out) {
+// Each row's version history lives in a separate sibling node right after
+// it, not nested inside the row itself — named "History / <component name>"
+// — containing one "Entry" instance per changelog line, each with four text
+// layers in order: version, date, change type (e.g. "Bug Fix"/"New
+// Variant"), description.
+function parseHistoryEntry(entryNode) {
+  var texts = (entryNode.children || []).filter(function (c) { return c.type === 'TEXT'; });
+  if (texts.length < 4) return null;
+  var version = (texts[0].characters || '').trim();
+  var date = (texts[1].characters || '').trim();
+  var type = (texts[2].characters || '').trim();
+  var description = (texts[3].characters || '').trim();
+  if (!version && !description) return null;
+  return { version: version, date: date, type: type, description: description };
+}
+
+function parseHistoryContainer(node) {
+  var entries = [];
+  (node.children || []).forEach(function (child) {
+    if (child.type === 'INSTANCE' && child.name === 'Entry') {
+      var parsed = parseHistoryEntry(child);
+      if (parsed) entries.push(parsed);
+    }
+  });
+  return entries;
+}
+
+// Walks the subtree once, collecting both row-shaped nodes and
+// "History / ..." containers, without descending into either once matched
+// (a row's own children never contain another row or a history container).
+function collectRowAndHistoryNodes(node, rows, histories) {
   if (!node) return;
   if (looksLikeRowNode(node)) {
-    out.push(node);
+    rows.push(node);
+    return;
+  }
+  if (typeof node.name === 'string' && /^history\s*\//i.test(node.name)) {
+    histories.push(node);
     return;
   }
   if (node.children) {
-    for (var i = 0; i < node.children.length; i++) collectRowNodes(node.children[i], out);
+    for (var i = 0; i < node.children.length; i++) collectRowAndHistoryNodes(node.children[i], rows, histories);
   }
 }
 
@@ -577,15 +630,33 @@ async function fetchComponentStatusTable() {
     };
   }
 
+  // STATUS_ROOT_NODE_ID points at the stable Page; the actual table lives
+  // in a frame somewhere inside it named "Component Status" (searched by
+  // name, not a hardcoded id, since that frame gets regenerated/moved as
+  // the table's own content changes). Falls back to the fetched node
+  // itself if no such frame is found, in case STATUS_ROOT_NODE_ID is ever
+  // pointed directly at the table frame instead of its page.
+  var tableRoot = findNodeByName(rootDoc, STATUS_FRAME_NAME) || rootDoc;
+
   var rowNodes = [];
-  collectRowNodes(rootDoc, rowNodes);
+  var historyNodes = [];
+  collectRowAndHistoryNodes(tableRoot, rowNodes, historyNodes);
+
+  var historyByKey = {};
+  historyNodes.forEach(function (h) {
+    var suffix = h.name.replace(/^history\s*\/\s*/i, '').trim();
+    if (suffix) historyByKey[normalizeName(suffix)] = parseHistoryContainer(h);
+  });
 
   var byName = {};
   var debugRows = [];
   rowNodes.forEach(function (rowNode) {
     var parsed = parseRowNode(rowNode);
     debugRows.push({ layerName: rowNode.name, parsedName: parsed ? parsed.name : null });
-    if (parsed) byName[normalizeName(parsed.name)] = parsed;
+    if (!parsed) return;
+    var layerSuffix = rowNode.name.replace(/^row\s*\/\s*/i, '').trim();
+    parsed.history = historyByKey[normalizeName(layerSuffix)] || historyByKey[normalizeName(parsed.name)] || [];
+    byName[normalizeName(parsed.name)] = parsed;
   });
 
   // Surfaced to the UI regardless of outcome so a mismatch (wrong root node,
@@ -595,11 +666,14 @@ async function fetchComponentStatusTable() {
     rootName: rootDoc.name,
     rootType: rootDoc.type,
     rootChildCount: (rootDoc.children || []).length,
+    tableFrameName: tableRoot.name,
+    tableFrameFound: tableRoot !== rootDoc,
+    historyFramesFound: historyNodes.length,
     rows: debugRows.slice(0, 300)
   };
   if (rowNodes.length === 0) {
     var treeLines = [];
-    summarizeTree(rootDoc, 0, 3, treeLines);
+    summarizeTree(tableRoot, 0, 3, treeLines);
     debug.tree = treeLines;
   }
 

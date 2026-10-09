@@ -199,11 +199,18 @@ This plugin is plain JavaScript/HTML — there is nothing to compile or
     shown, no fetch error)** — rows are identified structurally (a
     `Component` cell plus at least one `COBA iOS`/`COBA Android`/
     `Purple iOS`/`Purple Android` cell, see above), not by layer name,
-    so this means no node under `STATUS_ROOT_NODE_ID` has that shape.
+    so this means no node under the scanned frame has that shape.
     "details" in this case also prints a shallow dump of what's
     actually nested under that frame (name/type/child count, a few
-    levels deep) — use it to see whether `STATUS_ROOT_NODE_ID` points
-    at the table at all, or at a sibling/wrapper frame next to it.
+    levels deep) — use it to see whether the right frame was actually
+    searched, or a sibling/wrapper frame next to it.
+  - `STATUS_ROOT_NODE_ID` points at the Page, and the fetch searches it
+    by name for a frame called `"Component Status"`
+    (`STATUS_FRAME_NAME`). If that frame's own name ever changes,
+    update `STATUS_FRAME_NAME` in `code.js`; if the table moves to a
+    genuinely different page or file, update `STATUS_FILE_KEY`/
+    `STATUS_ROOT_NODE_ID`. Either way "details" shows `tableFrameFound`
+    (whether the named frame was located) so this is easy to confirm.
 
 ## Files
 
@@ -243,20 +250,30 @@ selected brand right inside its expanded detail — no setup beyond the
 token is needed to see it.
 
 **Where the table lives is fixed in `code.js`, not something each
-person configures.** It's a file key and a stable container node id
+person configures.** It's a file key and a Page node id
 (`STATUS_FILE_KEY` / `STATUS_ROOT_NODE_ID` near the top of the file),
 set by whoever maintains this plugin — these aren't secrets, just a
-pointer, so there's nothing sensitive about having them in source. If
-that table ever moves to a different file or section, the maintainer
-updates those two constants and redistributes the plugin; nobody using
-it needs to find or paste in a file link or page name. The fetch reads
-everything under that container and recursively collects every
-row-shaped node it finds — identified by its structure (a `Component`
-cell plus at least one of the four brand/platform cells), not by its
-layer name — so renaming row instances on the Figma side, or the exact
-frame structure around the rows, can't break this lookup; only that
-stable top-level container and the row's own internal cell names need
-to stay put.
+pointer, so there's nothing sensitive about having them in source.
+`STATUS_ROOT_NODE_ID` deliberately points at the **Page**, not a
+specific frame inside it: the fetch reads that whole page, then searches
+it by name for a frame called `"Component Status"` (`STATUS_FRAME_NAME`)
+to use as the actual scanning root. The frame that holds the table gets
+regenerated/moved around internally as the table's own content changes
+— the Page itself doesn't — so the admin only ever has to chase a new
+id when the table moves to a genuinely different page or file. From
+that frame, the fetch recursively collects every row-shaped node it
+finds — identified by its structure (a `Component` cell plus at least
+one of the four brand/platform cells), not by its layer name — so
+renaming row instances on the Figma side, or the exact frame structure
+around the rows, can't break this lookup either.
+
+**Version history.** Each row's changelog lives in a separate sibling
+node right after it (not nested inside the row), named
+`"History / <component name>"`, with one `Entry` instance per line
+(version, date, change type, description). The fetch collects these the
+same pass as the rows and attaches each one to its matching row by name;
+expanding a component shows its full history underneath the Status
+block, in a scrollable list if it's long.
 
 **Brand dropdown.** Top of the Inspector tab, next to the language
 dropdown: **COBA** / **Purple**. Switching brands re-renders the
@@ -291,17 +308,21 @@ itself displays, not the Figma layer name of either side, since layer
 names can drift from what's actually shown, and deliberately not a
 strict byte-for-byte match, since minor spacing differences (e.g.
 "Button / Standard" vs "Button/Standard") shouldn't break the lookup.
-If there's no exact match, it falls back to a **prefix match**: some
-components carry extra decoration baked into their own Figma name that
-the table's Component cell doesn't have — e.g. a component literally
-named "Basic Popover 🖼 v1.1.0" (an embedded version marker, separate
-from the table's own Version column) still matches a table row named
-just "Basic Popover". The fallback requires a clean word boundary right
-after the matched prefix (so "Bot" can never wrongly match "Bot_Agent
-Dialog") and prefers the longest matching row name when more than one
-could apply. A component that still isn't found shows "No status entry
-found" (with the loaded row count, so you know whether it's a genuine
-naming mismatch or nothing loaded at all) rather than silently omitting
+If there's no exact match, it falls back to a **prefix match in either
+direction**, each requiring a clean word boundary right at the split
+point (so "Bot" can never wrongly match "Bot_Agent Dialog"):
+1. The component's own Figma name carries extra decoration the table's
+   Component cell doesn't have — e.g. a component literally named
+   "Basic Popover 🖼 v1.1.0" (an embedded version marker, separate from
+   the table's own Version column) still matches a table row named just
+   "Basic Popover". Prefers the longest matching row name.
+2. The table's Component cell has extra trailing text the plain
+   component name doesn't. Prefers the shortest row name the component
+   matches a prefix of.
+
+A component that still isn't found shows "No status entry found" (with
+the loaded row count, so you know whether it's a genuine naming
+mismatch or nothing loaded at all) rather than silently omitting
 anything.
 
 **Version cell.** Looks for a group literally named `Version` first;

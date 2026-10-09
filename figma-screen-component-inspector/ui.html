@@ -539,6 +539,21 @@
   .status-note { font-size: 11px; color: var(--text-muted); }
   .status-meta { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
 
+  .status-history {
+    max-height: 150px;
+    overflow-y: auto;
+    border-top: 1px solid var(--border);
+    padding-top: 6px;
+  }
+  .history-entry { margin-bottom: 8px; }
+  .history-entry:last-child { margin-bottom: 0; }
+  .history-meta {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+  .history-desc { font-size: 11px; color: var(--text); margin-top: 2px; line-height: 1.4; }
+
   .status-skeleton-row {
     display: flex;
     align-items: center;
@@ -899,8 +914,15 @@
     if (!statusDebug) return '';
     var lines = [];
     if (statusDebug.rootName != null) {
-      lines.push('Root node: "' + statusDebug.rootName + '" (' + statusDebug.rootType + '), ' +
+      lines.push('Page: "' + statusDebug.rootName + '" (' + statusDebug.rootType + '), ' +
         statusDebug.rootChildCount + ' direct children.');
+    }
+    if (statusDebug.tableFrameName != null) {
+      lines.push('Table frame: "' + statusDebug.tableFrameName + '"' +
+        (statusDebug.tableFrameFound ? ' (found by name).' : ' (named frame not found — scanned the page itself instead).'));
+    }
+    if (statusDebug.historyFramesFound != null) {
+      lines.push('History frames found: ' + statusDebug.historyFramesFound);
     }
     if (statusDebug.rows && statusDebug.rows.length) {
       lines.push('');
@@ -1282,17 +1304,21 @@
   }
 
   // Looks up a component's status row. Tries an exact normalized match
-  // first, then falls back to a prefix match: some components carry extra
-  // decoration in their own Figma name that the table's Component cell
-  // doesn't have (e.g. an embedded "🖼 v1.1.0" version marker baked into the
-  // name itself, separate from the table's own Version column) — so
-  // "basic popover 🖼 v1.1.0" should still match a table row named just
-  // "Basic Popover". Requires a non-alphanumeric (or end-of-string)
-  // boundary right after the matched prefix so "bot" can't wrongly match
-  // "bot_agent dialog", and prefers the longest matching row name.
+  // first, then two prefix-match fallbacks, each requiring a clean
+  // word boundary (non-alphanumeric or end-of-string) right at the split
+  // point so "bot" can never wrongly match "bot_agent dialog":
+  //   1. The component's own name is longer — it carries extra decoration
+  //      the table doesn't (e.g. an embedded "🖼 v1.1.0" version marker
+  //      baked into the Figma name itself) — matched against the longest
+  //      row name that's a clean prefix of it.
+  //   2. The table's row name is longer — its Component cell has extra
+  //      trailing text the plain component name doesn't — matched against
+  //      the shortest row name that the component's name is a clean
+  //      prefix of.
   function findStatusRow(compName) {
     var key = normalizeName(compName);
     if (statusByName[key]) return statusByName[key];
+
     var bestKey = null;
     for (var k in statusByName) {
       if (key.indexOf(k) !== 0) continue;
@@ -1301,7 +1327,17 @@
         if (!bestKey || k.length > bestKey.length) bestKey = k;
       }
     }
-    return bestKey ? statusByName[bestKey] : null;
+    if (bestKey) return statusByName[bestKey];
+
+    var bestReverseKey = null;
+    for (var k2 in statusByName) {
+      if (k2.indexOf(key) !== 0) continue;
+      var rest2 = k2.slice(key.length);
+      if (rest2 === '' || /^[^a-z0-9]/i.test(rest2)) {
+        if (!bestReverseKey || k2.length < bestReverseKey.length) bestReverseKey = k2;
+      }
+    }
+    return bestReverseKey ? statusByName[bestReverseKey] : null;
   }
 
   // Looks up this row's status for the brand currently selected in the
@@ -1328,7 +1364,19 @@
     var html = buildPlatformStatusHtml('iOS', brandData.ios) + buildPlatformStatusHtml('Android', brandData.android);
     if (row.version) html += '<div class="status-meta">Library version: ' + escapeHtml(row.version) + '</div>';
     if (row.link) html += '<span class="link-row"><a href="' + escapeHtml(row.link) + '" target="_blank">Go to Component ↗</a></span>';
+    html += buildHistoryHtml(row.history);
     return html;
+  }
+
+  function buildHistoryHtml(history) {
+    if (!history || !history.length) return '';
+    var rows = history.map(function (h) {
+      var meta = [h.version, h.date, h.type].filter(Boolean).map(escapeHtml).join(' · ');
+      var desc = h.description ? '<div class="history-desc">' + escapeHtml(h.description) + '</div>' : '';
+      return '<div class="history-entry"><div class="history-meta">' + meta + '</div>' + desc + '</div>';
+    }).join('');
+    return '<div class="detail-label" style="margin-top:10px;">Version history</div>' +
+      '<div class="status-history">' + rows + '</div>';
   }
 
   function buildCompactStatusChip(platformLabel, data) {
