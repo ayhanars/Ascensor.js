@@ -178,7 +178,7 @@ This plugin is plain JavaScript/HTML — there is nothing to compile or
 | File | Purpose |
 |---|---|
 | `manifest.json` | Plugin manifest (entry points, permissions). |
-| `code.js` | Main plugin thread — reads the document via the Figma Plugin API, classifies components, sends results to the UI. Runs sandboxed, no network access. |
+| `code.js` | Main plugin thread — reads the document via the Figma Plugin API, classifies components, sends results to the UI. Also handles the Settings tab's token storage (via `figma.clientStorage`) and, going forward, the Component Status lookup — the only thing this plugin makes network requests for, and only to `api.figma.com`. |
 | `ui.html` | The plugin's UI (HTML/CSS/vanilla JS, no dependencies, no CDN). |
 
 ## Tagging your components
@@ -199,6 +199,56 @@ set the tag either on each individual variant's description or once on
 the component set's description — the plugin falls back to the set's
 description and documentation links when a specific variant has none of
 its own.
+
+## Component Status token (Settings tab)
+
+The plugin has two tabs now: **Inspector** (everything above) and
+**Settings**, where you set up a Figma access token. This is groundwork
+for an in-progress feature — cross-referencing each component against a
+"Component Status" page in a separate CO/CO Design Library file, so the
+plugin can show whether it's Implemented / Update available / Not
+Started for COBA and Purple. The Settings tab currently handles getting
+the token saved; the actual status lookup/fetch is being built next.
+
+**Why a token at all:** the Figma Plugin API can only read the file it's
+currently running in — it has no way to reach into a different file, by
+design (a sandboxing boundary, not a limitation of this plugin). Reading
+the Component Status page, which lives in a separate file, requires
+Figma's REST API instead, which needs a personal access token.
+
+**How it's stored:** entered once via the Settings tab, saved with
+`figma.clientStorage` — local to your own Figma install on this machine
+only. It is never written into `code.js`, `manifest.json`, or any other
+file in this plugin, and therefore never ends up in version control or
+in a copy of the plugin folder shared with someone else. It's sent
+nowhere except directly to `api.figma.com`, which is the only domain
+`manifest.json`'s `networkAccess` allows.
+
+**Generating a token** (Settings tab walks through this too, in-app):
+Figma → your profile picture (top-left) → Settings → Security tab →
+Personal access tokens → Generate new token → name it, set the **File
+content** scope to **Read-only** (leave everything else off) → Generate
+→ copy it immediately (Figma only shows it once) → paste into the
+Settings tab here and click Save.
+
+**On "why does everyone use the same token" if that's how your team
+rolled this out:** a personal access token only grants the API the same
+access its creator already has in Figma — it doesn't grant new access to
+anyone. If your organization shares a single admin-generated token
+across many people rather than everyone generating their own, this is a
+deliberate tradeoff (traded individual revocation/audit for simpler
+onboarding) made by whoever administers this plugin for your team, not
+something the plugin itself decides. Whatever the case, the mechanism
+here (settings field → `clientStorage`) is the same either way, and
+never involves committing the token to source.
+
+**Where the status table lives** is also set in the Settings tab, not
+hardcoded — a "Design library file link or key" field (paste the full
+figma.com URL or just the key) and a "Page name" field. The file field
+ships pre-filled with the CO/CO Design Library branch key already, so
+that part needs no typing; the page name still needs to be filled in
+once (whatever the actual page is called in that file — e.g. "Component
+Status"), since that hasn't been confirmed yet.
 
 ## Technical notes & known limitations (MVP)
 

@@ -306,12 +306,41 @@ figma.on('selectionchange', function () {
   analyzeSelection();
 });
 
-figma.ui.onmessage = function (msg) {
+// The Figma access token (for reading the Component Status page from the
+// separate CO/CO Design Library file) lives only in this plugin's own
+// clientStorage — local to this machine, never written into any source
+// file, never part of what gets committed or shared as the plugin. The
+// target file/page for that status table is configurable the same way,
+// rather than hardcoded, since the branch key or page name can change
+// without needing a new version of the plugin.
+var FIGMA_TOKEN_STORAGE_KEY = 'figmaAccessToken';
+var STATUS_FILE_KEY_STORAGE_KEY = 'figmaStatusFileKey';
+var STATUS_PAGE_NAME_STORAGE_KEY = 'figmaStatusPageName';
+
+figma.ui.onmessage = async function (msg) {
   if (!msg) return;
+
   if (msg.type === 'refresh') {
     analyzeSelection();
   } else if (msg.type === 'select' && Array.isArray(msg.ids)) {
     selectInstancesOnCanvas(msg.ids);
+  } else if (msg.type === 'get-token') {
+    var existingToken = await figma.clientStorage.getAsync(FIGMA_TOKEN_STORAGE_KEY);
+    figma.ui.postMessage({ type: 'token-status', token: existingToken || null });
+  } else if (msg.type === 'save-token' && typeof msg.token === 'string') {
+    await figma.clientStorage.setAsync(FIGMA_TOKEN_STORAGE_KEY, msg.token.trim());
+    figma.ui.postMessage({ type: 'token-saved' });
+  } else if (msg.type === 'clear-token') {
+    await figma.clientStorage.deleteAsync(FIGMA_TOKEN_STORAGE_KEY);
+    figma.ui.postMessage({ type: 'token-cleared' });
+  } else if (msg.type === 'get-status-source') {
+    var existingFileKey = await figma.clientStorage.getAsync(STATUS_FILE_KEY_STORAGE_KEY);
+    var existingPageName = await figma.clientStorage.getAsync(STATUS_PAGE_NAME_STORAGE_KEY);
+    figma.ui.postMessage({ type: 'status-source', fileKey: existingFileKey || null, pageName: existingPageName || null });
+  } else if (msg.type === 'save-status-source' && typeof msg.fileKey === 'string' && typeof msg.pageName === 'string') {
+    await figma.clientStorage.setAsync(STATUS_FILE_KEY_STORAGE_KEY, msg.fileKey.trim());
+    await figma.clientStorage.setAsync(STATUS_PAGE_NAME_STORAGE_KEY, msg.pageName.trim());
+    figma.ui.postMessage({ type: 'status-source-saved' });
   }
 };
 

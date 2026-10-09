@@ -62,6 +62,148 @@
     font-size: 11px;
   }
 
+  .tab-bar {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .tab-btn {
+    flex: 1;
+    border: none;
+    background: var(--bg);
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 10px 0;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .tab-btn:hover { background: var(--bg-subtle); }
+  .tab-btn.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+  }
+
+  .tab-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+  .settings-panel {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+  .settings-section { margin-bottom: 22px; }
+  .settings-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+  .settings-help {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-muted);
+    margin: 0 0 12px 0;
+  }
+  .settings-steps {
+    margin: 0 0 14px 0;
+    padding-left: 18px;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--text);
+  }
+  .settings-steps li { margin-bottom: 4px; }
+  .settings-steps code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 11px;
+  }
+  .settings-field { margin-bottom: 12px; }
+  .settings-field-label {
+    display: block;
+    font-size: 12px;
+    color: var(--text);
+    margin-bottom: 5px;
+  }
+  .settings-text-input {
+    width: 100%;
+    font-size: 12px;
+    padding: 7px 9px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  .token-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .token-input {
+    flex: 1;
+    min-width: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    padding: 7px 9px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .token-show-btn {
+    flex-shrink: 0;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    border-radius: 6px;
+    font-size: 11px;
+    padding: 0 10px;
+    cursor: pointer;
+    color: var(--text);
+  }
+  .token-show-btn:hover { background: var(--bg-subtle); }
+  .token-actions { display: flex; align-items: center; gap: 10px; }
+  .token-save-btn {
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 7px 14px;
+    cursor: pointer;
+  }
+  .token-save-btn:hover { opacity: 0.9; }
+  .token-clear-btn {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 7px 4px;
+  }
+  .token-clear-btn:hover { color: var(--text); text-decoration: underline; }
+  .token-status {
+    font-size: 11px;
+    margin-left: auto;
+  }
+  .token-status.set { color: #0f9d58; }
+  .token-status.unset { color: var(--text-muted); }
+  .settings-note {
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--text-muted);
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+
   .lang-bar {
     display: flex;
     align-items: center;
@@ -386,6 +528,13 @@
 </head>
 <body>
 
+<div class="tab-bar">
+  <button class="tab-btn active" id="tab-btn-inspector" type="button">Inspector</button>
+  <button class="tab-btn" id="tab-btn-settings" type="button">Settings</button>
+</div>
+
+<div class="tab-panel" id="tab-panel-inspector">
+
 <div class="lang-bar">
   <label for="language-select">Content language</label>
   <select id="language-select">
@@ -437,6 +586,80 @@
   </div>
 </main>
 
+</div>
+
+<div class="tab-panel" id="tab-panel-settings" style="display:none;">
+  <div class="settings-panel">
+
+    <div class="settings-section">
+      <div class="settings-label">Figma access token</div>
+      <p class="settings-help">
+        This lets the plugin read the <strong>Component Status</strong> page from the
+        CO/CO Design Library file, so it can show whether a component is implemented,
+        has an update available, or hasn't been started yet for COBA/Purple. It only
+        needs to be set up once — ask your plugin admin for the token if you don't
+        have one yet, or generate your own:
+      </p>
+      <ol class="settings-steps">
+        <li>Open Figma (web or desktop app) and click your profile picture in the top-left corner.</li>
+        <li>Click <strong>Settings</strong>.</li>
+        <li>Open the <strong>Security</strong> tab.</li>
+        <li>Scroll down to <strong>Personal access tokens</strong> and click <strong>Generate new token</strong>.</li>
+        <li>Give it a name, e.g. <code>Screen Component Inspector</code>.</li>
+        <li>Under scopes, find <strong>File content</strong> and set it to <strong>Read-only</strong>. Leave every other scope off.</li>
+        <li>Click <strong>Generate token</strong>.</li>
+        <li><strong>Copy the token right away</strong> — Figma only shows it to you once.</li>
+        <li>Paste it into the field below and click <strong>Save</strong>.</li>
+      </ol>
+
+      <div class="token-row">
+        <input type="password" id="token-input" class="token-input" placeholder="figd_…" autocomplete="off" spellcheck="false" />
+        <button type="button" class="token-show-btn" id="token-show-btn">Show</button>
+      </div>
+      <div class="token-actions">
+        <button type="button" class="token-save-btn" id="token-save-btn">Save</button>
+        <button type="button" class="token-clear-btn" id="token-clear-btn">Clear</button>
+        <span class="token-status unset" id="token-status">No token set</span>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-label">Component status source</div>
+      <p class="settings-help">
+        Which file and page the plugin reads the status table from. Not
+        hardcoded — if this ever moves to a different file, branch, or page
+        name, update it here rather than needing a new version of the plugin.
+      </p>
+
+      <div class="settings-field">
+        <label class="settings-field-label" for="status-file-input">Design library file link or key</label>
+        <input type="text" id="status-file-input" class="settings-text-input"
+          value="4eG2NdH7jFnPSllUCiSMrV"
+          placeholder="Paste the figma.com/design/... link, or just the file/branch key" />
+      </div>
+
+      <div class="settings-field">
+        <label class="settings-field-label" for="status-page-input">Page name</label>
+        <input type="text" id="status-page-input" class="settings-text-input"
+          placeholder="e.g. Component Status" />
+      </div>
+
+      <div class="token-actions">
+        <button type="button" class="token-save-btn" id="status-source-save-btn">Save</button>
+        <span class="token-status unset" id="status-source-status">Not set</span>
+      </div>
+    </div>
+
+    <div class="settings-note">
+      Stored only on this computer, inside Figma's own local storage for this plugin.
+      It's never written into any file, never committed anywhere, and never leaves
+      your machine except in direct requests to Figma's own servers when checking
+      component status.
+    </div>
+
+  </div>
+</div>
+
 <script>
   var mainEl = document.getElementById('main');
   var emptyStateEl = document.getElementById('empty-state');
@@ -453,6 +676,91 @@
   var hideVersionsToggle = document.getElementById('hide-versions-toggle');
   var languageSelect = document.getElementById('language-select');
   var toastEl = document.getElementById('toast');
+
+  var tabBtnInspector = document.getElementById('tab-btn-inspector');
+  var tabBtnSettings = document.getElementById('tab-btn-settings');
+  var tabPanelInspector = document.getElementById('tab-panel-inspector');
+  var tabPanelSettings = document.getElementById('tab-panel-settings');
+  var tokenInput = document.getElementById('token-input');
+  var tokenShowBtn = document.getElementById('token-show-btn');
+  var tokenSaveBtn = document.getElementById('token-save-btn');
+  var tokenClearBtn = document.getElementById('token-clear-btn');
+  var tokenStatusEl = document.getElementById('token-status');
+  var statusFileInput = document.getElementById('status-file-input');
+  var statusPageInput = document.getElementById('status-page-input');
+  var statusSourceSaveBtn = document.getElementById('status-source-save-btn');
+  var statusSourceStatusEl = document.getElementById('status-source-status');
+
+  function setActiveTab(tab) {
+    var isInspector = tab === 'inspector';
+    tabBtnInspector.classList.toggle('active', isInspector);
+    tabBtnSettings.classList.toggle('active', !isInspector);
+    tabPanelInspector.style.display = isInspector ? 'flex' : 'none';
+    tabPanelSettings.style.display = isInspector ? 'none' : 'flex';
+  }
+  tabBtnInspector.addEventListener('click', function () { setActiveTab('inspector'); });
+  tabBtnSettings.addEventListener('click', function () { setActiveTab('settings'); });
+
+  tokenShowBtn.addEventListener('click', function () {
+    var showing = tokenInput.type === 'text';
+    tokenInput.type = showing ? 'password' : 'text';
+    tokenShowBtn.textContent = showing ? 'Show' : 'Hide';
+  });
+
+  function setTokenStatus(hasToken) {
+    tokenStatusEl.textContent = hasToken ? 'Token saved on this computer' : 'No token set';
+    tokenStatusEl.className = 'token-status ' + (hasToken ? 'set' : 'unset');
+  }
+
+  tokenSaveBtn.addEventListener('click', function () {
+    var value = tokenInput.value.trim();
+    if (!value) {
+      showToast('Paste a token first');
+      return;
+    }
+    parent.postMessage({ pluginMessage: { type: 'save-token', token: value } }, '*');
+  });
+
+  tokenClearBtn.addEventListener('click', function () {
+    tokenInput.value = '';
+    parent.postMessage({ pluginMessage: { type: 'clear-token' } }, '*');
+  });
+
+  // Ask the plugin thread for whatever token is already stored, so the field
+  // reflects the real saved state (not just "empty on open").
+  parent.postMessage({ pluginMessage: { type: 'get-token' } }, '*');
+
+  // Accepts either a bare file/branch key or a full figma.com URL and pulls
+  // out just the key, the same resolution rule Figma's own tools use: a
+  // /design/:fileKey/branch/:branchKey/... URL identifies the branch by its
+  // own branchKey, not the parent file's key.
+  function extractFileKey(input) {
+    var value = (input || '').trim();
+    if (!value) return '';
+    var branchMatch = value.match(/\/branch\/([0-9a-zA-Z]{10,})/);
+    if (branchMatch) return branchMatch[1];
+    var designMatch = value.match(/\/design\/([0-9a-zA-Z]{10,})/);
+    if (designMatch) return designMatch[1];
+    return value; // assume they pasted a bare key already
+  }
+
+  function setStatusSourceStatus(hasSource) {
+    statusSourceStatusEl.textContent = hasSource ? 'Source saved' : 'Not set';
+    statusSourceStatusEl.className = 'token-status ' + (hasSource ? 'set' : 'unset');
+  }
+
+  statusSourceSaveBtn.addEventListener('click', function () {
+    var fileKey = extractFileKey(statusFileInput.value);
+    var pageName = statusPageInput.value.trim();
+    if (!fileKey || !pageName) {
+      showToast('Fill in both the file and the page name');
+      return;
+    }
+    statusFileInput.value = fileKey;
+    parent.postMessage({ pluginMessage: { type: 'save-status-source', fileKey: fileKey, pageName: pageName } }, '*');
+  });
+
+  parent.postMessage({ pluginMessage: { type: 'get-status-source' } }, '*');
 
   var lastComponents = [];
   var lastFilteredComponents = [];
@@ -845,6 +1153,39 @@
     if (msg.type === 'result') {
       renderScreenHeader(msg.screen);
       renderComponents(msg.components);
+      return;
+    }
+
+    if (msg.type === 'token-status') {
+      tokenInput.value = msg.token || '';
+      setTokenStatus(!!msg.token);
+      return;
+    }
+
+    if (msg.type === 'token-saved') {
+      setTokenStatus(true);
+      showToast('Token saved');
+      return;
+    }
+
+    if (msg.type === 'token-cleared') {
+      setTokenStatus(false);
+      showToast('Token cleared');
+      return;
+    }
+
+    if (msg.type === 'status-source') {
+      // Only overwrite the file field if something was actually saved —
+      // otherwise keep the pre-filled default already in the markup.
+      if (msg.fileKey) statusFileInput.value = msg.fileKey;
+      if (msg.pageName) statusPageInput.value = msg.pageName;
+      setStatusSourceStatus(!!(msg.fileKey && msg.pageName));
+      return;
+    }
+
+    if (msg.type === 'status-source-saved') {
+      setStatusSourceStatus(true);
+      showToast('Source saved');
       return;
     }
   };

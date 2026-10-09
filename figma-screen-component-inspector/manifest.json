@@ -8,6 +8,6 @@
   "documentAccess": "dynamic-page",
   "enablePrivatePluginApi": true,
   "networkAccess": {
-    "allowedDomains": ["none"]
+    "allowedDomains": ["https://api.figma.com"]
   }
 }
