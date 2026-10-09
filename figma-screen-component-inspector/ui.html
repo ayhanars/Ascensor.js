@@ -540,19 +540,34 @@
   .status-meta { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
 
   .status-history {
-    max-height: 150px;
+    display: grid;
+    grid-template-columns: 42px 58px 62px 1fr;
+    column-gap: 8px;
+    row-gap: 5px;
+    align-items: start;
+    max-height: 160px;
     overflow-y: auto;
     border-top: 1px solid var(--border);
     padding-top: 6px;
+    margin-top: 2px;
   }
-  .history-entry { margin-bottom: 8px; }
-  .history-entry:last-child { margin-bottom: 0; }
-  .history-meta {
+  .history-head {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-muted);
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .history-version {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 10px;
     color: var(--text-muted);
   }
-  .history-desc { font-size: 11px; color: var(--text); margin-top: 2px; line-height: 1.4; }
+  .history-date { font-size: 10px; color: var(--text-muted); }
+  .history-type { font-size: 10px; color: var(--text-muted); }
+  .history-desc { font-size: 11px; color: var(--text); line-height: 1.4; }
 
   .status-skeleton-row {
     display: flex;
@@ -1393,15 +1408,21 @@
     return html;
   }
 
+  // Matches the Component Status table's own history layout — a compact
+  // 4-column grid (version / date / type / description) with one row per
+  // changelog entry, rather than a stacked list.
   function buildHistoryHtml(history) {
     if (!history || !history.length) return '';
+    var headHtml = '<span class="history-head">Version</span><span class="history-head">Date</span>' +
+      '<span class="history-head">Type</span><span class="history-head">Description</span>';
     var rows = history.map(function (h) {
-      var meta = [h.version, h.date, h.type].filter(Boolean).map(escapeHtml).join(' · ');
-      var desc = h.description ? '<div class="history-desc">' + escapeHtml(h.description) + '</div>' : '';
-      return '<div class="history-entry"><div class="history-meta">' + meta + '</div>' + desc + '</div>';
+      return '<span class="history-version">' + escapeHtml(h.version || '—') + '</span>' +
+        '<span class="history-date">' + escapeHtml(h.date || '') + '</span>' +
+        '<span class="history-type">' + escapeHtml(h.type || '') + '</span>' +
+        '<span class="history-desc">' + escapeHtml(h.description || '') + '</span>';
     }).join('');
     return '<div class="detail-label" style="margin-top:10px;">Version history</div>' +
-      '<div class="status-history">' + rows + '</div>';
+      '<div class="status-history">' + headHtml + rows + '</div>';
   }
 
   function buildCompactStatusChip(platformLabel, data) {

@@ -273,7 +273,8 @@ node right after it (not nested inside the row), named
 (version, date, change type, description). The fetch collects these the
 same pass as the rows and attaches each one to its matching row by name;
 expanding a component shows its full history underneath the Status
-block, in a scrollable list if it's long.
+block as a compact 4-column table (Version / Date / Type / Description),
+matching the table's own layout, in a scrollable list if it's long.
 
 **Brand dropdown.** Top of the Inspector tab, next to the language
 dropdown: **COBA** / **Purple**. Switching brands re-renders the
