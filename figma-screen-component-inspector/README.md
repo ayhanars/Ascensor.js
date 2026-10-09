@@ -309,16 +309,24 @@ if that's empty, falls back to scanning the whole row for a short text
 layer that looks like a version string (`v1.2.0`, `2.3`, etc.), since
 this table's exact "version" cell location isn't fully nailed down yet.
 
-**What each row's Status block shows:** an iOS and an Android line for
-the selected brand, each a colored dot + label matching the Component
-Status table's own look (green ● Implemented, amber ◐ Update available
-with its "on vX.X.X" note, gray ○ Not Started) rather than a generic
-badge, the library version from the table, and a "Go to Component ↗"
-link when the table row has one (read from the real Figma hyperlink on
-that row's "Go to Component" text, not guessed). While the table is
-still loading, a shimmering skeleton placeholder shows in its place —
-and expanding a row stays expanded through that load, a filter toggle,
-or a brand switch, rather than silently collapsing when the list
+**At a glance, without expanding.** Right under each component's
+classification badge in the (collapsed) row, a compact "● iOS ◐ Android"
+readout shows for the selected brand whenever that component has a
+status entry — hover either chip for its full label and "on vX.X.X"
+note. It only appears once the table has actually loaded and a match
+was found; it stays silent (no skeleton, no "not found" text) otherwise,
+since this renders for every row in the list at once.
+
+**What each row's expanded Status block shows:** an iOS and an Android
+line for the selected brand, each a colored dot + label matching the
+Component Status table's own look (green ● Implemented, amber ◐ Update
+available with its "on vX.X.X" note, gray ○ Not Started) rather than a
+generic badge, the library version from the table, and a "Go to
+Component ↗" link when the table row has one (read from the real Figma
+hyperlink on that row's "Go to Component" text, not guessed). While the
+table is still loading, a shimmering skeleton placeholder shows in its
+place — and expanding a row stays expanded through that load, a filter
+toggle, or a brand switch, rather than silently collapsing when the list
 re-renders.
 
 **Why a token at all:** the Figma Plugin API can only read the file it's
