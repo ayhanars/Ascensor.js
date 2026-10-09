@@ -290,22 +290,36 @@ the same way — this is deliberately the same text the status table
 itself displays, not the Figma layer name of either side, since layer
 names can drift from what's actually shown, and deliberately not a
 strict byte-for-byte match, since minor spacing differences (e.g.
-"Button / Standard" vs "Button/Standard") shouldn't break the lookup. A
-component that isn't found in the table shows "No status entry found"
-(with the loaded row count, so you know whether it's a naming mismatch
-or nothing loaded at all) rather than silently omitting anything.
+"Button / Standard" vs "Button/Standard") shouldn't break the lookup.
+If there's no exact match, it falls back to a **prefix match**: some
+components carry extra decoration baked into their own Figma name that
+the table's Component cell doesn't have — e.g. a component literally
+named "Basic Popover 🖼 v1.1.0" (an embedded version marker, separate
+from the table's own Version column) still matches a table row named
+just "Basic Popover". The fallback requires a clean word boundary right
+after the matched prefix (so "Bot" can never wrongly match "Bot_Agent
+Dialog") and prefers the longest matching row name when more than one
+could apply. A component that still isn't found shows "No status entry
+found" (with the loaded row count, so you know whether it's a genuine
+naming mismatch or nothing loaded at all) rather than silently omitting
+anything.
 
 **Version cell.** Looks for a group literally named `Version` first;
 if that's empty, falls back to scanning the whole row for a short text
 layer that looks like a version string (`v1.2.0`, `2.3`, etc.), since
 this table's exact "version" cell location isn't fully nailed down yet.
 
-**What each row's Status block shows:** iOS and Android status pills for
-the selected brand (green = Implemented, amber = Update available with
-its "on vX.X.X" note, gray = Not Started), the library version from the
-table, and a "Go to Component ↗" link when the table row has one (read
-from the real Figma hyperlink on that row's "Go to Component" text, not
-guessed).
+**What each row's Status block shows:** an iOS and an Android line for
+the selected brand, each a colored dot + label matching the Component
+Status table's own look (green ● Implemented, amber ◐ Update available
+with its "on vX.X.X" note, gray ○ Not Started) rather than a generic
+badge, the library version from the table, and a "Go to Component ↗"
+link when the table row has one (read from the real Figma hyperlink on
+that row's "Go to Component" text, not guessed). While the table is
+still loading, a shimmering skeleton placeholder shows in its place —
+and expanding a row stays expanded through that load, a filter toggle,
+or a brand switch, rather than silently collapsing when the list
+re-renders.
 
 **Why a token at all:** the Figma Plugin API can only read the file it's
 currently running in — it has no way to reach into a different file, by

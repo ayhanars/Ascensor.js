@@ -506,18 +506,40 @@
     color: var(--text-muted);
     font-size: 11px;
   }
-  .status-pill {
-    display: inline-block;
-    font-size: 11px;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 999px;
+  /* Colored dot + label, matching the Component Status table's own look
+     (a bullet glyph next to the status text) rather than a badge/pill. */
+  .status-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    font-weight: 500;
   }
-  .status-ok { background: var(--badge-atom); color: var(--badge-atom-text); }
-  .status-update { background: var(--local-accent-bg); color: var(--local-accent-text); }
-  .status-none { background: var(--badge-unclassified); color: var(--badge-unclassified-text); }
+  .status-dot { font-size: 9px; line-height: 1; }
+  .status-ok { color: #0f9d58; }
+  .status-update { color: #b35c00; }
+  .status-none { color: var(--text-muted); font-weight: 400; }
   .status-note { font-size: 11px; color: var(--text-muted); }
   .status-meta { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+  .status-skeleton-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .status-skeleton-bar {
+    height: 10px;
+    width: 120px;
+    border-radius: 4px;
+    background: linear-gradient(90deg, var(--border) 25%, #f0f0f0 37%, var(--border) 63%);
+    background-size: 400% 100%;
+    animation: status-shimmer 1.4s ease infinite;
+  }
+  @keyframes status-shimmer {
+    0% { background-position: 100% 50%; }
+    100% { background-position: 0 50%; }
+  }
 
   .item-count {
     flex-shrink: 0;
@@ -994,6 +1016,14 @@
   // renderComponents) since old ids may no longer correspond to what's
   // currently on screen.
   var includedInCopy = {};
+  // comp.id -> boolean; which rows are currently expanded. renderFilteredList
+  // rebuilds every row from scratch on each call (filter toggles, a brand
+  // switch, the status table finishing its load) — without this, any row
+  // a person had open would silently collapse the moment status data
+  // arrived, which defeats the point of showing a skeleton in place while
+  // it's loading. Reset alongside includedInCopy whenever a fresh screen
+  // result comes in (see renderComponents).
+  var expandedIds = {};
 
   refreshBtn.addEventListener('click', function () {
     parent.postMessage({ pluginMessage: { type: 'refresh' } }, '*');
@@ -1222,9 +1252,39 @@
         '</span><span class="detail-value muted">No data</span></div>';
     }
     var cls = statusBadgeClass(data.glyph);
-    var pill = '<span class="status-pill ' + cls + '">' + escapeHtml(data.label || '—') + '</span>';
+    var glyph = data.glyph || (cls === 'status-ok' ? '●' : cls === 'status-update' ? '◐' : '○');
+    var indicator = '<span class="status-indicator ' + cls + '"><span class="status-dot">' + escapeHtml(glyph) +
+      '</span>' + escapeHtml(data.label || '—') + '</span>';
     var note = data.note ? ' <span class="status-note">' + escapeHtml(data.note) + '</span>' : '';
-    return '<div class="status-row"><span class="status-platform">' + platformLabel + '</span>' + pill + note + '</div>';
+    return '<div class="status-row"><span class="status-platform">' + platformLabel + '</span>' + indicator + note + '</div>';
+  }
+
+  function statusSkeletonHtml() {
+    return '<div class="status-skeleton-row"><span class="status-platform">iOS</span><span class="status-skeleton-bar"></span></div>' +
+      '<div class="status-skeleton-row"><span class="status-platform">Android</span><span class="status-skeleton-bar" style="width:150px;"></span></div>';
+  }
+
+  // Looks up a component's status row. Tries an exact normalized match
+  // first, then falls back to a prefix match: some components carry extra
+  // decoration in their own Figma name that the table's Component cell
+  // doesn't have (e.g. an embedded "🖼 v1.1.0" version marker baked into the
+  // name itself, separate from the table's own Version column) — so
+  // "basic popover 🖼 v1.1.0" should still match a table row named just
+  // "Basic Popover". Requires a non-alphanumeric (or end-of-string)
+  // boundary right after the matched prefix so "bot" can't wrongly match
+  // "bot_agent dialog", and prefers the longest matching row name.
+  function findStatusRow(compName) {
+    var key = normalizeName(compName);
+    if (statusByName[key]) return statusByName[key];
+    var bestKey = null;
+    for (var k in statusByName) {
+      if (key.indexOf(k) !== 0) continue;
+      var rest = key.slice(k.length);
+      if (rest === '' || /^[^a-z0-9]/i.test(rest)) {
+        if (!bestKey || k.length > bestKey.length) bestKey = k;
+      }
+    }
+    return bestKey ? statusByName[bestKey] : null;
   }
 
   // Looks up this row's status for the brand currently selected in the
@@ -1233,16 +1293,13 @@
   // that's how the table is organized (one row per component, not per variant).
   function buildStatusHtml(comp) {
     if (statusLoadState === 'idle' || statusLoadState === 'loading') {
-      return '<div class="detail-value muted">' +
-        (statusLoadState === 'loading' ? 'Loading component status…' : 'Component status not loaded yet.') +
-        '</div>';
+      return statusSkeletonHtml();
     }
     if (statusLoadState === 'error') {
       return '<div class="detail-value muted">' + escapeHtml(statusLoadErrorText) + '</div>';
     }
 
-    var key = normalizeName(comp.name);
-    var row = statusByName[key];
+    var row = findStatusRow(comp.name);
     if (!row) {
       var hint = statusRowCount
         ? ' ' + statusRowCount + ' row' + (statusRowCount === 1 ? '' : 's') + ' are loaded — open “details” in the banner above to compare names.'
@@ -1259,7 +1316,7 @@
 
   function buildItemEl(comp) {
     var item = document.createElement('div');
-    item.className = 'item';
+    item.className = 'item' + (expandedIds[comp.id] ? ' expanded' : '');
 
     var displayName = hideVersions ? stripVersionNumbers(comp.name) : comp.name;
     var displayVariant = comp.variantName && hideVersions ? stripVersionNumbers(comp.variantName) : comp.variantName;
@@ -1330,6 +1387,7 @@
 
     item.querySelector('.item-row').addEventListener('click', function () {
       item.classList.toggle('expanded');
+      expandedIds[comp.id] = item.classList.contains('expanded');
     });
 
     item.querySelector('.select-btn').addEventListener('click', function (event) {
@@ -1394,6 +1452,7 @@
   function renderComponents(components) {
     lastComponents = components || [];
     includedInCopy = {};
+    expandedIds = {};
 
     if (!lastComponents.length) {
       lastFilteredComponents = [];
