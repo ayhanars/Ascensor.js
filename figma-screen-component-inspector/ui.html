@@ -263,21 +263,6 @@
     cursor: pointer;
   }
 
-  .status-refresh-icon-btn {
-    border: 1px solid var(--border);
-    background: var(--bg);
-    border-radius: 4px;
-    width: 22px;
-    height: 22px;
-    line-height: 1;
-    font-size: 13px;
-    cursor: pointer;
-    color: var(--text-muted);
-    margin-left: 6px;
-    padding: 0;
-  }
-  .status-refresh-icon-btn:hover { background: var(--bg-subtle); color: var(--text); }
-
   .status-table-banner {
     padding: 7px 16px;
     font-size: 11px;
@@ -650,7 +635,6 @@
     <option value="coba">COBA</option>
     <option value="purple">Purple</option>
   </select>
-  <button type="button" class="status-refresh-icon-btn" id="status-refresh-btn" title="Refresh component status">↻</button>
   <label for="language-select" style="margin-left:10px;">Content language</label>
   <select id="language-select">
     <option value="EN">EN</option>
@@ -769,7 +753,6 @@
   var languageSelect = document.getElementById('language-select');
   var brandSelect = document.getElementById('brand-select');
   var toastEl = document.getElementById('toast');
-  var statusRefreshBtn = document.getElementById('status-refresh-btn');
   var statusTableBannerEl = document.getElementById('status-table-banner');
 
   var tabBtnInspector = document.getElementById('tab-btn-inspector');
@@ -928,10 +911,6 @@
     renderStatusFetchCheck();
     parent.postMessage({ pluginMessage: { type: 'fetch-status-table' } }, '*');
   }
-
-  statusRefreshBtn.addEventListener('click', function () {
-    fetchStatusTable();
-  });
 
   // Auto-load once per session, as soon as a screen's been analyzed, if the
   // source is configured and we haven't already tried.

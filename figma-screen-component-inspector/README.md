@@ -247,15 +247,14 @@ internal frame structure around the rows — only that stable top-level
 container needs to stay put.
 
 **Brand dropdown.** Top of the Inspector tab, next to the language
-dropdown, with a small ↻ refresh icon beside it: **COBA** / **Purple**.
-Switching brands re-renders the already-expanded rows' Status block —
-no re-fetch needed, since both brands' data comes back in the same
-table read.
+dropdown: **COBA** / **Purple**. Switching brands re-renders the
+already-expanded rows' Status block — no re-fetch needed, since both
+brands' data comes back in the same table read.
 
 **When it loads.** The status table is fetched once per plugin session,
 automatically, the first time a screen is analyzed — not re-fetched on
-every screen switch or brand change. Click the ↻ icon to force a fresh
-read (e.g. after the table's been updated).
+every screen switch or brand change. To force a fresh read (e.g. after
+the table's been updated), close and reopen the plugin.
 
 **Loading/error feedback shows in the Inspector tab itself** (a banner
 right under the Brand/Language row), not hidden in Settings where it'd

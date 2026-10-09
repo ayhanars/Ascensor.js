@@ -324,7 +324,7 @@ var FIGMA_TOKEN_SAVED_AT_KEY = 'figmaTokenSavedAt';
 // structure. If this table ever moves to a different file/branch or
 // section, update these two constants and redistribute the plugin.
 var STATUS_FILE_KEY = '4eG2NdH7jFnPSllUCiSMrV';
-var STATUS_ROOT_NODE_ID = '9511:38471';
+var STATUS_ROOT_NODE_ID = '111416:42958';
 
 // Validates a token against Figma's own API (GET /v1/me is the cheapest
 // authenticated call — it just returns the token owner's identity) rather
