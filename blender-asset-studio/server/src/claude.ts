@@ -107,9 +107,28 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
     const abort = () => child.kill("SIGTERM");
     opts.signal?.addEventListener("abort", abort, { once: true });
 
+    // Watchdog: a sleeping Mac or a dead Blender socket leaves the agent waiting forever.
+    const startedAt = Date.now();
+    let lastActivity = Date.now();
+    let killedBy: string | null = null;
+    const e = EFFORTS[opts.effort];
+    const watchdog = setInterval(() => {
+      const idleMin = (Date.now() - lastActivity) / 60000;
+      const totalMin = (Date.now() - startedAt) / 60000;
+      if (idleMin >= config.idleMinutes) killedBy = `no activity for ${Math.round(idleMin)} minutes (did the Mac sleep, or did Blender stop answering?)`;
+      else if (totalMin >= e.maxMinutes) killedBy = `exceeded the ${e.maxMinutes} minute limit for effort "${opts.effort}"`;
+      if (killedBy) {
+        clearInterval(watchdog);
+        opts.onLog("error", `stopping run: ${killedBy}`);
+        child.kill("SIGTERM");
+        setTimeout(() => child.kill("SIGKILL"), 5000).unref();
+      }
+    }, 15000);
+
     const rl = readline.createInterface({ input: child.stdout });
     rl.on("line", (line) => {
       if (!line.trim()) return;
+      lastActivity = Date.now();
       let ev: any;
       try {
         ev = JSON.parse(line);
@@ -161,8 +180,12 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
       resolve(out);
     });
     child.on("close", (code) => {
+      clearInterval(watchdog);
       opts.signal?.removeEventListener("abort", abort);
-      if (!out.ok && !out.error) {
+      if (killedBy) {
+        out.ok = false;
+        out.error = killedBy;
+      } else if (!out.ok && !out.error) {
         out.error = opts.signal?.aborted
           ? "cancelled"
           : `claude exited with code ${code}${stderr ? ": " + stderr.trim().slice(-800) : ""}`;

@@ -28,6 +28,9 @@ export default function GeneratingOverlay({ version, lines, parentGlbUrl, refUrl
   const elapsed = useElapsed(version.startedAt ?? version.createdAt, true);
   const stage = stageOf(lines, version.status);
   const lastText = [...lines].reverse().find((l) => l.kind === "text" || l.kind === "tool");
+  const lastAt = lines.length ? lines[lines.length - 1].t : null;
+  const sinceLast = useElapsed(lastAt, true);
+  const staleMin = lastAt ? (Date.now() - new Date(lastAt).getTime()) / 60000 : 0;
   return (
     <div className="gen-overlay">
       <ParticleScene glbUrl={parentGlbUrl} refUrl={refUrl} />
@@ -41,7 +44,10 @@ export default function GeneratingOverlay({ version, lines, parentGlbUrl, refUrl
         <div className="gen-title">
           Building v{version.n}<span className="gen-dots"><i>.</i><i>.</i><i>.</i></span>
         </div>
-        <div className="gen-stage">{stage} · {elapsed}</div>
+        <div className="gen-stage">{stage} · {elapsed}{lastAt && <span className="muted"> · last activity {sinceLast} ago</span>}</div>
+        {staleMin >= 3 && version.status === "running" && (
+          <div className="warn small">No activity for {Math.floor(staleMin)} min. If the Mac slept or Blender stopped answering, the run is stopped automatically after 8 min; you can also cancel it in the Versions panel.</div>
+        )}
         {lastText && <div className="gen-last muted">{lastText.text.slice(0, 160)}</div>}
         <div className="gen-hint muted small">Watch Blender to see it happen. This page updates on its own.</div>
       </div>
