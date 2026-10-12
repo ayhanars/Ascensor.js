@@ -49,7 +49,10 @@ p { margin: 6px 0; }
 .panel .panel-head { padding: 0 0 6px; }
 .panel-head.clickable { cursor: pointer; }
 .asset-scroll { overflow-y: auto; }
-.asset-row, .version-row { display: flex; gap: 10px; width: 100%; text-align: left; background: none; border: none; border-radius: 6px; padding: 8px 10px; cursor: pointer; }
+.asset-row, .version-row { display: flex; gap: 10px; width: 100%; text-align: left; background: none; border: none; border-radius: 6px; padding: 8px 10px; cursor: pointer; position: relative; }
+.asset-del { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); opacity: 0; padding: 2px 6px; font-size: 13px; background: var(--bg); }
+.asset-row:hover .asset-del, .asset-row:focus-within .asset-del { opacity: 1; }
+.asset-del:hover { color: #fca5a5; border-color: #7f1d1d; }
 .asset-row:hover, .version-row:hover { background: var(--panel2); }
 .asset-row.active, .version-row.active { background: #22304a; }
 .version-row { padding: 8px 6px; }

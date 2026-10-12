@@ -88,12 +88,13 @@ export default function App() {
     }
   };
 
-  const remove = async () => {
-    if (!asset || !confirm(`Delete "${asset.name}" and all its versions?`)) return;
-    await api.deleteAsset(asset.id);
-    setSelectedId(null);
+  const removeById = async (id: string, name: string) => {
+    if (!confirm(`Delete "${name}" and all its versions? This cannot be undone.`)) return;
+    await api.deleteAsset(id);
+    if (selectedId === id) setSelectedId(null);
     void refreshList();
   };
+  const remove = () => asset && removeById(asset.id, asset.name);
 
   const glbUrl = version?.files.glb ? api.fileUrl(asset!.id, version.n, version.files.glb) + `?v=${glbNonce}` : null;
   const parentVersion = version?.parent !== null && version?.parent !== undefined ? asset?.versions.find((v) => v.n === version.parent) : undefined;
@@ -112,7 +113,13 @@ export default function App() {
         </div>
       </header>
       <div className="body">
-        <AssetList assets={assets} selectedId={selectedId} onSelect={(id) => { setCreating(false); setSelectedId(id); }} onNew={() => { setCreating(true); setSelectedId(null); }} />
+        <AssetList
+          assets={assets}
+          selectedId={selectedId}
+          onSelect={(id) => { setCreating(false); setSelectedId(id); }}
+          onNew={() => { setCreating(true); setSelectedId(null); }}
+          onDelete={(a) => void removeById(a.id, a.name)}
+        />
 
         {creating && <main className="center"><NewAssetForm health={health} onCreated={onCreated} onCancel={() => setCreating(false)} /></main>}
 

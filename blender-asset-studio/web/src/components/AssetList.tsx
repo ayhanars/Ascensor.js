@@ -5,11 +5,12 @@ interface Props {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onDelete: (a: AssetSummary) => void;
 }
 
 const dot: Record<string, string> = { queued: "dot queued", running: "dot running", done: "dot done", failed: "dot failed" };
 
-export default function AssetList({ assets, selectedId, onSelect, onNew }: Props) {
+export default function AssetList({ assets, selectedId, onSelect, onNew, onDelete }: Props) {
   return (
     <aside className="asset-list">
       <div className="panel-head">
@@ -19,7 +20,8 @@ export default function AssetList({ assets, selectedId, onSelect, onNew }: Props
       <div className="asset-scroll">
         {assets.length === 0 && <p className="muted pad">No assets yet. Create one with an image and a description.</p>}
         {assets.map((a) => (
-          <button key={a.id} className={"asset-row" + (a.id === selectedId ? " active" : "")} onClick={() => onSelect(a.id)}>
+          <div key={a.id} className={"asset-row" + (a.id === selectedId ? " active" : "")} onClick={() => onSelect(a.id)} role="button" tabIndex={0}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSelect(a.id); }}>
             <div className="asset-thumb">{a.thumb ? <img src={a.thumb} alt="" /> : <span>3D</span>}</div>
             <div className="asset-meta">
               <div className="asset-name">
@@ -30,7 +32,8 @@ export default function AssetList({ assets, selectedId, onSelect, onNew }: Props
                 {a.tags.length > 0 && " · " + a.tags.map((t) => "#" + t).join(" ")}
               </div>
             </div>
-          </button>
+            <button className="asset-del" title={`Delete "${a.name}" and all its versions`} onClick={(e) => { e.stopPropagation(); onDelete(a); }}>🗑</button>
+          </div>
         ))}
       </div>
     </aside>
