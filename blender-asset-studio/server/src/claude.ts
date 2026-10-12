@@ -25,17 +25,9 @@ export interface ClaudeRunOptions {
   signal?: AbortSignal;
 }
 
-const ALLOWED_TOOLS = [
-  "Read",
-  "Write",
-  "Edit",
-  "Glob",
-  "Grep",
-  "mcp__blender__get_scene_info",
-  "mcp__blender__get_object_info",
-  "mcp__blender__execute_blender_code",
-  "mcp__blender__get_viewport_screenshot",
-];
+// Every tool the Blender MCP server exposes is allowed (both spellings Claude Code accepts for
+// "all tools of this server"), so a server with different tool names still works. Bash stays off.
+const ALLOWED_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "ToolSearch", "mcp__blender", "mcp__blender__*"];
 
 export function claudeArgs(opts: { effort: Effort }): string[] {
   const e = EFFORTS[opts.effort];
@@ -116,6 +108,8 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
         out.model = ev.model ?? null;
         const servers = (ev.mcp_servers ?? []).map((s: any) => `${s.name}:${s.status}`).join(", ");
         opts.onLog("info", `session ${ev.session_id ?? ""} model=${ev.model ?? "?"} mcp=[${servers}]`);
+        const blenderTools = (ev.tools ?? []).filter((t: unknown) => typeof t === "string" && t.startsWith("mcp__blender__"));
+        if (blenderTools.length) opts.onLog("info", "blender tools: " + blenderTools.map((t: string) => t.replace("mcp__blender__", "")).join(", "));
         const blender = (ev.mcp_servers ?? []).find((s: any) => s.name === "blender");
         if (blender && blender.status !== "connected") {
           opts.onLog("error", `Blender MCP server status: ${blender.status}. Is Blender running with the addon connected?`);

@@ -1,8 +1,13 @@
 # Blender Asset Studio agent conventions
 
 You are building a single 3D asset inside a running Blender instance. You control Blender
-only through the `blender` MCP tools. The person reviewing your work sees the result as a
-GLB in a web viewer where every top-level object is a clickable "part".
+only through the `blender` MCP tools; there is no shell. The person reviewing your work sees
+the result as a GLB in a web viewer where every top-level object is a clickable "part".
+
+The Blender MCP server's tool names vary between versions. Use whichever tool runs Python
+code inside Blender (usually `execute_blender_code`) and whichever returns a viewport image
+(usually `get_viewport_screenshot`). Tools you are denied are simply unavailable; move on
+without them, do not retry them.
 
 ## Your workflow
 
@@ -10,10 +15,10 @@ GLB in a web viewer where every top-level object is a clickable "part".
    materials and colors before writing any code.
 2. Write or edit `./build.py` in the current directory. It is the one source of truth for the
    asset. Everything you do to the scene must be reproducible by running this file alone.
-3. Run the file in Blender with `mcp__blender__execute_blender_code` using exactly:
+3. Run the file in Blender with the code-execution tool using exactly:
    `exec(compile(open(BUILD_PY).read(), "build.py", "exec"))` where `BUILD_PY` is the absolute
    path given in the task. Never paste the script body into the tool call directly.
-4. Take `mcp__blender__get_viewport_screenshot`, compare to the reference, fix the biggest
+4. Take a viewport screenshot, compare to the reference, fix the biggest
    difference first, edit `build.py`, re-run. Repeat up to the number of passes allowed.
 5. Finish by replying with a short summary: one line per part you created.
 
