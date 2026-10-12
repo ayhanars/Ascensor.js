@@ -1,4 +1,4 @@
-import type { Asset, AssetSummary, Health, LogLine, Version } from "./types";
+import type { Asset, AssetSummary, Health, KitTexture, LogLine, Version } from "./types";
 
 async function j<T>(r: Response): Promise<T> {
   const body = await r.json().catch(() => ({}));
@@ -22,4 +22,8 @@ export const api = {
     fetch(`/api/assets/${id}/versions/${n}/tweak`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then((r) => j<Version>(r)),
   render: (id: string, n: number) => fetch(`/api/assets/${id}/versions/${n}/render`, { method: "POST" }).then((r) => j<Version>(r)),
   fileUrl: (id: string, n: number, rel: string) => `/files/${id}/v${n}/${rel}`,
+  listTextures: () => fetch("/api/textures").then((r) => j<KitTexture[]>(r)),
+  createTexture: (form: FormData) => fetch("/api/textures", { method: "POST", body: form }).then((r) => j<KitTexture>(r)),
+  deleteTexture: (id: string) => fetch(`/api/textures/${id}`, { method: "DELETE" }).then((r) => j<{ ok: boolean }>(r)),
+  textureUrl: (t: KitTexture, which: "albedo" | "normal" | "roughness") => (t.files[which] ? `/textures/${t.id}/${t.files[which]}` : null),
 };

@@ -48,6 +48,8 @@ export interface Version {
   scopedPart: string | null;
   requestedModel: string;
   materials: Materials;
+  /** ids of texture-kit items the agent must use */
+  textures: string[];
   parent: number | null;
   fromScratch: boolean;
   effort: Effort;

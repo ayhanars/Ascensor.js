@@ -83,6 +83,12 @@ Only one generation runs at a time because Blender holds a single scene; later r
   EEVEE and add two close-up detail views.
 - **Several reference images.** The first is the main view; the rest are extra angles or close-ups
   of materials and details.
+- **Your own texture kit.** The Textures tab in the library takes close-up photos of surfaces.
+  The browser derives a normal map and a roughness map from each photo and can mirror-tile it so
+  it repeats without seams; you add a name, tags, the real-world size of one tile in meters and
+  an optional note for the agent. In any run, tick the kit textures the agent must use: they are
+  loaded as image textures with the recipe in `agent/SYSTEM_PROMPT.md`, so they are packed into
+  the GLB and visible in the viewer. Kit textures win over procedural or downloaded ones.
 - **Usage, not money.** The top bar shows the 5-hour and 7-day subscription windows as the CLI
   reports them after each run. The API-equivalent cost of a version is only in a tooltip.
 
@@ -133,6 +139,11 @@ POST   /api/assets/:id/versions/:n/load     re-run build.py in Blender
 POST   /api/assets/:id/versions/:n/tweak    { object, location?, rotation?, scale?, color?, reload? }
 POST   /api/assets/:id/versions/:n/render   re-render views
 GET    /files/:id/v:n/<file>                model.glb, views/*.png, scene.blend, build.py, reference.png
+GET    /api/textures                          texture kit
+POST   /api/textures                          multipart: name, tags, widthM, heightM, seamless, note, albedo, normal, roughness
+PATCH  /api/textures/:id                      { name?, tags?, sizeM?, note? }
+DELETE /api/textures/:id
+GET    /textures/:id/<albedo|normal|roughness>.png
 ```
 
 ## Troubleshooting

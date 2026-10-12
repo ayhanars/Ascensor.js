@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
-import type { Asset, AssetSummary, Health } from "./types";
+import type { Asset, AssetSummary, Health, KitTexture } from "./types";
+import TextureLibrary from "./components/TextureLibrary";
 import AssetList from "./components/AssetList";
 import NewAssetForm from "./components/NewAssetForm";
 import Viewer from "./components/Viewer";
@@ -23,6 +24,9 @@ export default function App() {
   const [selectedPart, setSelectedPart] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<string | null>(null);
   const [glbNonce, setGlbNonce] = useState(0);
+  const [tab, setTab] = useState<"assets" | "textures">("assets");
+  const [kit, setKit] = useState<KitTexture[]>([]);
+  const refreshKit = useCallback(() => api.listTextures().then(setKit).catch(() => {}), []);
 
   const refreshList = useCallback(() => api.listAssets().then(setAssets).catch(() => {}), []);
   const refreshAsset = useCallback(
@@ -39,11 +43,12 @@ export default function App() {
 
   useEffect(() => {
     void refreshList();
+    void refreshKit();
     const h = () => api.health().then(setHealth).catch(() => setHealth(null));
     void h();
     const t = setInterval(h, 10000);
     return () => clearInterval(t);
-  }, [refreshList]);
+  }, [refreshList, refreshKit]);
 
   useEffect(() => {
     if (!selectedId) return setAsset(null);
@@ -122,13 +127,18 @@ export default function App() {
           assets={assets}
           selectedId={selectedId}
           onSelect={(id) => { setCreating(false); setSelectedId(id); }}
-          onNew={() => { setCreating(true); setSelectedId(null); }}
+          onNew={() => { setTab("assets"); setCreating(true); setSelectedId(null); }}
           onDelete={(a) => void removeById(a.id, a.name)}
+          tab={tab}
+          onTab={setTab}
+          textureCount={kit.length}
         />
 
-        {creating && <main className="center"><NewAssetForm health={health} onCreated={onCreated} onCancel={() => setCreating(false)} /></main>}
+        {tab === "textures" && <main className="center"><TextureLibrary textures={kit} onChanged={() => void refreshKit()} /></main>}
 
-        {!creating && !asset && (
+        {tab === "assets" && creating && <main className="center"><NewAssetForm health={health} kit={kit} onCreated={onCreated} onCancel={() => setCreating(false)} /></main>}
+
+        {tab === "assets" && !creating && !asset && (
           <main className="center">
             <div className="center-card empty">
               <h2>Pick an asset or create a new one</h2>
@@ -138,7 +148,7 @@ export default function App() {
           </main>
         )}
 
-        {!creating && asset && version && (
+        {tab === "assets" && !creating && asset && version && (
           <>
             <main className="center">
               <div className="asset-head">
@@ -174,6 +184,7 @@ export default function App() {
                 asset={asset}
                 version={version}
                 health={health}
+                kit={kit}
                 selectedPart={selectedPart}
                 onClearPart={() => setSelectedPart(null)}
                 onQueued={(a) => { setAsset(a); setViewing(Math.max(...a.versions.map((v) => v.n))); void refreshList(); }}

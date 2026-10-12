@@ -17,6 +17,15 @@ export const api = express.Router();
 const isEffort = (e: unknown): e is Effort => typeof e === "string" && e in EFFORTS;
 const isMaterials = (m: unknown): m is Materials => typeof m === "string" && m in MATERIALS;
 const pickModel = (m: unknown): string => (typeof m === "string" && MODELS.some((x) => x.id === m) ? m : "");
+function parseIds(raw: unknown): string[] {
+  if (typeof raw !== "string" || !raw.trim()) return [];
+  try {
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.map(String).filter(Boolean) : [];
+  } catch {
+    return raw.split(",").map((x) => x.trim()).filter(Boolean);
+  }
+}
 
 function parseChanges(raw: unknown, fallbackPart: string | null): Change[] {
   if (typeof raw !== "string" || !raw.trim()) return [];
@@ -41,6 +50,7 @@ function newVersion(a: Asset, init: Partial<Version>): Version {
     scopedPart: null,
     requestedModel: "",
     materials: "flat",
+    textures: [],
     parent: null,
     fromScratch: false,
     effort: "standard",
@@ -118,6 +128,7 @@ api.post("/assets", upload.array("references", 8), (req, res) => {
   const effort = isEffort(req.body.effort) ? req.body.effort : "standard";
   const materials = isMaterials(req.body.materials) ? req.body.materials : "flat";
   const requestedModel = pickModel(req.body.model);
+  const textures = parseIds(req.body.textures);
   const tags = String(req.body.tags ?? "")
     .split(/[,\s]+/)
     .map((t) => t.replace(/^#/, "").trim())
@@ -133,7 +144,7 @@ api.post("/assets", upload.array("references", 8), (req, res) => {
     currentVersion: null,
     versions: [],
   };
-  const v = newVersion(asset, { prompt, effort, materials, requestedModel });
+  const v = newVersion(asset, { prompt, effort, materials, requestedModel, textures });
   v.files.references = saveReferences(store.versionDir(asset.id, v.n), req.files as Express.Multer.File[]);
   v.hasReference = v.files.references.length > 0;
   v.files.reference = v.files.references[0] ?? null;
@@ -188,6 +199,7 @@ api.post("/assets/:id/versions", upload.array("references", 8), (req, res) => {
   const parentN = Number(req.body.parent ?? a.currentVersion);
   const parent = a.versions.find((v) => v.n === parentN);
   const materials = isMaterials(req.body.materials) ? req.body.materials : parent?.materials ?? "flat";
+  const textures = typeof req.body.textures === "string" ? parseIds(req.body.textures) : parent?.textures ?? [];
 
   let changes = parseChanges(req.body.changes, scopedPart);
   const free = String(req.body.prompt ?? "").trim();
@@ -211,6 +223,7 @@ api.post("/assets/:id/versions", upload.array("references", 8), (req, res) => {
         parent: prev,
         requestedModel,
         materials,
+        textures,
       });
       const dir = store.versionDir(asset.id, v.n);
       // new references only on the first version of a chain; later ones inherit from their parent at run time

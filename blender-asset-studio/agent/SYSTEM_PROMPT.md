@@ -89,3 +89,38 @@ Build in this order: massing and proportions first, then details and parts, then
 one extra screenshot after materials to check scale and color against the reference. Close-up
 reference images, when provided, show what the materials should look like; match their color,
 pattern scale and wear.
+
+## Texture kit recipe
+
+When the task lists kit textures, build their materials with this recipe (adapt names):
+
+```python
+def kit_material(name, albedo, normal=None, roughness=None, size_m=(1.0, 1.0), color_tint=None):
+    mat = bpy.data.materials.new(name); mat.use_nodes = True
+    nt = mat.node_tree; nodes = nt.nodes; links = nt.links
+    bsdf = nodes["Principled BSDF"]
+    tex = nodes.new("ShaderNodeTexCoord"); mapping = nodes.new("ShaderNodeMapping")
+    # one tile covers size_m meters in world space (object scale is applied at export)
+    mapping.inputs["Scale"].default_value = (1.0 / size_m[0], 1.0 / size_m[1], 1.0)
+    links.new(tex.outputs["Object"], mapping.inputs["Vector"])
+    img = nodes.new("ShaderNodeTexImage"); img.image = bpy.data.images.load(albedo, check_existing=True)
+    links.new(mapping.outputs["Vector"], img.inputs["Vector"]); links.new(img.outputs["Color"], bsdf.inputs["Base Color"])
+    if roughness:
+        r = nodes.new("ShaderNodeTexImage"); r.image = bpy.data.images.load(roughness, check_existing=True)
+        r.image.colorspace_settings.name = "Non-Color"
+        links.new(mapping.outputs["Vector"], r.inputs["Vector"]); links.new(r.outputs["Color"], bsdf.inputs["Roughness"])
+    if normal:
+        n = nodes.new("ShaderNodeTexImage"); n.image = bpy.data.images.load(normal, check_existing=True)
+        n.image.colorspace_settings.name = "Non-Color"
+        nm = nodes.new("ShaderNodeNormalMap"); nm.inputs["Strength"].default_value = 0.6
+        links.new(mapping.outputs["Vector"], n.inputs["Vector"]); links.new(n.outputs["Color"], nm.inputs["Color"])
+        links.new(nm.outputs["Normal"], bsdf.inputs["Normal"])
+    return mat
+```
+
+Object-space coordinates keep the tile size in meters regardless of UVs, but the glTF export
+needs UVs: give each textured object a UV map (`bpy.ops.object.mode_set` is not needed; use
+`obj.data.uv_layers.new()` and a cube projection via `bpy.ops.uv.cube_project` with a context
+override, or build the mesh with UVs from the start). Image textures are packed into the GLB,
+so the kit shows in the web viewer. Use the kit for every surface it fits; use a slight
+`color_tint` only if the task asks for a different color than the photo.

@@ -1,4 +1,5 @@
-import type { Effort, Health, Materials } from "../types";
+import type { Effort, Health, KitTexture, Materials } from "../types";
+import { api } from "../api";
 import EffortPicker from "./EffortPicker";
 
 interface Props {
@@ -9,10 +10,14 @@ interface Props {
   onModel: (m: string) => void;
   materials: Materials;
   onMaterials: (m: Materials) => void;
+  kit: KitTexture[];
+  textures: string[];
+  onTextures: (ids: string[]) => void;
 }
 
 /** Effort, model and materials, shared by the new-asset form and the iterate panel. */
-export default function RunOptions({ health, effort, onEffort, model, onModel, materials, onMaterials }: Props) {
+export default function RunOptions({ health, effort, onEffort, model, onModel, materials, onMaterials, kit, textures, onTextures }: Props) {
+  const toggle = (id: string) => onTextures(textures.includes(id) ? textures.filter((x) => x !== id) : [...textures, id]);
   const models = health?.models ?? [{ id: "", label: "Default", blurb: "" }];
   const mats = health?.materials;
   return (
@@ -39,6 +44,19 @@ export default function RunOptions({ health, effort, onEffort, model, onModel, m
           <span className="muted small">{mats?.[materials]?.blurb}</span>
         </label>
       </div>
+      {kit.length > 0 && (
+        <>
+          <label>Texture kit <span className="muted">tick the textures the agent must use</span></label>
+          <div className="kit-row">
+            {kit.map((t) => (
+              <button key={t.id} type="button" className={"kit-chip" + (textures.includes(t.id) ? " on" : "")} onClick={() => toggle(t.id)} title={`${t.sizeM[0]} × ${t.sizeM[1]} m · ${t.tags.join(", ")}`}>
+                <img src={api.textureUrl(t, "albedo")!} alt="" />
+                <span>{t.name}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </>
   );
 }

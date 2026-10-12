@@ -40,6 +40,17 @@ export interface Tweak {
   color?: [number, number, number];
 }
 
+export interface KitTexture {
+  id: string;
+  name: string;
+  tags: string[];
+  sizeM: [number, number];
+  seamless: boolean;
+  createdAt: string;
+  files: { albedo: string; normal: string | null; roughness: string | null };
+  note: string;
+}
+
 export interface Version {
   n: number;
   status: VersionStatus;
@@ -48,6 +59,7 @@ export interface Version {
   scopedPart: string | null;
   requestedModel: string;
   materials: Materials;
+  textures: string[];
   parent: number | null;
   fromScratch: boolean;
   effort: Effort;

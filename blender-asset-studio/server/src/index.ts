@@ -4,6 +4,7 @@ import express from "express";
 import cors from "cors";
 import { config } from "./config.js";
 import { api } from "./routes.js";
+import { texturesApi } from "./textures.js";
 import { store } from "./store.js";
 
 fs.mkdirSync(path.join(config.dataDir, "assets"), { recursive: true });
@@ -23,7 +24,9 @@ for (const a of store.list()) {
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
+app.use("/api/textures", texturesApi);
 app.use("/api", api);
+app.use("/textures", express.static(path.join(config.dataDir, "textures"), { fallthrough: true, index: false }));
 app.use("/files", express.static(path.join(config.dataDir, "assets"), { fallthrough: true, index: false }));
 
 if (fs.existsSync(config.webDist)) {

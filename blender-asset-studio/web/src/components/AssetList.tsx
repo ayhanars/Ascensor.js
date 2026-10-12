@@ -6,15 +6,21 @@ interface Props {
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (a: AssetSummary) => void;
+  tab: "assets" | "textures";
+  onTab: (t: "assets" | "textures") => void;
+  textureCount: number;
 }
 
 const dot: Record<string, string> = { queued: "dot queued", running: "dot running", done: "dot done", failed: "dot failed" };
 
-export default function AssetList({ assets, selectedId, onSelect, onNew, onDelete }: Props) {
+export default function AssetList({ assets, selectedId, onSelect, onNew, onDelete, tab, onTab, textureCount }: Props) {
   return (
     <aside className="asset-list">
       <div className="panel-head">
-        <span>Library · {assets.length}</span>
+        <span className="tabs">
+          <button className={tab === "assets" ? "on" : ""} onClick={() => onTab("assets")}>Assets · {assets.length}</button>
+          <button className={tab === "textures" ? "on" : ""} onClick={() => onTab("textures")}>Textures · {textureCount}</button>
+        </span>
         <button className="primary small" onClick={onNew}>+ New</button>
       </div>
       <div className="asset-scroll">

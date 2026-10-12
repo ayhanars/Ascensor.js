@@ -162,6 +162,7 @@ async function runJob(job: Job): Promise<void> {
     changes: fresh.changes,
     effort: fresh.effort,
     materials: fresh.materials,
+    textures: fresh.textures ?? [],
     references: fresh.files.references,
     isIteration,
     parentSummary: parent?.summary ?? null,

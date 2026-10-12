@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { api } from "../api";
-import type { Effort, Health, Materials } from "../types";
+import type { Effort, Health, KitTexture, Materials } from "../types";
 import ImageDrop from "./ImageDrop";
 import RunOptions from "./RunOptions";
 
-export default function NewAssetForm({ health, onCreated, onCancel }: { health: Health | null; onCreated: (id: string) => void; onCancel: () => void }) {
+export default function NewAssetForm({ health, kit, onCreated, onCancel }: { health: Health | null; kit: KitTexture[]; onCreated: (id: string) => void; onCancel: () => void }) {
+  const [textures, setTextures] = useState<string[]>([]);
   const [name, setName] = useState("");
   const [tags, setTags] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -25,6 +26,7 @@ export default function NewAssetForm({ health, onCreated, onCancel }: { health: 
     fd.set("effort", effort);
     fd.set("model", model);
     fd.set("materials", materials);
+    fd.set("textures", JSON.stringify(textures));
     for (const f of files) fd.append("references", f);
     setBusy(true);
     try {
@@ -54,7 +56,7 @@ export default function NewAssetForm({ health, onCreated, onCancel }: { health: 
           placeholder="A two-storey corner cafe-restaurant: ground floor with big folding glass doors, a front terrace with tables, chairs and umbrellas under a timber pergola, a canvas awning, first floor flat with a balcony. Cream and blue paint. Ground 4 x 6 m."
         />
       </label>
-      <RunOptions health={health} effort={effort} onEffort={setEffort} model={model} onModel={setModel} materials={materials} onMaterials={setMaterials} />
+      <RunOptions health={health} effort={effort} onEffort={setEffort} model={model} onModel={setModel} materials={materials} onMaterials={setMaterials} kit={kit} textures={textures} onTextures={setTextures} />
       {err && <p className="err">{err}</p>}
       {health && !health.blender.ok && <p className="warn">Blender is not reachable: {health.blender.detail}</p>}
       <div className="row gap">

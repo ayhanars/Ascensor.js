@@ -1,6 +1,7 @@
 import path from "node:path";
 import { EFFORTS, type Effort, type Materials } from "./config.js";
 import type { Change } from "./types.js";
+import { describeTextures } from "./textures.js";
 
 const MATERIAL_BRIEF: Record<Materials, string> = {
   flat: "Materials: flat. One Principled BSDF base color per material, sensible roughness. No textures.",
@@ -17,6 +18,7 @@ export function buildPrompt(opts: {
   changes: Change[];
   effort: Effort;
   materials: Materials;
+  textures: string[];
   references: string[];
   isIteration: boolean;
   parentSummary: string | null;
@@ -30,6 +32,12 @@ export function buildPrompt(opts: {
   lines.push(`BUILD_PY = ${buildPy}`);
   lines.push(`Allowed compare-and-fix passes for this run: ${e.passes}.`);
   lines.push(MATERIAL_BRIEF[opts.materials]);
+  const kit = describeTextures(opts.textures);
+  if (kit) {
+    lines.push("");
+    lines.push(kit);
+    lines.push("Kit textures take priority over procedural or downloaded ones for the surfaces they fit.");
+  }
   lines.push("");
   if (opts.references.length === 1) {
     lines.push(`A reference image is at ./${opts.references[0]}. Read it first and match it as closely as the description allows.`);

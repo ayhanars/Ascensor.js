@@ -8,6 +8,7 @@ export default defineConfig({
     proxy: {
       "/api": "http://localhost:8787",
       "/files": "http://localhost:8787",
+      "/textures": "http://localhost:8787",
     },
   },
 });

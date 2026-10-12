@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Asset, Change, Effort, Health, Materials, Version } from "../types";
+import type { Asset, Change, Effort, Health, KitTexture, Materials, Version } from "../types";
 import ImageDrop from "./ImageDrop";
 import RunOptions from "./RunOptions";
 
@@ -8,6 +8,7 @@ interface Props {
   asset: Asset;
   version: Version;
   health: Health | null;
+  kit: KitTexture[];
   selectedPart: string | null;
   onClearPart: () => void;
   onQueued: (asset: Asset) => void;
@@ -17,7 +18,8 @@ interface Props {
  * Change list: several requests, each optionally scoped to a part. Run as one version (the agent
  * applies all of them together) or as a chain (one version per change, each building on the last).
  */
-export default function IteratePanel({ asset, version, health, selectedPart, onClearPart, onQueued }: Props) {
+export default function IteratePanel({ asset, version, health, kit, selectedPart, onClearPart, onQueued }: Props) {
+  const [textures, setTextures] = useState<string[]>(version.textures ?? []);
   const [changes, setChanges] = useState<Change[]>([]);
   const [draft, setDraft] = useState("");
   const [draftPart, setDraftPart] = useState<string | null>(null);
@@ -37,7 +39,8 @@ export default function IteratePanel({ asset, version, health, selectedPart, onC
   useEffect(() => {
     setMaterials(version.materials ?? "flat");
     setModel(version.requestedModel ?? "");
-  }, [version.n, version.materials, version.requestedModel]);
+    setTextures(version.textures ?? []);
+  }, [version.n, version.materials, version.requestedModel, version.textures]);
 
   const next = Math.max(...asset.versions.map((v) => v.n)) + 1;
   const canIterate = version.status === "done";
@@ -60,6 +63,7 @@ export default function IteratePanel({ asset, version, health, selectedPart, onC
     fd.set("effort", effort);
     fd.set("model", model);
     fd.set("materials", materials);
+    fd.set("textures", JSON.stringify(textures));
     fd.set("fromScratch", String(fromScratch));
     fd.set("chain", String(chain && count > 1));
     fd.set("parent", String(version.n));
@@ -135,7 +139,7 @@ export default function IteratePanel({ asset, version, health, selectedPart, onC
         <summary>Reference images <span className="muted">optional, inherits v{version.n}'s</span></summary>
         <ImageDrop files={files} onFiles={setFiles} />
       </details>
-      <RunOptions health={health} effort={effort} onEffort={setEffort} model={model} onModel={setModel} materials={materials} onMaterials={setMaterials} />
+      <RunOptions health={health} effort={effort} onEffort={setEffort} model={model} onModel={setModel} materials={materials} onMaterials={setMaterials} kit={kit} textures={textures} onTextures={setTextures} />
       <label className="check">
         <input type="checkbox" checked={fromScratch} onChange={(e) => setFromScratch(e.target.checked)} />
         Start from scratch <span className="muted">ignore earlier scripts and build a new take</span>
