@@ -46,6 +46,15 @@ export function claudeArgs(opts: { effort: Effort; model?: string }): string[] {
     config.agentPromptFile,
     "--allowedTools",
     ...ALLOWED_TOOLS,
+    // Not offered to the model at all, so it never spends a turn asking for them.
+    "--disallowedTools",
+    "Bash",
+    "PowerShell",
+    "WebFetch",
+    "WebSearch",
+    "Agent",
+    "Task",
+    "NotebookEdit",
     "--permission-mode",
     "dontAsk",
     "--max-turns",
@@ -129,7 +138,8 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
             const c = Array.isArray(block.content)
               ? block.content.map((x: any) => x.text ?? "").join("\n")
               : String(block.content ?? "");
-            opts.onLog("error", c.slice(0, 600));
+            const denied = /Permission to use (\S+) has been denied/.exec(c);
+            opts.onLog("error", denied ? `${denied[1]} is not available to the agent (skipped)` : c.slice(0, 600));
           }
         }
       } else if (ev.type === "rate_limit_event") {
