@@ -347,15 +347,31 @@ var STATUS_FRAME_NAME = 'Component Status';
 // than guessing from an expiration date we have no way to know: Figma
 // doesn't expose a token's own expiry to the token itself, so the only
 // reliable signal is "does an authenticated call actually succeed right now".
+// Figma's own error responses carry a JSON body (e.g. {"status":403,
+// "err":"Invalid token"}) that's often far more specific than the bare
+// HTTP status — the same 403 covers an outright invalid token, a revoked
+// one, and an organization-level restriction on personal access tokens, and
+// only this body text tells those apart. Best-effort: falls back to
+// nothing if the body isn't JSON or has no "err" field.
+async function readFigmaErrorBody(res) {
+  try {
+    var data = await res.json();
+    return (data && (data.err || data.message)) || '';
+  } catch (e) {
+    return '';
+  }
+}
+
 async function checkFigmaToken(token) {
   try {
     var res = await fetch('https://api.figma.com/v1/me', {
       headers: { 'X-Figma-Token': token }
     });
     if (!res.ok) {
+      var bodyText = await readFigmaErrorBody(res);
       var reason = (res.status === 401 || res.status === 403)
-        ? 'invalid or expired token'
-        : ('Figma API returned HTTP ' + res.status);
+        ? 'invalid or expired token' + (bodyText ? ' — Figma says: "' + bodyText + '"' : '')
+        : ('Figma API returned HTTP ' + res.status + (bodyText ? ' — ' + bodyText : ''));
       return { ok: false, message: reason };
     }
     var data = await res.json();
@@ -398,7 +414,8 @@ async function figmaApiGet(path, token) {
     headers: { 'X-Figma-Token': token }
   });
   if (!res.ok) {
-    var err = new Error('Figma API returned HTTP ' + res.status);
+    var bodyText = await readFigmaErrorBody(res);
+    var err = new Error('Figma API returned HTTP ' + res.status + (bodyText ? ' (' + bodyText + ')' : ''));
     err.status = res.status;
     throw err;
   }
