@@ -1,18 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { LogLine } from "../types";
 
-export default function JobLog({ assetId, n, live }: { assetId: string; n: number; live: boolean }) {
-  const [lines, setLines] = useState<LogLine[]>([]);
+export default function JobLog({ lines, live }: { lines: LogLine[]; live: boolean }) {
   const [open, setOpen] = useState(live);
   const endRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setLines([]);
-    const es = new EventSource(`/api/assets/${assetId}/versions/${n}/events`);
-    es.onopen = () => setLines([]); // the server replays the full log on every (re)connect
-    es.onmessage = (ev) => setLines((prev) => [...prev, JSON.parse(ev.data)]);
-    return () => es.close();
-  }, [assetId, n]);
 
   useEffect(() => {
     if (live) setOpen(true);

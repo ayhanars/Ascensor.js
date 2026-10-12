@@ -1,7 +1,7 @@
 import { api } from "../api";
 import type { Asset, Version } from "../types";
 
-const fmtCost = (c: number | null) => (c === null ? "" : `$${c.toFixed(2)}`);
+const fmtCost = (c: number | null) => (c === null ? "" : `≈$${c.toFixed(2)} API-eq.`);
 const fmtDur = (ms: number | null) => (ms === null ? "" : `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`);
 const ago = (iso: string) => {
   const s = (Date.now() - new Date(iso).getTime()) / 1000;
@@ -22,7 +22,7 @@ export default function VersionsPanel({ asset, viewing, onView, onChanged }: { a
     <section className="panel">
       <div className="panel-head">
         <span>Versions · {asset.versions.length}</span>
-        <span className="muted small">{fmtCost(total)} total</span>
+        <span className="muted small" title="What these runs would have cost on the API. Nothing is billed: runs use your subscription login.">{fmtCost(total)} total · not billed</span>
       </div>
       {list.map((v) => {
         const thumb = v.files.views.find((f) => f.endsWith("hero.png")) ?? v.files.views[0];

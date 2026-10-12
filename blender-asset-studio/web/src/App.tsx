@@ -9,6 +9,8 @@ import IteratePanel from "./components/IteratePanel";
 import VersionsPanel from "./components/VersionsPanel";
 import Inspector from "./components/Inspector";
 import JobLog from "./components/JobLog";
+import GeneratingOverlay from "./components/GeneratingOverlay";
+import { useVersionLog } from "./hooks";
 
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
@@ -63,6 +65,8 @@ export default function App() {
   // when the viewed version finishes, bump the GLB nonce so the viewer reloads
   const version = asset?.versions.find((v) => v.n === viewing) ?? null;
   const versionStatus = version?.status;
+  const versionLive = versionStatus === "queued" || versionStatus === "running";
+  const logLines = useVersionLog(asset?.id ?? null, version?.n ?? null);
   useEffect(() => {
     if (versionStatus === "done") setGlbNonce((n) => n + 1);
   }, [versionStatus, viewing]);
@@ -135,7 +139,10 @@ export default function App() {
                   <img src={api.fileUrl(asset.id, version.n, activeView)} alt={activeView} />
                 </div>
               ) : (
-                <Viewer glbUrl={glbUrl} selected={selectedPart} onSelect={setSelectedPart} triangles={version.triangles} />
+                <div className="viewer-wrap">
+                  <Viewer glbUrl={glbUrl} selected={selectedPart} onSelect={setSelectedPart} triangles={version.triangles} />
+                  {versionLive && <GeneratingOverlay version={version} lines={logLines} />}
+                </div>
               )}
               <ViewStrip assetId={asset.id} version={version} active={activeView} onPick={setActiveView} />
               {version.status === "failed" && <p className="err pad">v{version.n} failed: {version.error}</p>}
@@ -162,7 +169,7 @@ export default function App() {
                 onUpdated={(v) => { setAsset({ ...asset, versions: asset.versions.map((x) => (x.n === v.n ? v : x)) }); setGlbNonce((n) => n + 1); }}
               />
               <VersionsPanel asset={asset} viewing={version.n} onView={(n) => { setViewing(n); setSelectedPart(null); setActiveView(null); }} onChanged={() => { void refreshAsset(asset.id); void refreshList(); }} />
-              <JobLog assetId={asset.id} n={version.n} live={version.status === "queued" || version.status === "running"} />
+              <JobLog lines={logLines} live={versionLive} />
             </aside>
           </>
         )}
