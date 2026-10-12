@@ -1,5 +1,23 @@
 export type Effort = "quick" | "standard" | "thorough" | "max";
 export type VersionStatus = "queued" | "running" | "done" | "failed";
+export type Materials = "flat" | "procedural" | "pbr";
+
+export interface Change {
+  text: string;
+  part: string | null;
+}
+
+export interface UsageWindow {
+  utilization: number;
+  resetsAt: number;
+}
+
+export interface Usage {
+  fiveHour: UsageWindow | null;
+  sevenDay: UsageWindow | null;
+  status: string | null;
+  updatedAt: string;
+}
 
 export interface PartInfo {
   name: string;
@@ -26,7 +44,10 @@ export interface Version {
   n: number;
   status: VersionStatus;
   prompt: string;
+  changes: Change[];
   scopedPart: string | null;
+  requestedModel: string;
+  materials: Materials;
   parent: number | null;
   fromScratch: boolean;
   effort: Effort;
@@ -40,7 +61,7 @@ export interface Version {
   model: string | null;
   summary: string | null;
   error: string | null;
-  files: { glb: string | null; views: string[]; blend: string | null; script: string | null; reference: string | null };
+  files: { glb: string | null; views: string[]; blend: string | null; script: string | null; reference: string | null; references: string[] };
   parts: PartInfo[];
   tweaks: Tweak[];
   triangles: number | null;
@@ -79,5 +100,8 @@ export interface Health {
   blender: { ok: boolean; detail: string };
   queue: { active: string | null; queued: string[] };
   efforts: Record<Effort, { passes: string; maxTurns: number; blurb: string }>;
+  models: { id: string; label: string; blurb: string }[];
+  materials: Record<Materials, { label: string; blurb: string }>;
+  usage: Usage | null;
   model: string;
 }

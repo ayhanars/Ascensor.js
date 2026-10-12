@@ -92,14 +92,15 @@ async function pump(): Promise<void> {
 export async function finalizeVersion(assetId: string, n: number, opts: { render: boolean }): Promise<Version> {
   const dir = store.versionDir(assetId, n);
   const log = (kind: LogLine["kind"], text: string) => logLine(assetId, n, kind, text);
+  const materials = store.get(assetId)?.versions.find((v) => v.n === n)?.materials ?? "flat";
   log("info", "collecting parts");
   const { parts, triangles } = await collectParts();
   log("info", `exporting GLB (${parts.length} parts, ${triangles} triangles)`);
   await exportScene(dir);
   let views: string[] = [];
   if (opts.render) {
-    log("info", "rendering views");
-    views = await renderViews(dir);
+    log("info", materials === "flat" ? "rendering views" : "rendering views (EEVEE, photoreal)");
+    views = await renderViews(dir, materials !== "flat");
   }
   return store.updateVersion(assetId, n, (v) => {
     v.parts = parts;
@@ -126,14 +127,43 @@ async function runJob(job: Job): Promise<void> {
   log("info", `starting ${version.parent !== null ? `iteration on v${version.parent}` : "fresh build"} with effort=${version.effort}`);
 
   const parent = version.parent !== null ? asset.versions.find((v) => v.n === version.parent) : undefined;
+  const isIteration = !!parent && !version.fromScratch;
+  if (isIteration) {
+    // Inherit the parent's script (and its manual tweaks) now, not at enqueue time, so chained
+    // versions pick up what the previous one in the chain produced.
+    if (parent!.status !== "done") {
+      store.updateVersion(assetId, n, (v) => {
+        v.status = "failed";
+        v.error = `parent v${parent!.n} did not finish (${parent!.status})`;
+        v.finishedAt = new Date().toISOString();
+      });
+      log("error", `parent v${parent!.n} did not finish, skipping`);
+      return;
+    }
+    const pdir = store.versionDir(assetId, parent!.n);
+    let script = fs.existsSync(path.join(pdir, "build.py")) ? fs.readFileSync(path.join(pdir, "build.py"), "utf8") : "";
+    const tweaks = path.join(pdir, "tweaks.py");
+    if (fs.existsSync(tweaks)) script += "\n\n# ---- tweaks.py: manual edits made in the viewer ----\n" + fs.readFileSync(tweaks, "utf8");
+    if (script) fs.writeFileSync(path.join(dir, "build.py"), script);
+    if (!version.hasReference && parent!.hasReference) {
+      for (const r of parent!.files.references) fs.copyFileSync(path.join(pdir, r), path.join(dir, r));
+      store.updateVersion(assetId, n, (v) => {
+        v.hasReference = true;
+        v.files.reference = parent!.files.reference;
+        v.files.references = [...parent!.files.references];
+      });
+    }
+  }
+  const fresh = store.get(assetId)!.versions.find((v) => v.n === n)!;
   const prompt = buildPrompt({
     versionDir: dir,
     assetName: asset.name,
-    description: version.prompt,
-    effort: version.effort,
-    hasReference: version.hasReference,
-    isIteration: !!parent && !version.fromScratch,
-    scopedPart: version.scopedPart,
+    description: fresh.prompt,
+    changes: fresh.changes,
+    effort: fresh.effort,
+    materials: fresh.materials,
+    references: fresh.files.references,
+    isIteration,
     parentSummary: parent?.summary ?? null,
     parentParts: parent?.parts.map((p) => p.name) ?? [],
   });
@@ -144,6 +174,7 @@ async function runJob(job: Job): Promise<void> {
     cwd: dir,
     prompt,
     effort: version.effort,
+    model: version.requestedModel,
     signal: job.controller.signal,
     onLog: (kind, text) => log(kind, text),
   });

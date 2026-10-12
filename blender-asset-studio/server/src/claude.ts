@@ -6,6 +6,7 @@
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 import { config, EFFORTS, type Effort } from "./config.js";
+import { recordRateLimit } from "./usage.js";
 
 export interface ClaudeRunResult {
   ok: boolean;
@@ -21,6 +22,8 @@ export interface ClaudeRunOptions {
   cwd: string;
   prompt: string;
   effort: Effort;
+  /** CLI model alias or full id; empty = CLI default, falls back to CLAUDE_MODEL env. */
+  model?: string;
   onLog: (kind: "info" | "tool" | "text" | "error", text: string) => void;
   signal?: AbortSignal;
 }
@@ -29,7 +32,7 @@ export interface ClaudeRunOptions {
 // "all tools of this server"), so a server with different tool names still works. Bash stays off.
 const ALLOWED_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "ToolSearch", "mcp__blender", "mcp__blender__*"];
 
-export function claudeArgs(opts: { effort: Effort }): string[] {
+export function claudeArgs(opts: { effort: Effort; model?: string }): string[] {
   const e = EFFORTS[opts.effort];
   const args = [
     "-p",
@@ -50,7 +53,8 @@ export function claudeArgs(opts: { effort: Effort }): string[] {
     "--effort",
     e.cliEffort,
   ];
-  if (config.claudeModel) args.push("--model", config.claudeModel);
+  const model = opts.model || config.claudeModel;
+  if (model) args.push("--model", model);
   return args;
 }
 
@@ -128,6 +132,10 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
             opts.onLog("error", c.slice(0, 600));
           }
         }
+      } else if (ev.type === "rate_limit_event") {
+        const u = recordRateLimit(ev.rate_limit_info);
+        if (u?.fiveHour && u.sevenDay)
+          opts.onLog("info", `usage: 5h ${Math.round(u.fiveHour.utilization * 100)}% · 7d ${Math.round(u.sevenDay.utilization * 100)}%`);
       } else if (ev.type === "result") {
         out.ok = ev.subtype === "success" && !ev.is_error;
         out.resultText = typeof ev.result === "string" ? ev.result : "";

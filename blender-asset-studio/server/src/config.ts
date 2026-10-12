@@ -19,6 +19,21 @@ export const config = {
 };
 
 export type Effort = "quick" | "standard" | "thorough" | "max";
+export type Materials = "flat" | "procedural" | "pbr";
+
+/** Model aliases the Claude CLI accepts. Empty id = the CLI's default. */
+export const MODELS: { id: string; label: string; blurb: string }[] = [
+  { id: "", label: "Default", blurb: "Whatever your Claude Code is set to." },
+  { id: "opus", label: "Opus", blurb: "Strongest spatial reasoning, slowest, uses the most of your limits." },
+  { id: "sonnet", label: "Sonnet", blurb: "Good balance for most assets." },
+  { id: "haiku", label: "Haiku", blurb: "Fastest and lightest on limits, for simple props and quick drafts." },
+];
+
+export const MATERIALS: Record<Materials, { label: string; blurb: string }> = {
+  flat: { label: "Flat colors", blurb: "One base color per material. Fastest; what the viewer shows is what Blender has." },
+  procedural: { label: "Procedural", blurb: "Node textures (stucco, wood grain, brick, tiles). Shows in the rendered views; the GLB viewer keeps base colors." },
+  pbr: { label: "PBR textures", blurb: "Real texture sets from Poly Haven applied in Blender and packed into the GLB. Needs the addon's Poly Haven option on." },
+};
 
 export const EFFORTS: Record<
   Effort,

@@ -11,6 +11,7 @@ import Inspector from "./components/Inspector";
 import JobLog from "./components/JobLog";
 import GeneratingOverlay from "./components/GeneratingOverlay";
 import { useVersionLog } from "./hooks";
+import UsageMeters from "./components/UsageMeters";
 
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
@@ -104,7 +105,8 @@ export default function App() {
           <span className={"dot " + (health?.blender.ok ? "done" : "failed")} /> Blender {health ? (health.blender.ok ? "connected" : "offline") : "…"}
           {health?.queue.active && <span className="tag running">generating</span>}
           {health && health.queue.queued.length > 0 && <span className="tag">{health.queue.queued.length} queued</span>}
-          <span className="muted small">model: {health?.model ?? "?"} · subscription login</span>
+          <UsageMeters usage={health?.usage ?? null} />
+          <span className="muted small">subscription login</span>
         </div>
       </header>
       <div className="body">
@@ -158,8 +160,8 @@ export default function App() {
                 asset={asset}
                 version={version}
                 health={health}
-                scopedPart={selectedPart}
-                onClearScope={() => setSelectedPart(null)}
+                selectedPart={selectedPart}
+                onClearPart={() => setSelectedPart(null)}
                 onQueued={(a) => { setAsset(a); setViewing(Math.max(...a.versions.map((v) => v.n))); void refreshList(); }}
               />
               <Inspector

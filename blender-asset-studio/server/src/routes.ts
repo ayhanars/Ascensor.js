@@ -3,17 +3,33 @@ import path from "node:path";
 import express, { type Request, type Response } from "express";
 import multer from "multer";
 import { nanoid } from "nanoid";
-import { config, EFFORTS, type Effort } from "./config.js";
+import { config, EFFORTS, MODELS, MATERIALS, type Effort, type Materials } from "./config.js";
+import { getUsage } from "./usage.js";
 import { store } from "./store.js";
 import { enqueue, cancel, events, readLog, queueState, finalizeVersion, logLine } from "./jobs.js";
 import { executeCode, ping } from "./blender.js";
 import { tweakCode, RUN_BUILD_CODE } from "./finalize.js";
-import type { Asset, Tweak, Version } from "./types.js";
+import type { Asset, Change, Tweak, Version } from "./types.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 export const api = express.Router();
 
 const isEffort = (e: unknown): e is Effort => typeof e === "string" && e in EFFORTS;
+const isMaterials = (m: unknown): m is Materials => typeof m === "string" && m in MATERIALS;
+const pickModel = (m: unknown): string => (typeof m === "string" && MODELS.some((x) => x.id === m) ? m : "");
+
+function parseChanges(raw: unknown, fallbackPart: string | null): Change[] {
+  if (typeof raw !== "string" || !raw.trim()) return [];
+  try {
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map((c) => ({ text: String(c?.text ?? "").trim(), part: typeof c?.part === "string" && c.part.trim() ? c.part.trim() : fallbackPart }))
+      .filter((c) => c.text);
+  } catch {
+    return [];
+  }
+}
 
 function newVersion(a: Asset, init: Partial<Version>): Version {
   const n = a.versions.length ? Math.max(...a.versions.map((v) => v.n)) + 1 : 1;
@@ -21,7 +37,10 @@ function newVersion(a: Asset, init: Partial<Version>): Version {
     n,
     status: "queued",
     prompt: "",
+    changes: [],
     scopedPart: null,
+    requestedModel: "",
+    materials: "flat",
     parent: null,
     fromScratch: false,
     effort: "standard",
@@ -35,7 +54,7 @@ function newVersion(a: Asset, init: Partial<Version>): Version {
     model: null,
     summary: null,
     error: null,
-    files: { glb: null, views: [], blend: null, script: null, reference: null },
+    files: { glb: null, views: [], blend: null, script: null, reference: null, references: [] },
     parts: [],
     tweaks: [],
     triangles: null,
@@ -45,12 +64,16 @@ function newVersion(a: Asset, init: Partial<Version>): Version {
   return v;
 }
 
-function saveReference(dir: string, file?: Express.Multer.File): boolean {
-  if (!file) return false;
-  // Always store as reference.png so the agent prompt is stable. Browsers send PNG/JPEG/WebP;
-  // Claude's Read tool handles all three, the extension only has to be stable.
-  fs.writeFileSync(path.join(dir, "reference.png"), file.buffer);
-  return true;
+/** Stores uploaded reference images as reference.png, reference_01.png, ... and returns their names. */
+function saveReferences(dir: string, files: Express.Multer.File[] | undefined): string[] {
+  const names: string[] = [];
+  for (const [i, f] of (files ?? []).entries()) {
+    // Stable .png names keep the agent prompt simple; Claude's Read tool handles PNG, JPEG and WebP bytes alike.
+    const name = i === 0 ? "reference.png" : `reference_${String(i).padStart(2, "0")}.png`;
+    fs.writeFileSync(path.join(dir, name), f.buffer);
+    names.push(name);
+  }
+  return names;
 }
 
 api.get("/health", async (_req, res) => {
@@ -60,6 +83,9 @@ api.get("/health", async (_req, res) => {
     blender,
     queue: queueState(),
     efforts: EFFORTS,
+    models: MODELS,
+    materials: MATERIALS,
+    usage: getUsage(),
     claudeBin: config.claudeBin,
     model: config.claudeModel || "default",
   });
@@ -86,10 +112,12 @@ function thumbOf(a: Asset): string | null {
   return v && hero ? `/files/${a.id}/v${v.n}/${hero}` : null;
 }
 
-api.post("/assets", upload.single("reference"), (req, res) => {
+api.post("/assets", upload.array("references", 8), (req, res) => {
   const name = String(req.body.name ?? "").trim();
   const prompt = String(req.body.prompt ?? "").trim();
   const effort = isEffort(req.body.effort) ? req.body.effort : "standard";
+  const materials = isMaterials(req.body.materials) ? req.body.materials : "flat";
+  const requestedModel = pickModel(req.body.model);
   const tags = String(req.body.tags ?? "")
     .split(/[,\s]+/)
     .map((t) => t.replace(/^#/, "").trim())
@@ -105,9 +133,10 @@ api.post("/assets", upload.single("reference"), (req, res) => {
     currentVersion: null,
     versions: [],
   };
-  const v = newVersion(asset, { prompt, effort });
-  v.hasReference = saveReference(store.versionDir(asset.id, v.n), req.file);
-  if (v.hasReference) v.files.reference = "reference.png";
+  const v = newVersion(asset, { prompt, effort, materials, requestedModel });
+  v.files.references = saveReferences(store.versionDir(asset.id, v.n), req.files as Express.Multer.File[]);
+  v.hasReference = v.files.references.length > 0;
+  v.files.reference = v.files.references[0] ?? null;
   asset.versions.push(v);
   store.add(asset);
   enqueue(asset.id, v.n);
@@ -143,40 +172,59 @@ api.delete("/assets/:id", (req, res) => {
   res.json({ ok: true });
 });
 
-/** Iterate: new version from a parent (or from scratch). */
-api.post("/assets/:id/versions", upload.single("reference"), (req, res) => {
+/**
+ * Iterate: one or more change requests on a parent version (or a fresh take).
+ * Body: prompt (free text) and/or changes (JSON [{text, part}]), effort, model, materials,
+ * parent, fromScratch, chain ("true" = one version per change, each building on the previous).
+ */
+api.post("/assets/:id/versions", upload.array("references", 8), (req, res) => {
   const a = store.get(req.params.id);
   if (!a) return res.status(404).json({ error: "not found" });
-  const prompt = String(req.body.prompt ?? "").trim();
-  if (!prompt) return res.status(400).json({ error: "prompt is required" });
   const effort = isEffort(req.body.effort) ? req.body.effort : "standard";
   const fromScratch = req.body.fromScratch === "true" || req.body.fromScratch === true;
-  const parentN = Number(req.body.parent ?? a.currentVersion);
-  const parent = a.versions.find((v) => v.n === parentN && v.status === "done");
-  if (!parent && !fromScratch) return res.status(400).json({ error: "parent version must exist and be done" });
+  const chain = req.body.chain === "true" || req.body.chain === true;
   const scopedPart = typeof req.body.scopedPart === "string" && req.body.scopedPart.trim() ? req.body.scopedPart.trim() : null;
+  const requestedModel = pickModel(req.body.model);
+  const parentN = Number(req.body.parent ?? a.currentVersion);
+  const parent = a.versions.find((v) => v.n === parentN);
+  const materials = isMaterials(req.body.materials) ? req.body.materials : parent?.materials ?? "flat";
 
-  let v!: Version;
+  let changes = parseChanges(req.body.changes, scopedPart);
+  const free = String(req.body.prompt ?? "").trim();
+  if (!changes.length && free) changes = [{ text: free, part: scopedPart }];
+  if (!changes.length) return res.status(400).json({ error: "at least one change request is required" });
+  if (!fromScratch && (!parent || parent.status === "failed"))
+    return res.status(400).json({ error: "parent version must exist and not have failed" });
+
+  const groups: Change[][] = chain ? changes.map((c) => [c]) : [changes];
+  const refs = req.files as Express.Multer.File[];
+  const created: number[] = [];
   store.update(a.id, (asset) => {
-    v = newVersion(asset, { prompt, effort, fromScratch, scopedPart, parent: parent ? parent.n : null });
-    const dir = store.versionDir(asset.id, v.n);
-    v.hasReference = saveReference(dir, req.file);
-    if (!v.hasReference && parent?.hasReference) {
-      // inherit the reference image so the agent keeps the same target
-      fs.copyFileSync(path.join(store.versionDir(asset.id, parent.n), "reference.png"), path.join(dir, "reference.png"));
-      v.hasReference = true;
+    let prev = fromScratch ? null : parent!.n;
+    for (const group of groups) {
+      const v = newVersion(asset, {
+        prompt: group.map((c) => (c.part ? `[${c.part}] ` : "") + c.text).join("\n"),
+        changes: group,
+        scopedPart: group.length === 1 ? group[0].part : null,
+        effort,
+        fromScratch: fromScratch && created.length === 0,
+        parent: prev,
+        requestedModel,
+        materials,
+      });
+      const dir = store.versionDir(asset.id, v.n);
+      // new references only on the first version of a chain; later ones inherit from their parent at run time
+      if (created.length === 0 && refs?.length) {
+        v.files.references = saveReferences(dir, refs);
+        v.hasReference = true;
+        v.files.reference = v.files.references[0];
+      }
+      asset.versions.push(v);
+      created.push(v.n);
+      prev = v.n;
     }
-    if (v.hasReference) v.files.reference = "reference.png";
-    if (parent && !fromScratch) {
-      const pdir = store.versionDir(asset.id, parent.n);
-      let script = fs.existsSync(path.join(pdir, "build.py")) ? fs.readFileSync(path.join(pdir, "build.py"), "utf8") : "";
-      const tweaks = path.join(pdir, "tweaks.py");
-      if (fs.existsSync(tweaks)) script += "\n\n# ---- tweaks.py: manual edits made in the viewer ----\n" + fs.readFileSync(tweaks, "utf8");
-      if (script) fs.writeFileSync(path.join(dir, "build.py"), script);
-    }
-    asset.versions.push(v);
   });
-  enqueue(a.id, v.n);
+  for (const n of created) enqueue(a.id, n);
   res.status(201).json(store.get(a.id));
 });
 

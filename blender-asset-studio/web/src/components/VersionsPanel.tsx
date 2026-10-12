@@ -2,6 +2,7 @@ import { api } from "../api";
 import type { Asset, Version } from "../types";
 
 const fmtCost = (c: number | null) => (c === null ? "" : `≈$${c.toFixed(2)} API-eq.`);
+const MODEL_LABEL: Record<string, string> = { "": "", opus: "opus", sonnet: "sonnet", haiku: "haiku" };
 const fmtDur = (ms: number | null) => (ms === null ? "" : `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`);
 const ago = (iso: string) => {
   const s = (Date.now() - new Date(iso).getTime()) / 1000;
@@ -22,7 +23,7 @@ export default function VersionsPanel({ asset, viewing, onView, onChanged }: { a
     <section className="panel">
       <div className="panel-head">
         <span>Versions · {asset.versions.length}</span>
-        <span className="muted small" title="What these runs would have cost on the API. Nothing is billed: runs use your subscription login.">{fmtCost(total)} total · not billed</span>
+        <span className="muted small" title={`${fmtCost(total)} if these runs had been billed on the API. They were not: runs use your subscription.`}>{asset.versions.filter((v) => v.status === "done").length} done</span>
       </div>
       {list.map((v) => {
         const thumb = v.files.views.find((f) => f.endsWith("hero.png")) ?? v.files.views[0];
@@ -34,12 +35,12 @@ export default function VersionsPanel({ asset, viewing, onView, onChanged }: { a
                 <b>v{v.n}</b>
                 {v.n === asset.currentVersion && <span className="tag blue">current</span>}
                 <span className={`tag ${v.status}`}>{v.status}</span>
-                {v.scopedPart && <span className="tag">{v.scopedPart}</span>}
+                {v.changes.length > 1 ? <span className="tag">{v.changes.length} changes</span> : v.scopedPart && <span className="tag">{v.scopedPart}</span>}
                 <span className="muted small">{ago(v.createdAt)}</span>
               </div>
               <div className="muted small ellipsis" title={v.prompt}>{v.prompt}</div>
-              <div className="muted small">
-                {[v.parent !== null && !v.fromScratch ? `from v${v.parent}` : "fresh", v.effort, fmtDur(v.durationMs), fmtCost(v.costUsd), v.model ?? ""].filter(Boolean).join(" · ")}
+              <div className="muted small" title={fmtCost(v.costUsd) ? `${fmtCost(v.costUsd)} if billed on the API; not billed` : undefined}>
+                {[v.parent !== null && !v.fromScratch ? `from v${v.parent}` : "fresh", v.effort, v.materials !== "flat" ? v.materials : "", MODEL_LABEL[v.requestedModel] ?? v.requestedModel, fmtDur(v.durationMs), v.turns ? `${v.turns} turns` : ""].filter(Boolean).join(" · ")}
               </div>
               {v.status === "done" && v.n !== asset.currentVersion && (
                 <button className="small link" onClick={(e) => { e.stopPropagation(); void setCurrent(v); }}>make current</button>

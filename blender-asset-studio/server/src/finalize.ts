@@ -62,7 +62,7 @@ print('EXPORT_OK')
 `;
 }
 
-function renderCode(viewsDir: string, size: number): string {
+function renderCode(viewsDir: string, size: number, photoreal: boolean): string {
   return `
 import bpy, math
 from mathutils import Vector
@@ -87,24 +87,49 @@ cam = bpy.data.objects.new('_studio_cam', cam_data)
 scene.collection.objects.link(cam)
 scene.camera = cam
 cam_data.lens = 50
-scene.render.engine = 'BLENDER_WORKBENCH'
-sh = scene.display.shading
-sh.light = 'STUDIO'
-sh.color_type = 'MATERIAL'
-sh.show_shadows = True
-sh.show_cavity = True
+photoreal = ${photoreal ? "True" : "False"}
+engines = [e.identifier for e in bpy.types.RenderSettings.bl_rna.properties['engine'].enum_items]
+engine = 'BLENDER_WORKBENCH'
+if photoreal:
+    for cand in ('BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE'):
+        if cand in engines:
+            engine = cand; break
+scene.render.engine = engine
+extra = []
+if engine == 'BLENDER_WORKBENCH':
+    sh = scene.display.shading
+    sh.light = 'STUDIO'
+    sh.color_type = 'MATERIAL'
+    sh.show_shadows = True
+    sh.show_cavity = True
+else:
+    if hasattr(scene, 'eevee'):
+        try: scene.eevee.taa_render_samples = 24
+        except Exception: pass
+    sun_data = bpy.data.lights.new('_studio_sun', 'SUN'); sun_data.energy = 4.0; sun_data.angle = 0.2
+    sun = bpy.data.objects.new('_studio_sun', sun_data); scene.collection.objects.link(sun)
+    sun.rotation_euler = (math.radians(50), 0, math.radians(-35)); extra += [sun]
+    fill_data = bpy.data.lights.new('_studio_fill', 'SUN'); fill_data.energy = 1.2
+    fill = bpy.data.objects.new('_studio_fill', fill_data); scene.collection.objects.link(fill)
+    fill.rotation_euler = (math.radians(60), 0, math.radians(140)); extra += [fill]
+    world = scene.world
+    if world is None:
+        world = bpy.data.worlds.new('_studio_world'); scene.world = world
+    saved['world_color'] = tuple(world.color)
+    world.color = (0.55, 0.6, 0.7)
 scene.render.resolution_x = ${size}
 scene.render.resolution_y = ${size}
 scene.render.resolution_percentage = 100
 scene.render.image_settings.file_format = 'PNG'
 scene.render.film_transparent = True
 
-def shoot(name, azimuth_deg, elev_deg, dist_factor=2.6):
+def shoot(name, azimuth_deg, elev_deg, dist_factor=2.6, target=None):
     az = math.radians(azimuth_deg); el = math.radians(elev_deg)
+    t = center if target is None else target
     d = radius * dist_factor
-    pos = center + Vector((d*math.cos(el)*math.cos(az), d*math.cos(el)*math.sin(az), d*math.sin(el)))
+    pos = t + Vector((d*math.cos(el)*math.cos(az), d*math.cos(el)*math.sin(az), d*math.sin(el)))
     cam.location = pos
-    direction = center - pos
+    direction = t - pos
     cam.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
     scene.render.filepath = ${py(viewsDir + path.sep)} + name + '.png'
     bpy.ops.render.render(write_still=True)
@@ -114,12 +139,19 @@ try:
     for i in range(6):
         shoot('view_%02d' % i, -35 + i*60, 18)
     shoot('top', -90, 89)
+    # close-ups so materials and details can be judged
+    ext = hi - lo
+    shoot('detail_00', -35, 12, 0.9, lo + Vector((ext.x*0.75, ext.y*0.25, ext.z*0.45)))
+    shoot('detail_01', 145, 20, 0.9, lo + Vector((ext.x*0.3, ext.y*0.7, ext.z*0.6)))
 finally:
     scene.render.engine = saved['engine']; scene.render.resolution_x = saved['rx']
     scene.render.resolution_y = saved['ry']; scene.render.resolution_percentage = saved['pct']
     scene.render.filepath = saved['fp']; scene.render.image_settings.file_format = saved['fmt']
     scene.render.film_transparent = saved['film']; scene.camera = saved['cam']
     bpy.data.objects.remove(cam, do_unlink=True); bpy.data.cameras.remove(cam_data)
+    for o in extra:
+        data = o.data; bpy.data.objects.remove(o, do_unlink=True); bpy.data.lights.remove(data)
+    if 'world_color' in saved and scene.world: scene.world.color = saved['world_color']
 print('RENDER_OK')
 `;
 }
@@ -139,10 +171,10 @@ export async function exportScene(versionDir: string): Promise<{ glb: string; bl
   return { glb, blend };
 }
 
-export async function renderViews(versionDir: string): Promise<string[]> {
+export async function renderViews(versionDir: string, photoreal: boolean): Promise<string[]> {
   const viewsDir = path.join(versionDir, "views");
   fs.mkdirSync(viewsDir, { recursive: true });
-  const out = await executeCode(renderCode(viewsDir, config.renderSize), 15 * 60_000);
+  const out = await executeCode(renderCode(viewsDir, config.renderSize, photoreal), 20 * 60_000);
   if (!out.includes("RENDER_OK")) throw new Error("Render failed: " + out.slice(0, 500));
   return fs
     .readdirSync(viewsDir)

@@ -1,4 +1,4 @@
-import type { Effort } from "./config.js";
+import type { Effort, Materials } from "./config.js";
 
 export type VersionStatus = "queued" | "running" | "done" | "failed";
 
@@ -23,11 +23,31 @@ export interface Tweak {
   color?: [number, number, number];
 }
 
+export interface Change {
+  text: string;
+  part: string | null;
+}
+
+export interface UsageWindow {
+  utilization: number;
+  resetsAt: number;
+}
+
+export interface Usage {
+  fiveHour: UsageWindow | null;
+  sevenDay: UsageWindow | null;
+  status: string | null;
+  updatedAt: string;
+}
+
 export interface Version {
   n: number;
   status: VersionStatus;
   prompt: string;
+  changes: Change[];
   scopedPart: string | null;
+  requestedModel: string;
+  materials: Materials;
   parent: number | null;
   fromScratch: boolean;
   effort: Effort;
@@ -47,6 +67,7 @@ export interface Version {
     blend: string | null;
     script: string | null;
     reference: string | null;
+    references: string[];
   };
   parts: PartInfo[];
   tweaks: Tweak[];

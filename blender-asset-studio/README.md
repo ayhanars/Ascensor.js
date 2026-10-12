@@ -65,6 +65,23 @@ For a single-port build: `npm run build && npm start`, then open http://localhos
 Effort levels: **quick** 1 to 2 passes, **standard** 2 to 3, **thorough** 4 to 6, **max** unbounded.
 Only one generation runs at a time because Blender holds a single scene; later requests queue.
 
+### Change lists, models, materials, usage
+
+- **Several changes at once.** The iterate panel keeps a list. Click a part in the viewer to scope
+  the next change to it, press "+ Add to list", and generate. By default the agent applies the whole
+  list in one version; tick "One version per change" to get a chain of versions, each built on the
+  previous one, so you can compare and roll back step by step.
+- **Model.** Default, Opus, Sonnet or Haiku per run, passed to the CLI as `--model`.
+- **Materials.** *Flat* colors; *Procedural* node textures (visible in the rendered views, the GLB
+  keeps base colors); *PBR textures* from Poly Haven through the Blender MCP tools, packed into the
+  GLB. PBR needs the addon's Poly Haven option switched on in its Blender sidebar panel; if the
+  tools are missing the agent falls back to procedural and says so. Non-flat versions render with
+  EEVEE and add two close-up detail views.
+- **Several reference images.** The first is the main view; the rest are extra angles or close-ups
+  of materials and details.
+- **Usage, not money.** The top bar shows the 5-hour and 7-day subscription windows as the CLI
+  reports them after each run. The API-equivalent cost of a version is only in a tooltip.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -99,11 +116,12 @@ web/src
 ```
 GET    /api/health
 GET    /api/assets
-POST   /api/assets                       multipart: name, prompt, effort, tags, reference
+POST   /api/assets                       multipart: name, prompt, effort, model, materials, tags, references[]
 GET    /api/assets/:id
 PATCH  /api/assets/:id                   { name?, tags?, currentVersion? }
 DELETE /api/assets/:id
-POST   /api/assets/:id/versions          multipart: prompt, effort, parent, scopedPart, fromScratch, reference
+POST   /api/assets/:id/versions          multipart: changes (JSON [{text, part}]) or prompt, effort, model, materials,
+                                         parent, fromScratch, chain, references[]
 POST   /api/assets/:id/versions/:n/cancel
 GET    /api/assets/:id/versions/:n/log
 GET    /api/assets/:id/versions/:n/events   server-sent events

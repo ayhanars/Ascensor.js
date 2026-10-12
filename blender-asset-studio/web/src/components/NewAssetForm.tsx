@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { api } from "../api";
-import type { Effort, Health } from "../types";
-import EffortPicker from "./EffortPicker";
+import type { Effort, Health, Materials } from "../types";
 import ImageDrop from "./ImageDrop";
+import RunOptions from "./RunOptions";
 
 export default function NewAssetForm({ health, onCreated, onCancel }: { health: Health | null; onCreated: (id: string) => void; onCancel: () => void }) {
   const [name, setName] = useState("");
   const [tags, setTags] = useState("");
   const [prompt, setPrompt] = useState("");
   const [effort, setEffort] = useState<Effort>("standard");
-  const [file, setFile] = useState<File | null>(null);
+  const [model, setModel] = useState("");
+  const [materials, setMaterials] = useState<Materials>("flat");
+  const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -21,7 +23,9 @@ export default function NewAssetForm({ health, onCreated, onCancel }: { health: 
     fd.set("tags", tags);
     fd.set("prompt", prompt.trim());
     fd.set("effort", effort);
-    if (file) fd.set("reference", file);
+    fd.set("model", model);
+    fd.set("materials", materials);
+    for (const f of files) fd.append("references", f);
     setBusy(true);
     try {
       const a = await api.createAsset(fd);
@@ -36,11 +40,11 @@ export default function NewAssetForm({ health, onCreated, onCancel }: { health: 
   return (
     <div className="center-card">
       <h2>New asset</h2>
-      <p className="muted">Drop a reference image and describe what to build. Claude will model it in Blender, compare to the image, and iterate.</p>
+      <p className="muted">Drop reference images and describe what to build. Claude models it in Blender, compares with the images, and iterates.</p>
       <label>Name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="Corner cafe and restaurant" /></label>
       <label>Tags<input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="citykit, commercial, mediterranean" /></label>
-      <label>Reference image <span className="muted">optional</span></label>
-      <ImageDrop file={file} onFile={setFile} />
+      <label>Reference images <span className="muted">optional</span></label>
+      <ImageDrop files={files} onFiles={setFiles} />
       <label>
         Description
         <textarea
@@ -50,8 +54,7 @@ export default function NewAssetForm({ health, onCreated, onCancel }: { health: 
           placeholder="A two-storey corner cafe-restaurant: ground floor with big folding glass doors, a front terrace with tables, chairs and umbrellas under a timber pergola, a canvas awning, first floor flat with a balcony. Cream and blue paint. Ground 4 x 6 m."
         />
       </label>
-      <label>Effort</label>
-      <EffortPicker value={effort} onChange={setEffort} efforts={health?.efforts ?? null} />
+      <RunOptions health={health} effort={effort} onEffort={setEffort} model={model} onModel={setModel} materials={materials} onMaterials={setMaterials} />
       {err && <p className="err">{err}</p>}
       {health && !health.blender.ok && <p className="warn">Blender is not reachable: {health.blender.detail}</p>}
       <div className="row gap">

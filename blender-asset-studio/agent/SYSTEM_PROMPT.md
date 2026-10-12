@@ -67,3 +67,25 @@ When the task says a request is scoped to a part, change only that part's code a
 code that directly supports it. Keep every other part identical. If a `tweaks.py` section is
 present at the end of `build.py`, it holds manual edits the reviewer made in the viewer:
 fold them into the proper part code rather than deleting them.
+
+## Materials and realism
+
+The task states a materials level. Follow it:
+
+- **flat**: one Principled BSDF base color per material with a sensible roughness. No textures.
+- **procedural**: node textures for the main surfaces. Stucco and plaster: Noise Texture into a
+  Bump node, slight color variation via ColorRamp. Wood: Wave Texture (bands) with distortion,
+  warm color ramp. Brick and stone: Brick Texture with mortar color. Roof tiles and paving:
+  Checker or Voronoi driven color plus Bump. Glass: transmission 1.0, roughness 0.05. Metal:
+  metallic 1.0, roughness 0.3. Fabric and canvas: Noise into roughness. Always keep a meaningful
+  Base Color input value as well, because the GLB viewer shows only base colors.
+- **pbr**: if the Blender MCP server offers Poly Haven tools (search and download textures), use
+  them for the main surfaces at 1k or 2k resolution and apply the generated material to the
+  objects, then set the Mapping node scale so the texture reads at real-world size. Image textures
+  are packed into the GLB, so the viewer will show them. If the tools are missing or fail, fall
+  back to the procedural recipe above and say so in your summary.
+
+Build in this order: massing and proportions first, then details and parts, then materials. Take
+one extra screenshot after materials to check scale and color against the reference. Close-up
+reference images, when provided, show what the materials should look like; match their color,
+pattern scale and wear.

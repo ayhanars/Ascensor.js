@@ -3,7 +3,9 @@ import type { Version } from "../types";
 
 export default function ViewStrip({ assetId, version, active, onPick }: { assetId: string; version: Version; active: string | null; onPick: (rel: string | null) => void }) {
   const items: { rel: string | null; label: string }[] = [{ rel: null, label: "3D model" }];
-  if (version.files.reference) items.push({ rel: version.files.reference, label: "reference" });
+  (version.files.references?.length ? version.files.references : version.files.reference ? [version.files.reference] : []).forEach((r, i) =>
+    items.push({ rel: r, label: i === 0 ? "reference" : `ref ${i + 1}` }),
+  );
   for (const v of version.files.views) items.push({ rel: v, label: v.replace("views/", "").replace(".png", "") });
   return (
     <div className="strip">

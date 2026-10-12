@@ -1,14 +1,24 @@
 import path from "node:path";
-import { EFFORTS, type Effort } from "./config.js";
+import { EFFORTS, type Effort, type Materials } from "./config.js";
+import type { Change } from "./types.js";
+
+const MATERIAL_BRIEF: Record<Materials, string> = {
+  flat: "Materials: flat. One Principled BSDF base color per material, sensible roughness. No textures.",
+  procedural:
+    "Materials: procedural. Build node-based textures for realism (noise/musgrave for stucco and plaster, wave or image-free wood grain, brick texture node for masonry, voronoi or checker for tiles, glass with transmission, metal with metallic=1). Keep base colors meaningful because the GLB viewer only shows base colors.",
+  pbr:
+    "Materials: PBR textures. Use the Blender MCP Poly Haven tools (search for textures, download at 1k or 2k, apply the generated material) for the main surfaces: walls, roof, ground, wood, metal, fabric. Set the mapping scale so textures read at real-world size. If the Poly Haven tools are unavailable or fail, fall back to procedural node textures and say so in your summary.",
+};
 
 export function buildPrompt(opts: {
   versionDir: string;
   assetName: string;
   description: string;
+  changes: Change[];
   effort: Effort;
-  hasReference: boolean;
+  materials: Materials;
+  references: string[];
   isIteration: boolean;
-  scopedPart: string | null;
   parentSummary: string | null;
   parentParts: string[];
 }): string {
@@ -19,9 +29,13 @@ export function buildPrompt(opts: {
   lines.push(`Working directory: ${opts.versionDir}`);
   lines.push(`BUILD_PY = ${buildPy}`);
   lines.push(`Allowed compare-and-fix passes for this run: ${e.passes}.`);
+  lines.push(MATERIAL_BRIEF[opts.materials]);
   lines.push("");
-  if (opts.hasReference) {
-    lines.push("A reference image is at ./reference.png. Read it first and match it as closely as the description allows.");
+  if (opts.references.length === 1) {
+    lines.push(`A reference image is at ./${opts.references[0]}. Read it first and match it as closely as the description allows.`);
+  } else if (opts.references.length > 1) {
+    lines.push(`Reference images (read all of them first): ${opts.references.map((r) => "./" + r).join(", ")}.`);
+    lines.push("The first is the main view; the others are extra angles or close-ups of materials and details. Match them as closely as the description allows.");
   } else {
     lines.push("There is no reference image. Build from the description alone.");
   }
@@ -43,12 +57,14 @@ export function buildPrompt(opts: {
       lines.push("Existing parts (keep these names): " + opts.parentParts.join(", "));
     }
     lines.push("");
-    if (opts.scopedPart) {
-      lines.push(`Change request, scoped to the part "${opts.scopedPart}" only:`);
+    if (opts.changes.length > 1) {
+      lines.push(`Change requests (apply all ${opts.changes.length} in this version, in order):`);
+      opts.changes.forEach((c, i) => lines.push(`${i + 1}. ${c.part ? `[part: ${c.part}] ` : ""}${c.text.trim()}`));
     } else {
-      lines.push("Change request:");
+      const c = opts.changes[0] ?? { text: opts.description, part: null };
+      lines.push(c.part ? `Change request, scoped to the part "${c.part}" only:` : "Change request:");
+      lines.push(c.text.trim());
     }
-    lines.push(opts.description.trim());
   }
   lines.push("");
   lines.push("When finished, reply with one line per part in the form `PartName - what it is`, nothing else.");
