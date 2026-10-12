@@ -856,6 +856,7 @@
   var topBannerFixBtn = document.getElementById('top-banner-fix-btn');
 
   var lastTokenSavedAt = null;
+  var lastTokenCheckState = null; // idle | checking | ok | bad — last token-check-result received
   var STALE_WARNING_DAYS = 80; // nudge ahead of the common 90-day expiration window
 
   topBannerFixBtn.addEventListener('click', function () { setActiveTab('settings'); });
@@ -1672,6 +1673,7 @@
     }
 
     if (msg.type === 'token-check-result') {
+      lastTokenCheckState = msg.state;
       if (msg.state === 'checking') {
         renderTokenCheck({ state: 'checking' });
         setTopBannerVisible(false);
@@ -1702,6 +1704,16 @@
           'The table structure or location may have changed — ask the plugin admin to check.';
       } else {
         statusLoadState = 'loaded';
+        // A successful row-data fetch is strong, independent proof the
+        // token actually works right now — stronger evidence than whatever
+        // the separate /v1/me check last said. If that check is still
+        // showing "bad" (e.g. a one-off blip on that specific call, or it
+        // ran moments before this one and hasn't caught up), re-run it so
+        // the red banner doesn't keep contradicting data that's visibly
+        // loading fine.
+        if (lastTokenCheckState === 'bad') {
+          parent.postMessage({ pluginMessage: { type: 'get-token' } }, '*');
+        }
       }
       renderStatusFetchCheck();
       renderFilteredList();

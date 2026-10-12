@@ -402,10 +402,16 @@ Figma's `GET /v1/me` — the cheapest authenticated endpoint, it just
 returns the token owner's identity — and shows the real result in
 Settings:
 - ✓ green — "Connected as `<handle>`."
-- ✗ red — "This token isn't working (invalid or expired)." — and a red
-  banner appears at the top of **both** tabs with a "Fix in Settings"
-  shortcut, so a broken token doesn't fail silently while you're using
-  the Inspector tab.
+- ✗ red — "This token isn't working (invalid or expired)", with Figma's
+  own error text appended when it has one — and a red banner appears at
+  the top of **both** tabs with a "Fix in Settings" shortcut, so a
+  broken token doesn't fail silently while you're using the Inspector
+  tab. If the Component Status fetch (a separate call) then succeeds
+  anyway — real proof the token does work — the token check is silently
+  re-run and the red banner clears itself, rather than keep contradicting
+  data that's visibly loading fine. A one-off blip on the `/v1/me` call
+  specifically, independent of the token's actual validity, is enough to
+  trigger this.
 
 There's also a softer, separate nudge: Figma tokens can be created with
 an expiration as short as 90 days, but the API gives no way to ask a
