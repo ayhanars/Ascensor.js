@@ -117,25 +117,11 @@ p { margin: 6px 0; }
   .right .panel { flex: 1 1 300px; }
 }
 
-/* generating overlay */
-.gen-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; background: radial-gradient(ellipse at center, #1b2030 0%, #15171c 70%); text-align: center; padding: 20px; z-index: 2; }
-.gen-scene { position: relative; width: 160px; height: 160px; perspective: 600px; margin-bottom: 10px; }
-.gen-cube { position: absolute; left: 50%; top: 50%; width: 64px; height: 64px; margin: -32px 0 0 -32px; transform-style: preserve-3d; animation: gen-spin 7s linear infinite; }
-.gen-cube i { position: absolute; inset: 0; border: 1.5px solid var(--accent); background: rgba(59,130,246,.07); box-shadow: 0 0 12px rgba(59,130,246,.25) inset; }
-.gen-cube i:nth-child(1) { transform: rotateY(0deg) translateZ(32px); }
-.gen-cube i:nth-child(2) { transform: rotateY(90deg) translateZ(32px); }
-.gen-cube i:nth-child(3) { transform: rotateY(180deg) translateZ(32px); }
-.gen-cube i:nth-child(4) { transform: rotateY(270deg) translateZ(32px); }
-.gen-cube i:nth-child(5) { transform: rotateX(90deg) translateZ(32px); }
-.gen-cube i:nth-child(6) { transform: rotateX(-90deg) translateZ(32px); }
-@keyframes gen-spin { from { transform: rotateX(-24deg) rotateY(0deg); } to { transform: rotateX(-24deg) rotateY(360deg); } }
-.gen-ring { position: absolute; inset: 0; border-radius: 50%; border: 1px dashed #2f3a52; animation: gen-orbit 4s linear infinite; }
-.gen-ring i { position: absolute; width: 8px; height: 8px; border-radius: 50%; background: #93c5fd; box-shadow: 0 0 10px #60a5fa; left: 50%; top: -4px; margin-left: -4px; }
-.gen-ring i:nth-child(2) { top: auto; bottom: -4px; background: #a78bfa; box-shadow: 0 0 10px #a78bfa; }
-.gen-ring i:nth-child(3) { top: 50%; left: -4px; margin: -4px 0 0; background: #22c55e; box-shadow: 0 0 10px #22c55e; }
-@keyframes gen-orbit { to { transform: rotate(360deg); } }
-.gen-scan { position: absolute; left: 20%; right: 20%; height: 2px; top: 20%; background: linear-gradient(90deg, transparent, #60a5fa, transparent); opacity: .7; animation: gen-scan 2.4s ease-in-out infinite; }
-@keyframes gen-scan { 0%, 100% { top: 20%; opacity: .2; } 50% { top: 80%; opacity: .8; } }
+/* generating overlay: particle sculpture + caption */
+.gen-overlay { position: absolute; inset: 0; z-index: 2; background: #101319; overflow: hidden; }
+.particle-scene { position: absolute; inset: 0; }
+.particle-scene canvas { display: block; width: 100% !important; height: 100% !important; }
+.gen-caption { position: absolute; left: 0; right: 0; bottom: 18px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; padding: 0 20px; pointer-events: none; text-shadow: 0 1px 8px #000; }
 .gen-title { font-size: 16px; font-weight: 700; }
 .gen-dots i { animation: gen-blink 1.4s infinite; font-style: normal; }
 .gen-dots i:nth-child(2) { animation-delay: .2s; }
@@ -143,7 +129,7 @@ p { margin: 6px 0; }
 @keyframes gen-blink { 0%, 20% { opacity: 0; } 50% { opacity: 1; } 100% { opacity: 0; } }
 .gen-stage { color: #bfdbfe; }
 .gen-last { max-width: 520px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
-.gen-hint { margin-top: 6px; }
+.gen-hint { margin-top: 2px; }
 
 /* change list, run options, usage meters, multi-image drop */
 .change-list { margin: 6px 0; padding-left: 18px; }

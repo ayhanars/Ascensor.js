@@ -96,6 +96,8 @@ export default function App() {
   };
 
   const glbUrl = version?.files.glb ? api.fileUrl(asset!.id, version.n, version.files.glb) + `?v=${glbNonce}` : null;
+  const parentVersion = version?.parent !== null && version?.parent !== undefined ? asset?.versions.find((v) => v.n === version.parent) : undefined;
+  const parentGlbUrl = parentVersion?.files.glb ? api.fileUrl(asset!.id, parentVersion.n, parentVersion.files.glb) : null;
 
   return (
     <div className="app">
@@ -143,7 +145,7 @@ export default function App() {
               ) : (
                 <div className="viewer-wrap">
                   <Viewer glbUrl={glbUrl} selected={selectedPart} onSelect={setSelectedPart} triangles={version.triangles} />
-                  {versionLive && <GeneratingOverlay version={version} lines={logLines} />}
+                  {versionLive && <GeneratingOverlay version={version} lines={logLines} parentGlbUrl={parentGlbUrl} />}
                 </div>
               )}
               <ViewStrip assetId={asset.id} version={version} active={activeView} onPick={setActiveView} />
