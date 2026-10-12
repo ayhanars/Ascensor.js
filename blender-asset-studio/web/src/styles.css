@@ -124,6 +124,8 @@ p { margin: 6px 0; }
 .gen-overlay { position: absolute; inset: 0; z-index: 2; background: #101319; overflow: hidden; }
 .particle-scene { position: absolute; inset: 0; }
 .particle-scene canvas { display: block; width: 100% !important; height: 100% !important; }
+.gen-ref { position: absolute; left: 12px; top: 12px; display: flex; flex-direction: column; gap: 4px; align-items: center; background: #000a; border: 1px solid var(--line); border-radius: 8px; padding: 6px; font-size: 11px; color: var(--muted); }
+.gen-ref img { width: 120px; height: 80px; object-fit: cover; border-radius: 4px; }
 .gen-caption { position: absolute; left: 0; right: 0; bottom: 18px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; padding: 0 20px; pointer-events: none; text-shadow: 0 1px 8px #000; }
 .gen-title { font-size: 16px; font-weight: 700; }
 .gen-dots i { animation: gen-blink 1.4s infinite; font-style: normal; }

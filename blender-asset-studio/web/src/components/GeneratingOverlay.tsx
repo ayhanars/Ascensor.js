@@ -24,13 +24,19 @@ function stageOf(lines: LogLine[], status: Version["status"]): string {
   return "Working";
 }
 
-export default function GeneratingOverlay({ version, lines, parentGlbUrl }: { version: Version; lines: LogLine[]; parentGlbUrl: string | null }) {
+export default function GeneratingOverlay({ version, lines, parentGlbUrl, refUrl }: { version: Version; lines: LogLine[]; parentGlbUrl: string | null; refUrl: string | null }) {
   const elapsed = useElapsed(version.startedAt ?? version.createdAt, true);
   const stage = stageOf(lines, version.status);
   const lastText = [...lines].reverse().find((l) => l.kind === "text" || l.kind === "tool");
   return (
     <div className="gen-overlay">
-      <ParticleScene glbUrl={parentGlbUrl} />
+      <ParticleScene glbUrl={parentGlbUrl} refUrl={refUrl} />
+      {refUrl && (
+        <div className="gen-ref" title="The agent reads this image first and matches the model to it">
+          <img src={refUrl} alt="reference" />
+          <span>matching reference</span>
+        </div>
+      )}
       <div className="gen-caption">
         <div className="gen-title">
           Building v{version.n}<span className="gen-dots"><i>.</i><i>.</i><i>.</i></span>
