@@ -1,0 +1,38 @@
+import type { AssetSummary } from "../types";
+
+interface Props {
+  assets: AssetSummary[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  onNew: () => void;
+}
+
+const dot: Record<string, string> = { queued: "dot queued", running: "dot running", done: "dot done", failed: "dot failed" };
+
+export default function AssetList({ assets, selectedId, onSelect, onNew }: Props) {
+  return (
+    <aside className="asset-list">
+      <div className="panel-head">
+        <span>Library · {assets.length}</span>
+        <button className="primary small" onClick={onNew}>+ New</button>
+      </div>
+      <div className="asset-scroll">
+        {assets.length === 0 && <p className="muted pad">No assets yet. Create one with an image and a description.</p>}
+        {assets.map((a) => (
+          <button key={a.id} className={"asset-row" + (a.id === selectedId ? " active" : "")} onClick={() => onSelect(a.id)}>
+            <div className="asset-thumb">{a.thumb ? <img src={a.thumb} alt="" /> : <span>3D</span>}</div>
+            <div className="asset-meta">
+              <div className="asset-name">
+                <span className={dot[a.status] ?? "dot"} /> {a.name}
+              </div>
+              <div className="muted small">
+                v{a.currentVersion ?? "–"} · {a.versionCount} version{a.versionCount === 1 ? "" : "s"}
+                {a.tags.length > 0 && " · " + a.tags.map((t) => "#" + t).join(" ")}
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+    </aside>
+  );
+}

@@ -1,0 +1,22 @@
+{
+  "name": "blender-asset-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Image + prompt to Blender 3D asset pipeline driven by Claude Code and Blender MCP, with a web viewer for versions and part-level refinement",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w server && npm run build -w web",
+    "start": "npm run start -w server",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "doctor": "npm run doctor -w server"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
