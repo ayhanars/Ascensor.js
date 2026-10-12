@@ -40,7 +40,7 @@ switches a run to API billing. The cost shown per version is what the API would 
 ```bash
 npm install
 npm run doctor        # checks the CLI login, uvx, and the Blender socket
-npm run dev           # server on :8787, web UI on :5173 (proxies to the server)
+npm run dev           # server on :8787 and web UI on :5173 together (or dev:server / dev:web in two tabs)
 ```
 
 Open http://localhost:5173, press **New**, drop an image, describe the asset, pick an effort,
