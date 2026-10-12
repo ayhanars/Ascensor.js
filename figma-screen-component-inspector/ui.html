@@ -857,6 +857,13 @@
 
   var lastTokenSavedAt = null;
   var lastTokenCheckState = null; // idle | checking | ok | bad — last token-check-result received
+  // Set once a status-table fetch actually succeeds with real rows — strong,
+  // independent proof the token works right now. The /v1/me check and the
+  // status-table fetch are two separate requests racing independently, so a
+  // stale/bad /v1/me result can arrive either before OR after a successful
+  // status load; this flag makes the suppression hold regardless of arrival
+  // order, not just the one case where "bad" happens to land first.
+  var statusConfirmedTokenWorks = false;
   var STALE_WARNING_DAYS = 80; // nudge ahead of the common 90-day expiration window
 
   topBannerFixBtn.addEventListener('click', function () { setActiveTab('settings'); });
@@ -1658,6 +1665,7 @@
     if (msg.type === 'token-saved') {
       setTokenStatus(true);
       lastTokenSavedAt = msg.savedAt || Date.now();
+      statusConfirmedTokenWorks = false; // a newly-saved token hasn't been proven yet
       showToast('Token saved');
       return;
     }
@@ -1665,6 +1673,7 @@
     if (msg.type === 'token-cleared') {
       setTokenStatus(false);
       lastTokenSavedAt = null;
+      statusConfirmedTokenWorks = false;
       renderTokenCheck(null);
       renderStaleNotice(null, false);
       setTopBannerVisible(false);
@@ -1674,6 +1683,14 @@
 
     if (msg.type === 'token-check-result') {
       lastTokenCheckState = msg.state;
+      // The /v1/me check and the status-table fetch are two independent
+      // requests; a "bad" /v1/me result that shows up after the status
+      // table has already loaded real rows is more likely a one-off blip
+      // on that specific call than the token actually being broken — don't
+      // let it override data that's visibly working.
+      if (msg.state === 'bad' && statusConfirmedTokenWorks) {
+        return;
+      }
       if (msg.state === 'checking') {
         renderTokenCheck({ state: 'checking' });
         setTopBannerVisible(false);
@@ -1706,13 +1723,14 @@
         statusLoadState = 'loaded';
         // A successful row-data fetch is strong, independent proof the
         // token actually works right now — stronger evidence than whatever
-        // the separate /v1/me check last said. If that check is still
-        // showing "bad" (e.g. a one-off blip on that specific call, or it
-        // ran moments before this one and hasn't caught up), re-run it so
-        // the red banner doesn't keep contradicting data that's visibly
-        // loading fine.
+        // the separate /v1/me check last said (or will say — see the
+        // token-check-result handler, which keeps honoring this even if a
+        // stale "bad" result from that other call arrives afterward).
+        statusConfirmedTokenWorks = true;
         if (lastTokenCheckState === 'bad') {
-          parent.postMessage({ pluginMessage: { type: 'get-token' } }, '*');
+          lastTokenCheckState = 'ok';
+          renderTokenCheck({ state: 'ok' });
+          setTopBannerVisible(false);
         }
       }
       renderStatusFetchCheck();

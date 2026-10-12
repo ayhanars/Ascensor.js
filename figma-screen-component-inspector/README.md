@@ -406,12 +406,19 @@ Settings:
   own error text appended when it has one — and a red banner appears at
   the top of **both** tabs with a "Fix in Settings" shortcut, so a
   broken token doesn't fail silently while you're using the Inspector
-  tab. If the Component Status fetch (a separate call) then succeeds
-  anyway — real proof the token does work — the token check is silently
-  re-run and the red banner clears itself, rather than keep contradicting
-  data that's visibly loading fine. A one-off blip on the `/v1/me` call
-  specifically, independent of the token's actual validity, is enough to
-  trigger this.
+  tab.
+
+  The `/v1/me` check and the Component Status fetch (`/v1/files/:key/
+  nodes`) are two independent network calls, racing each other — a
+  one-off blip on just the `/v1/me` call, unrelated to the token's
+  actual validity, can land before or after the other one finishes. If
+  the status fetch succeeds with real rows — strictly stronger proof the
+  token works than a single failed identity check — that's remembered
+  for the rest of the session: an "ok" result right away flips the
+  banner off, and a "bad" result that shows up afterward (either order
+  is possible) is suppressed rather than allowed to re-trigger it. A
+  freshly saved or cleared token resets this, so a genuinely broken
+  token is still caught on the next check.
 
 There's also a softer, separate nudge: Figma tokens can be created with
 an expiration as short as 90 days, but the API gives no way to ask a
