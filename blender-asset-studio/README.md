@@ -48,6 +48,10 @@ and generate v1. Keep Blender visible: you can watch the agent build and screens
 
 For a single-port build: `npm run build && npm start`, then open http://localhost:8787.
 
+After a `git pull` that changes files under `server/`, restart the server (Ctrl+C in its tab, then
+`npm run dev` again) once no generation is running. The server does not restart itself on code
+changes on purpose: a restart kills the agent run in progress. Web changes reload on their own.
+
 ## How a version works
 
 1. The server creates `data/assets/<id>/v<n>/` with `reference.png` and, for iterations, a copy of
