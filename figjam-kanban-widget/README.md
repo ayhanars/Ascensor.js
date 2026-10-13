@@ -62,7 +62,24 @@ on the next widget interaction (or re-import the manifest).
 | 7 Search & filters | Header search matches title, description, and owner. Filter panel: quick filters **Overdue**, **Unassigned**, **Stale in To Do** (threshold 3/7/14/30 days, set in property menu; stale cards also show an age badge like "12d"); plus Due (Today / This week / No date), Priority, Status, Assignee. "Clear all" resets everything. |
 | 8 Team visibility | Status, owner, due and priority are on every card without opening it. Status is conveyed by icon + column + text label (never colour alone); blocked cards also get an orange stripe, overdue a red stripe with text. Header summary: "7 active · 2 overdue · 1 blocked · 3 done". Shared state via `useSyncedMap` (per-task last-writer-wins, safe for concurrent edits). |
 | 9 Micro-interactions | Toast feedback on create / move / complete / schedule. Completing a task fills the check circle green, strikes through the title and shows "Done! Moving to Completed…" for ~0.65 s before the card moves. Hover styles on every control. No sound (see limitations). |
-| 10 Visual design | 11–12px type, 6–8px spacing, 1px borders, soft column backgrounds, no large headers. The whole board is ~1036px wide with four expanded columns, less when columns are collapsed. |
+| 10 Visual design | Each column has its own identity: a coloured top bar, a tinted background (slate / blue / orange / green), a status glyph and a count pill. Cards are white on the tint with initials avatars, arrow-prefixed priority pills (↑ High, → Med, ↓ Low) and an indigo accent. 11–12px type, 6–10px spacing, 1px borders. The board is ~1060px wide with four expanded columns, less when columns are collapsed. |
+
+## Performance notes
+
+Figma re-renders the whole widget tree on every interaction, and SVG nodes are
+the most expensive part of that tree because each SVG string is parsed on every
+render. The widget therefore:
+
+- draws every per-card glyph (status circles, check, avatar, priority, due) with
+  native frames, ellipses and text — **zero SVG per card**; the only SVGs are the
+  ~9 header/panel icons;
+- renders panels (quick add, filters, card details) only while they are open;
+- keeps the Done column collapsed by default and shows at most 4 recent rows
+  when expanded (the full list lives in the Done view);
+- avoids drop shadows on cards (one shadow on the outer frame, one on the active tab).
+
+If a very large board (100+ active cards) still feels slow, collapse columns you
+are not working in, or archive completed tasks from the Done view.
 
 ## Platform notes and limitations (honest list)
 
