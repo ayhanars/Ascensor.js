@@ -7,14 +7,26 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
+# Needs Python 3.10, 3.11 or 3.12: the mesh libraries (pymeshlab and friends) ship wheels for
+# those only. macOS's built-in python3 is 3.9 and will not work.
 PY=""
-for cand in python3.11 python3.10 python3.12 python3; do
-  if command -v "$cand" >/dev/null 2>&1; then PY="$(command -v "$cand")"; break; fi
+for cand in python3.11 python3.12 python3.10 /opt/homebrew/bin/python3.11 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.10 python3; do
+  if command -v "$cand" >/dev/null 2>&1; then
+    v="$("$cand" -c 'import sys; print(sys.version_info[0]*100+sys.version_info[1])' 2>/dev/null || echo 0)"
+    if [ "$v" -ge 310 ] && [ "$v" -le 312 ]; then PY="$(command -v "$cand")"; break; fi
+  fi
 done
 if [ -z "$PY" ]; then
-  echo "No python3 found. On macOS: brew install python@3.11"; exit 1
+  echo "No Python 3.10, 3.11 or 3.12 found (macOS's own python3 is too old)."
+  echo "Install one and run this script again:"
+  echo "    brew install python@3.11"
+  exit 1
 fi
 echo "using $PY ($("$PY" --version 2>&1))"
+if [ -d venv ] && ! venv/bin/python -c 'import sys; sys.exit(0 if (3,10) <= sys.version_info[:2] <= (3,12) else 1)' 2>/dev/null; then
+  echo "existing venv uses an unsupported Python; recreating it"
+  rm -rf venv
+fi
 
 [ -d venv ] || "$PY" -m venv venv
 # shellcheck disable=SC1091

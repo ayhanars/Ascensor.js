@@ -4,7 +4,7 @@ Free, local, no account. Shape generation only (the texture stage needs an Nvidi
 agent colors the mesh in Blender afterwards by projecting the reference onto it.
 
 Requirements: Apple Silicon Mac with 16 GB (mini model) or Linux with a CUDA GPU; Python 3.10
-to 3.12 (`brew install python@3.11` on macOS); about 6 GB of disk for the environment and the
+to 3.12 (macOS's built-in python3 is 3.9 and too old: `brew install python@3.11` first); about 6 GB of disk for the environment and the
 mini weights; 3 to 5 minutes per model on an M-series laptop.
 
 ```bash
