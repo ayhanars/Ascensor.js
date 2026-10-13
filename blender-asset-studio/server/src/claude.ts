@@ -5,7 +5,7 @@
  */
 import { spawn } from "node:child_process";
 import readline from "node:readline";
-import { config, EFFORTS, type Effort } from "./config.js";
+import { config, DETAILS, EFFORTS, type Detail, type Effort } from "./config.js";
 import { recordRateLimit } from "./usage.js";
 
 export interface ClaudeRunResult {
@@ -22,6 +22,7 @@ export interface ClaudeRunOptions {
   cwd: string;
   prompt: string;
   effort: Effort;
+  detail?: Detail;
   /** CLI model alias or full id; empty = CLI default, falls back to CLAUDE_MODEL env. */
   model?: string;
   onLog: (kind: "info" | "tool" | "text" | "error", text: string) => void;
@@ -32,8 +33,9 @@ export interface ClaudeRunOptions {
 // "all tools of this server"), so a server with different tool names still works. Bash stays off.
 const ALLOWED_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "ToolSearch", "mcp__blender", "mcp__blender__*"];
 
-export function claudeArgs(opts: { effort: Effort; model?: string }): string[] {
+export function claudeArgs(opts: { effort: Effort; detail?: Detail; model?: string }): string[] {
   const e = EFFORTS[opts.effort];
+  const d = DETAILS[opts.detail ?? "game"];
   const args = [
     "-p",
     "--output-format",
@@ -65,7 +67,7 @@ export function claudeArgs(opts: { effort: Effort; model?: string }): string[] {
     "--permission-mode",
     "dontAsk",
     "--max-turns",
-    String(e.maxTurns),
+    String(Math.round(e.maxTurns * d.turnsFactor)),
     "--effort",
     e.cliEffort,
   ];
@@ -119,11 +121,12 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
     let lastActivity = Date.now();
     let killedBy: string | null = null;
     const e = EFFORTS[opts.effort];
+    const maxMinutes = Math.round(e.maxMinutes * DETAILS[opts.detail ?? "game"].minutesFactor);
     const watchdog = setInterval(() => {
       const idleMin = (Date.now() - lastActivity) / 60000;
       const totalMin = (Date.now() - startedAt) / 60000;
       if (idleMin >= config.idleMinutes) killedBy = `no activity for ${Math.round(idleMin)} minutes (did the Mac sleep, or did Blender stop answering?)`;
-      else if (totalMin >= e.maxMinutes) killedBy = `exceeded the ${e.maxMinutes} minute limit for effort "${opts.effort}"`;
+      else if (totalMin >= maxMinutes) killedBy = `exceeded the ${maxMinutes} minute limit for effort "${opts.effort}" at detail "${opts.detail ?? "game"}"`;
       if (killedBy) {
         clearInterval(watchdog);
         opts.onLog("error", `stopping run: ${killedBy}`);

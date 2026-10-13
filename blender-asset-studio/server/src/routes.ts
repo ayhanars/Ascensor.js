@@ -3,7 +3,7 @@ import path from "node:path";
 import express, { type Request, type Response } from "express";
 import multer from "multer";
 import { nanoid } from "nanoid";
-import { config, EFFORTS, MODELS, MATERIALS, type Effort, type Materials } from "./config.js";
+import { config, DETAILS, EFFORTS, MODELS, MATERIALS, type Detail, type Effort, type Materials } from "./config.js";
 import { getUsage } from "./usage.js";
 import { store } from "./store.js";
 import { enqueue, cancel, events, readLog, queueState, finalizeVersion, logLine } from "./jobs.js";
@@ -17,6 +17,7 @@ export const api = express.Router();
 
 const isEffort = (e: unknown): e is Effort => typeof e === "string" && e in EFFORTS;
 const isMaterials = (m: unknown): m is Materials => typeof m === "string" && m in MATERIALS;
+const isDetail = (d: unknown): d is Detail => typeof d === "string" && d in DETAILS;
 const pickModel = (m: unknown): string => (typeof m === "string" && MODELS.some((x) => x.id === m) ? m : "");
 function parseIds(raw: unknown): string[] {
   if (typeof raw !== "string" || !raw.trim()) return [];
@@ -51,6 +52,7 @@ function newVersion(a: Asset, init: Partial<Version>): Version {
     scopedPart: null,
     requestedModel: "",
     materials: "flat",
+    detail: "game",
     textures: [],
     parent: null,
     fromScratch: false,
@@ -96,6 +98,7 @@ api.get("/health", async (_req, res) => {
     efforts: EFFORTS,
     models: MODELS,
     materials: MATERIALS,
+    details: DETAILS,
     usage: getUsage(),
     claudeBin: config.claudeBin,
     model: config.claudeModel || "default",
@@ -128,6 +131,7 @@ api.post("/assets", upload.array("references", 8), (req, res) => {
   const prompt = String(req.body.prompt ?? "").trim();
   const effort = isEffort(req.body.effort) ? req.body.effort : "standard";
   const materials = isMaterials(req.body.materials) ? req.body.materials : "flat";
+  const detail = isDetail(req.body.detail) ? req.body.detail : "game";
   const requestedModel = pickModel(req.body.model);
   const textures = parseIds(req.body.textures);
   const tags = String(req.body.tags ?? "")
@@ -145,7 +149,7 @@ api.post("/assets", upload.array("references", 8), (req, res) => {
     currentVersion: null,
     versions: [],
   };
-  const v = newVersion(asset, { prompt, effort, materials, requestedModel, textures });
+  const v = newVersion(asset, { prompt, effort, materials, detail, requestedModel, textures });
   v.files.references = saveReferences(store.versionDir(asset.id, v.n), req.files as Express.Multer.File[]);
   v.hasReference = v.files.references.length > 0;
   v.files.reference = v.files.references[0] ?? null;
@@ -200,6 +204,7 @@ api.post("/assets/:id/versions", upload.array("references", 8), (req, res) => {
   const parentN = Number(req.body.parent ?? a.currentVersion);
   const parent = a.versions.find((v) => v.n === parentN);
   const materials = isMaterials(req.body.materials) ? req.body.materials : parent?.materials ?? "flat";
+  const detail = isDetail(req.body.detail) ? req.body.detail : parent?.detail ?? "game";
   const textures = typeof req.body.textures === "string" ? parseIds(req.body.textures) : parent?.textures ?? [];
 
   let changes = parseChanges(req.body.changes, scopedPart);
@@ -224,6 +229,7 @@ api.post("/assets/:id/versions", upload.array("references", 8), (req, res) => {
         parent: prev,
         requestedModel,
         materials,
+        detail,
         textures,
       });
       const dir = store.versionDir(asset.id, v.n);

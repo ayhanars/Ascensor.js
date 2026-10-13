@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Asset, Change, Effort, Health, KitTexture, Materials, Version } from "../types";
+import type { Asset, Change, Detail, Effort, Health, KitTexture, Materials, Version } from "../types";
 import ImageDrop from "./ImageDrop";
 import RunOptions from "./RunOptions";
 import { SectionLabel, Toggle } from "./ui";
@@ -28,6 +28,7 @@ export default function IteratePanel({ asset, version, health, kit, selectedPart
   const [effort, setEffort] = useState<Effort>("quick");
   const [model, setModel] = useState(version.requestedModel ?? "");
   const [materials, setMaterials] = useState<Materials>(version.materials ?? "flat");
+  const [detail, setDetail] = useState<Detail>(version.detail ?? "game");
   const [fromScratch, setFromScratch] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
@@ -39,9 +40,10 @@ export default function IteratePanel({ asset, version, health, kit, selectedPart
   }, [selectedPart]);
   useEffect(() => {
     setMaterials(version.materials ?? "flat");
+    setDetail(version.detail ?? "game");
     setModel(version.requestedModel ?? "");
     setTextures(version.textures ?? []);
-  }, [version.n, version.materials, version.requestedModel, version.textures]);
+  }, [version.n, version.materials, version.detail, version.requestedModel, version.textures]);
 
   const next = Math.max(...asset.versions.map((v) => v.n)) + 1;
   const canIterate = version.status === "done";
@@ -64,6 +66,7 @@ export default function IteratePanel({ asset, version, health, kit, selectedPart
     fd.set("effort", effort);
     fd.set("model", model);
     fd.set("materials", materials);
+    fd.set("detail", detail);
     fd.set("textures", JSON.stringify(textures));
     fd.set("fromScratch", String(fromScratch));
     fd.set("chain", String(chain && count > 1));
@@ -135,7 +138,7 @@ export default function IteratePanel({ asset, version, health, kit, selectedPart
         <summary>Reference images <span className="muted">inherits v{version.n}'s</span></summary>
         <ImageDrop files={files} onFiles={setFiles} />
       </details>
-      <RunOptions health={health} effort={effort} onEffort={setEffort} model={model} onModel={setModel} materials={materials} onMaterials={setMaterials} kit={kit} textures={textures} onTextures={setTextures} />
+      <RunOptions health={health} effort={effort} onEffort={setEffort} model={model} onModel={setModel} materials={materials} onMaterials={setMaterials} detail={detail} onDetail={setDetail} kit={kit} textures={textures} onTextures={setTextures} />
       <Toggle checked={fromScratch} onChange={setFromScratch} label="Start from scratch" hint="Ignore earlier scripts and build a new take." />
       {err && <div className="notice err">{err}</div>}
       {!canIterate && !fromScratch && <div className="notice">v{version.n} is {version.status}. Pick a finished version in the list below, or switch on "Start from scratch".</div>}

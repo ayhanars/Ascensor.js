@@ -1,4 +1,4 @@
-import type { Effort, Materials } from "./config.js";
+import type { Detail, Effort, Materials } from "./config.js";
 
 export type VersionStatus = "queued" | "running" | "done" | "failed";
 
@@ -48,6 +48,7 @@ export interface Version {
   scopedPart: string | null;
   requestedModel: string;
   materials: Materials;
+  detail: Detail;
   /** ids of texture-kit items the agent must use */
   textures: string[];
   parent: number | null;

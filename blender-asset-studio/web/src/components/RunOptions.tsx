@@ -1,4 +1,4 @@
-import type { Effort, Health, KitTexture, Materials } from "../types";
+import type { Detail, Effort, Health, KitTexture, Materials } from "../types";
 import { api } from "../api";
 import EffortPicker from "./EffortPicker";
 import { Seg, SectionLabel } from "./ui";
@@ -11,13 +11,23 @@ interface Props {
   onModel: (m: string) => void;
   materials: Materials;
   onMaterials: (m: Materials) => void;
+  detail: Detail;
+  onDetail: (d: Detail) => void;
   kit: KitTexture[];
   textures: string[];
   onTextures: (ids: string[]) => void;
 }
 
-/** Effort, model, materials and kit textures, shared by the new-asset form and the iterate panel. */
-export default function RunOptions({ health, effort, onEffort, model, onModel, materials, onMaterials, kit, textures, onTextures }: Props) {
+const DETAIL_FALLBACK: Record<Detail, { label: string; maxTriangles: number; blurb: string }> = {
+  draft: { label: "Draft", maxTriangles: 5000, blurb: "" },
+  game: { label: "Game", maxTriangles: 60000, blurb: "" },
+  hero: { label: "Hero", maxTriangles: 300000, blurb: "" },
+};
+const fmtTris = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+
+/** Effort, detail, model, materials and kit textures, shared by the new-asset form and the iterate panel. */
+export default function RunOptions({ health, effort, onEffort, model, onModel, materials, onMaterials, detail, onDetail, kit, textures, onTextures }: Props) {
+  const details = health?.details ?? DETAIL_FALLBACK;
   // fallback list so the picker is usable even before the server answers
   const models = health?.models ?? [
     { id: "", label: "Default", blurb: "" },
@@ -33,6 +43,14 @@ export default function RunOptions({ health, effort, onEffort, model, onModel, m
       <SectionLabel>Effort</SectionLabel>
       <EffortPicker value={effort} onChange={onEffort} efforts={health?.efforts ?? null} />
       <p className="hint">{health?.efforts?.[effort]?.blurb}</p>
+
+      <SectionLabel>Detail</SectionLabel>
+      <Seg
+        value={detail}
+        onChange={onDetail}
+        options={(["draft", "game", "hero"] as Detail[]).map((d) => ({ id: d, label: `${details[d].label} · ${fmtTris(details[d].maxTriangles)}`, title: details[d].blurb }))}
+      />
+      <p className="hint">{details[detail].blurb || `Up to ${fmtTris(details[detail].maxTriangles)} triangles for the whole asset.`}</p>
 
       <SectionLabel>Model</SectionLabel>
       <Seg value={model} onChange={onModel} options={models.map((m) => ({ id: m.id, label: m.label, title: m.blurb }))} />

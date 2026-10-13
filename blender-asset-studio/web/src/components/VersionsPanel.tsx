@@ -40,7 +40,7 @@ export default function VersionsPanel({ asset, viewing, onView, onChanged }: { a
               </div>
               <div className="muted small ellipsis" title={v.prompt}>{v.prompt}</div>
               <div className="muted small" title={fmtCost(v.costUsd) ? `${fmtCost(v.costUsd)} if billed on the API; not billed` : undefined}>
-                {[v.parent !== null && !v.fromScratch ? `from v${v.parent}` : "fresh", v.effort, v.materials !== "flat" ? v.materials : "", MODEL_LABEL[v.requestedModel] ?? v.requestedModel, fmtDur(v.durationMs), v.turns ? `${v.turns} turns` : ""].filter(Boolean).join(" · ")}
+                {[v.parent !== null && !v.fromScratch ? `from v${v.parent}` : "fresh", v.effort, v.detail && v.detail !== "game" ? v.detail : "", v.triangles ? `${v.triangles >= 1000 ? Math.round(v.triangles / 1000) + "k" : v.triangles} tris` : "", v.materials !== "flat" ? v.materials : "", MODEL_LABEL[v.requestedModel] ?? v.requestedModel, fmtDur(v.durationMs), v.turns ? `${v.turns} turns` : ""].filter(Boolean).join(" · ")}
               </div>
               {v.status === "done" && v.n !== asset.currentVersion && (
                 <button className="small link" onClick={(e) => { e.stopPropagation(); void setCurrent(v); }}>make current</button>

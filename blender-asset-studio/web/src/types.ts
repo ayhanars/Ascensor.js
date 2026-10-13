@@ -1,6 +1,7 @@
 export type Effort = "quick" | "standard" | "thorough" | "max";
 export type VersionStatus = "queued" | "running" | "done" | "failed";
 export type Materials = "flat" | "procedural" | "pbr";
+export type Detail = "draft" | "game" | "hero";
 
 export interface Change {
   text: string;
@@ -59,6 +60,7 @@ export interface Version {
   scopedPart: string | null;
   requestedModel: string;
   materials: Materials;
+  detail: Detail;
   textures: string[];
   parent: number | null;
   fromScratch: boolean;
@@ -114,6 +116,7 @@ export interface Health {
   efforts: Record<Effort, { passes: string; maxTurns: number; blurb: string }>;
   models: { id: string; label: string; blurb: string }[];
   materials: Record<Materials, { label: string; blurb: string }>;
+  details: Record<Detail, { label: string; maxTriangles: number; blurb: string }>;
   usage: Usage | null;
   model: string;
 }

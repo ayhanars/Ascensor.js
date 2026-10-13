@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../api";
-import type { Effort, Health, KitTexture, Materials } from "../types";
+import type { Detail, Effort, Health, KitTexture, Materials } from "../types";
 import ImageDrop from "./ImageDrop";
 import RunOptions from "./RunOptions";
 
@@ -12,6 +12,7 @@ export default function NewAssetForm({ health, kit, onCreated, onCancel }: { hea
   const [effort, setEffort] = useState<Effort>("standard");
   const [model, setModel] = useState("");
   const [materials, setMaterials] = useState<Materials>("flat");
+  const [detail, setDetail] = useState<Detail>("game");
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -26,6 +27,7 @@ export default function NewAssetForm({ health, kit, onCreated, onCancel }: { hea
     fd.set("effort", effort);
     fd.set("model", model);
     fd.set("materials", materials);
+    fd.set("detail", detail);
     fd.set("textures", JSON.stringify(textures));
     for (const f of files) fd.append("references", f);
     setBusy(true);
@@ -56,7 +58,7 @@ export default function NewAssetForm({ health, kit, onCreated, onCancel }: { hea
           placeholder="A two-storey corner cafe-restaurant: ground floor with big folding glass doors, a front terrace with tables, chairs and umbrellas under a timber pergola, a canvas awning, first floor flat with a balcony. Cream and blue paint. Ground 4 x 6 m."
         />
       </label>
-      <RunOptions health={health} effort={effort} onEffort={setEffort} model={model} onModel={setModel} materials={materials} onMaterials={setMaterials} kit={kit} textures={textures} onTextures={setTextures} />
+      <RunOptions health={health} effort={effort} onEffort={setEffort} model={model} onModel={setModel} materials={materials} onMaterials={setMaterials} detail={detail} onDetail={setDetail} kit={kit} textures={textures} onTextures={setTextures} />
       {err && <p className="err">{err}</p>}
       {health && !health.blender.ok && <p className="warn">Blender is not reachable: {health.blender.detail}</p>}
       <div className="row gap" style={{ marginTop: 14 }}>

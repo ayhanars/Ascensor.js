@@ -37,7 +37,7 @@ on without them, do not retry them.
 - Give every object a material with a base color (Principled BSDF). Prefer a few shared,
   named materials such as `Stucco_Cream`, `Paint_Blue`, `Wood_Timber`.
 - Use mesh primitives, modifiers (array, mirror, solidify, bevel) and bmesh. Keep the whole
-  asset under roughly 60k triangles unless told otherwise.
+  asset within the triangle budget stated in the task (see Detail levels below).
 - Apply modifiers only when needed for the final result. The export step applies them.
 - Never reload the file, quit Blender, change render settings, or touch objects you did not
   create. Never use `bpy.ops.wm.read_homefile` or `bpy.ops.wm.quit_blender`.
@@ -126,3 +126,34 @@ needs UVs: give each textured object a UV map (`bpy.ops.object.mode_set` is not 
 override, or build the mesh with UVs from the start). Image textures are packed into the GLB,
 so the kit shows in the web viewer. Use the kit for every surface it fits; use a slight
 `color_tint` only if the task asks for a different color than the photo.
+
+
+## Detail levels
+
+The task states a detail level and a triangle budget for the whole asset. After every build
+pass, run this and read the number before deciding what to add next:
+
+```python
+def count_tris():
+    deps = bpy.context.evaluated_depsgraph_get(); total = 0
+    for o in bpy.data.objects:
+        if o.type != 'MESH': continue
+        ev = o.evaluated_get(deps); m = ev.to_mesh(); m.calc_loop_triangles()
+        total += len(m.loop_triangles); ev.to_mesh_clear()
+    print("TRIS", total); return total
+```
+
+- **draft** (5k): primitives, array and mirror modifiers, no subdivision. Proportions and
+  silhouette only.
+- **game** (60k): Bevel modifier with 2 to 3 segments on hard edges; Subdivision Surface
+  level 1 on rounded parts, with edge creases (`edge.crease`) to keep corners; Boolean
+  modifier cuts for openings and reveals; `shade_smooth` with auto smooth by angle. Model what
+  reads from 3 m away: window frames, railings, trims, handles.
+- **hero** (300k): Subdivision Surface level 2 on organic and rounded parts; Displace
+  modifier driven by a Noise or Voronoi texture for stucco, wood grain, fabric and ground
+  relief; curve objects with bevel depth for cables, rails, pipes and trims; Skin modifier on
+  edge chains for limbs, branches and tubes, then subdivision; voxel Remesh plus Smooth for
+  blended organic masses such as heads and bodies. If the count exceeds the budget, add a
+  Decimate modifier (collapse) to the heaviest parts rather than removing detail by hand.
+
+Spend the budget where the reference has detail; leave flat surfaces as flat quads.

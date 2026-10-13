@@ -1,5 +1,5 @@
 import path from "node:path";
-import { EFFORTS, type Effort, type Materials } from "./config.js";
+import { DETAILS, EFFORTS, type Detail, type Effort, type Materials } from "./config.js";
 import type { Change } from "./types.js";
 import { describeTextures } from "./textures.js";
 
@@ -11,6 +11,12 @@ const MATERIAL_BRIEF: Record<Materials, string> = {
     "Materials: PBR textures. Use the Blender MCP Poly Haven tools (search for textures, download at 1k or 2k, apply the generated material) for the main surfaces: walls, roof, ground, wood, metal, fabric. Set the mapping scale so textures read at real-world size. If the Poly Haven tools are unavailable or fail, fall back to procedural node textures and say so in your summary.",
 };
 
+const DETAIL_BRIEF: Record<Detail, string> = {
+  draft: "Detail: draft. Primitives, array/mirror modifiers, no subdivision. Get proportions and silhouette right; skip small details.",
+  game: "Detail: game. Bevel modifier (2-3 segments) on hard edges, Subdivision Surface level 1 with edge creases on rounded parts, boolean cuts for openings and reveals, shade smooth by angle. Model the details that read from 3 m away.",
+  hero: "Detail: hero. Subdivision Surface level 2 on organic and rounded parts, Displace modifier driven by noise/voronoi textures for surface relief, curve objects with bevel depth for cables, rails and trims, Skin modifier on edge chains for limbs and branches, voxel Remesh plus smooth for blended organic masses. Decimate only if the budget is exceeded.",
+};
+
 export function buildPrompt(opts: {
   versionDir: string;
   assetName: string;
@@ -18,6 +24,7 @@ export function buildPrompt(opts: {
   changes: Change[];
   effort: Effort;
   materials: Materials;
+  detail: Detail;
   textures: string[];
   references: string[];
   isIteration: boolean;
@@ -32,6 +39,7 @@ export function buildPrompt(opts: {
   lines.push(`BUILD_PY = ${buildPy}`);
   lines.push(`Allowed compare-and-fix passes for this run: ${e.passes}.`);
   lines.push(MATERIAL_BRIEF[opts.materials]);
+  lines.push(`${DETAIL_BRIEF[opts.detail]} Triangle budget: ${DETAILS[opts.detail].maxTriangles.toLocaleString("en-US")} triangles for the whole asset; print count_tris() after each build pass and stay under it.`);
   const kit = describeTextures(opts.textures);
   if (kit) {
     lines.push("");
@@ -55,6 +63,7 @@ export function buildPrompt(opts: {
   } else {
     lines.push("TASK: iterate on the existing asset. ./build.py already contains the previous version's script");
     lines.push("(including any manual tweaks appended at the end). Edit it, do not rewrite it from nothing.");
+    lines.push("Keep the whole asset within the triangle budget above; if the previous version exceeded it, simplify the parts you touch.");
     if (opts.parentSummary) {
       lines.push("");
       lines.push("Previous version summary:");

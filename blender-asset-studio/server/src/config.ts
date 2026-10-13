@@ -22,6 +22,14 @@ export const config = {
 
 export type Effort = "quick" | "standard" | "thorough" | "max";
 export type Materials = "flat" | "procedural" | "pbr";
+export type Detail = "draft" | "game" | "hero";
+
+/** Geometry budget and modeling recipe per run. Turn and time limits scale with it. */
+export const DETAILS: Record<Detail, { label: string; maxTriangles: number; turnsFactor: number; minutesFactor: number; blurb: string }> = {
+  draft: { label: "Draft", maxTriangles: 5_000, turnsFactor: 0.8, minutesFactor: 0.8, blurb: "Up to 5k triangles. Primitives and simple modifiers, no subdivision. For layout and silhouette checks." },
+  game: { label: "Game", maxTriangles: 60_000, turnsFactor: 1.0, minutesFactor: 1.0, blurb: "Up to 60k triangles. Bevels, moderate subdivision, cut-in details. What a game asset needs." },
+  hero: { label: "Hero", maxTriangles: 300_000, turnsFactor: 1.5, minutesFactor: 1.6, blurb: "Up to 300k triangles. Subdivision level 2 on organic parts, displacement, dense curves. Slowest." },
+};
 
 /** Model aliases the Claude CLI accepts. Empty id = the CLI's default. */
 export const MODELS: { id: string; label: string; blurb: string }[] = [

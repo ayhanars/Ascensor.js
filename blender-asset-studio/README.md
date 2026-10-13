@@ -75,7 +75,12 @@ Only one generation runs at a time because Blender holds a single scene; later r
   the next change to it, press "+ Add to list", and generate. By default the agent applies the whole
   list in one version; tick "One version per change" to get a chain of versions, each built on the
   previous one, so you can compare and roll back step by step.
-- **Model.** Default, Opus, Sonnet or Haiku per run, passed to the CLI as `--model`.
+- **Detail.** Draft (5k triangles), Game (60k, default) or Hero (300k) per run. Each level
+  comes with a modeling recipe for the agent (bevels and light subdivision for Game;
+  subdivision level 2, displacement, dense curves and remeshing for Hero) and scales the turn
+  and time limits. The agent prints its triangle count after each pass; the server warns when a
+  finished version is more than 25% over budget.
+- **Model.** Default, Fable, Opus, Sonnet or Haiku per run, passed to the CLI as `--model`.
 - **Materials.** *Flat* colors; *Procedural* node textures (visible in the rendered views, the GLB
   keeps base colors); *PBR textures* from Poly Haven through the Blender MCP tools, packed into the
   GLB. PBR needs the addon's Poly Haven option switched on in its Blender sidebar panel; if the
@@ -126,11 +131,11 @@ web/src
 ```
 GET    /api/health
 GET    /api/assets
-POST   /api/assets                       multipart: name, prompt, effort, model, materials, tags, references[]
+POST   /api/assets                       multipart: name, prompt, effort, detail, model, materials, tags, references[]
 GET    /api/assets/:id
 PATCH  /api/assets/:id                   { name?, tags?, currentVersion? }
 DELETE /api/assets/:id
-POST   /api/assets/:id/versions          multipart: changes (JSON [{text, part}]) or prompt, effort, model, materials,
+POST   /api/assets/:id/versions          multipart: changes (JSON [{text, part}]) or prompt, effort, detail, model, materials,
                                          parent, fromScratch, chain, references[]
 POST   /api/assets/:id/versions/:n/cancel
 GET    /api/assets/:id/versions/:n/log

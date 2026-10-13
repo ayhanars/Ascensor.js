@@ -10,6 +10,7 @@ import { runClaude } from "./claude.js";
 import { buildPrompt } from "./prompts.js";
 import { collectParts, exportScene, renderViews } from "./finalize.js";
 import { startLivePolling, clearLive } from "./live.js";
+import { DETAILS } from "./config.js";
 import { executeCode } from "./blender.js";
 
 /** Same reset the agent's build.py starts with, so nothing from an earlier run is shown or kept. */
@@ -111,7 +112,11 @@ export async function finalizeVersion(assetId: string, n: number, opts: { render
   const materials = store.get(assetId)?.versions.find((v) => v.n === n)?.materials ?? "flat";
   log("info", "collecting parts");
   const { parts, triangles } = await collectParts();
-  log("info", `exporting GLB (${parts.length} parts, ${triangles} triangles)`);
+  log("info", `exporting GLB (${parts.length} parts, ${triangles.toLocaleString("en-US")} triangles)`);
+  const detail = store.get(assetId)?.versions.find((v) => v.n === n)?.detail ?? "game";
+  const budget = DETAILS[detail].maxTriangles;
+  if (triangles > budget * 1.25)
+    log("error", `over budget: ${triangles.toLocaleString("en-US")} triangles against ${budget.toLocaleString("en-US")} for detail "${detail}" (kept as is; ask for a simplification pass if it matters)`);
   await exportScene(dir);
   let views: string[] = [];
   if (opts.render) {
@@ -178,6 +183,7 @@ async function runJob(job: Job): Promise<void> {
     changes: fresh.changes,
     effort: fresh.effort,
     materials: fresh.materials,
+    detail: fresh.detail ?? "game",
     textures: fresh.textures ?? [],
     references: fresh.files.references,
     isIteration,
@@ -199,6 +205,7 @@ async function runJob(job: Job): Promise<void> {
     cwd: dir,
     prompt,
     effort: version.effort,
+    detail: version.detail ?? "game",
     model: version.requestedModel,
     signal: job.controller.signal,
     onLog: (kind, text) => log(kind, text),
