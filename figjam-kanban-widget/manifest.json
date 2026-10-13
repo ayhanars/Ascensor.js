@@ -1,0 +1,12 @@
+{
+  "name": "Kanban Lite",
+  "id": "1420000000000000001",
+  "api": "1.0.0",
+  "widgetApi": "1.0.0",
+  "editorType": ["figjam"],
+  "containsWidget": true,
+  "main": "dist/code.js",
+  "ui": "dist/ui.html",
+  "permissions": ["currentuser"],
+  "networkAccess": { "allowedDomains": ["none"] }
+}
