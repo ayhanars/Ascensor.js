@@ -313,6 +313,7 @@ const STATE_KEYS = [
   'uiSize',
   'scope',
   'storeVersion',
+  'lastSyncedVersion',
 ]
 function storeRead<T>(key: string): T | null {
   const raw = figma.root.getSharedPluginData(NS, key)
@@ -322,6 +323,12 @@ function storeRead<T>(key: string): T | null {
   } catch (_) {
     return null
   }
+}
+/** A single version stamp lets a render decide in one API call whether a full merge is needed. */
+const readStoreVersion = (): number => {
+  const raw = figma.root.getSharedPluginData(NS, 'version')
+  const n = raw ? parseInt(raw, 10) : 0
+  return isNaN(n) ? 0 : n
 }
 let storeErrorShown = false
 const storeWrite = (key: string, value: unknown | null) => {
@@ -409,6 +416,8 @@ function Widget() {
   const [scope, setScope] = useSyncedState<Scope>('scope', { kind: 'team' })
   /** Bumped by other boards on this page when they write, which re-renders this one. */
   const [storeVersion] = useSyncedState<number>('storeVersion', 0)
+  /** The store version this instance has already merged; renders skip the merge while it matches. */
+  const [lastSyncedVersion, setLastSyncedVersion] = useSyncedState<number>('lastSyncedVersion', -1)
   const widgetId = useWidgetNodeId()
   K = SCALES[uiSize] ?? 1.35
   const owner = scope.kind === 'personal' ? scope.name : null
@@ -446,6 +455,7 @@ function Widget() {
         const person: Person = { name: u.name, photoUrl: u.photoUrl ?? null, seenAt: now }
         people.set(u.name, person)
         storeWrite('person:' + u.name, person)
+        bumpStoreVersion()
       }
     }
   }
@@ -471,6 +481,9 @@ function Widget() {
 
   const refresh = () => {
     const n = syncWithStore()
+    try {
+      setLastSyncedVersion(readStoreVersion())
+    } catch (_) {}
     toast(n ? `Pulled ${n} update${n === 1 ? '' : 's'} from other boards` : 'Up to date with the other boards')
   }
 
@@ -487,21 +500,15 @@ function Widget() {
       if (!others.length) return
       const taskMap: Record<string, Task> = {}
       const personMap: Record<string, Person> = {}
-      for (const k of figma.root.getSharedPluginDataKeys(NS)) {
-        if (k.startsWith('task:')) {
-          const v = storeRead<Task>(k)
-          if (v && v.id) taskMap[v.id] = v
-        } else if (k.startsWith('person:')) {
-          const v = storeRead<Person>(k)
-          if (v && v.name) personMap[v.name] = v
-        }
-      }
-      const version = Date.now()
+      for (const t of tasks.values()) taskMap[t.id] = t
+      for (const p of people.values()) personMap[p.name] = p
+      const version = readStoreVersion()
       for (const n of others) {
         const prev = (n.widgetSyncedState || {}) as Record<string, unknown>
         const next: Record<string, unknown> = {}
         for (const k of STATE_KEYS) if (k in prev) next[k] = prev[k]
         next.storeVersion = version
+        next.lastSyncedVersion = version
         n.setWidgetSyncedState(next, { tasks: taskMap, people: personMap })
       }
     } catch (_) {
@@ -520,14 +527,27 @@ function Widget() {
 
   // ------------------------------------------------------------- mutations
   /** Every write goes to this instance's cache AND the file-wide store. */
+  /** Stamp the store with a new version and remember it so our own next render skips the merge. */
+  const bumpStoreVersion = (): number => {
+    const v = Date.now()
+    try {
+      figma.root.setSharedPluginData(NS, 'version', String(v))
+    } catch (_) {
+      return v
+    }
+    setLastSyncedVersion(v)
+    return v
+  }
   const writeTask = (t: Task) => {
     tasks.set(t.id, t)
     storeWrite('task:' + t.id, t)
+    bumpStoreVersion()
   }
   const deleteTask = (id: string) => {
     tasks.delete(id)
     storeWrite('task:' + id, null)
     storeWrite('deleted:' + id, { at: Date.now() })
+    bumpStoreVersion()
   }
 
   /**
@@ -537,6 +557,7 @@ function Widget() {
    */
   const syncWithStore = (): number => {
     let changes = 0
+    let wrote = false
     let keys: string[] = []
     try {
       keys = figma.root.getSharedPluginDataKeys(NS)
@@ -569,8 +590,14 @@ function Widget() {
         if (tomb.has(c.id)) {
           tasks.delete(c.id)
           changes++
-        } else storeWrite('task:' + c.id, c)
-      } else if (st.updatedAt < c.updatedAt) storeWrite('task:' + c.id, c)
+        } else {
+          storeWrite('task:' + c.id, c)
+          wrote = true
+        }
+      } else if (st.updatedAt < c.updatedAt) {
+        storeWrite('task:' + c.id, c)
+        wrote = true
+      }
     }
     storePeople.forEach((sp, name) => {
       const c = people.get(name)
@@ -581,12 +608,25 @@ function Widget() {
     })
     for (const c of people.values()) {
       const sp = storePeople.get(c.name)
-      if (!sp || sp.seenAt < c.seenAt) storeWrite('person:' + c.name, c)
+      if (!sp || sp.seenAt < c.seenAt) {
+        storeWrite('person:' + c.name, c)
+        wrote = true
+      }
     }
+    if (wrote) bumpStoreVersion()
     return changes
   }
   useEffect(() => {
+    // One cheap read per render; the full merge only runs when another board has written.
+    let v = 0
+    try {
+      v = readStoreVersion()
+    } catch (_) {
+      return
+    }
+    if (v === lastSyncedVersion) return
     syncWithStore()
+    setLastSyncedVersion(v)
   })
 
   const patch = (id: string, p: Partial<Task>) => {

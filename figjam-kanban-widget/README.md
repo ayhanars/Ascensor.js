@@ -79,10 +79,13 @@ document data. Place as many instances as you like:
   assigned to you automatically. Assigning one of your tasks to someone else
   moves it to their board; assigning a task to you on the team board makes it
   appear on yours.
-- All instances write every change straight to the store and merge on each
-  render. Per-task "newest edit wins", deletions use tombstones, and the people
-  directory (names + photos) is shared too, so a teammate found on one board is
-  known on all of them.
+- All instances write every change straight to the store. Per-task "newest edit
+  wins", deletions use tombstones, and the people directory (names + photos) is
+  shared too, so a teammate found on one board is known on all of them.
+- The store carries a version stamp. A render costs one read of that stamp and
+  skips the merge entirely while it matches what the board last merged; only a
+  write from another board triggers a full merge. Pushes carry the stamp too, so
+  a board that just received a push does not re-merge.
 - **Changes push instantly.** When a board writes, it also sets the synced
   state of every other board instance on the page (the Widget API allows this
   between instances of the same widget), which re-renders them with the merged

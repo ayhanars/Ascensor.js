@@ -404,7 +404,8 @@
     "boardTitle",
     "uiSize",
     "scope",
-    "storeVersion"
+    "storeVersion",
+    "lastSyncedVersion"
   ];
   function storeRead(key) {
     const raw = figma.root.getSharedPluginData(NS, key);
@@ -415,6 +416,11 @@
       return null;
     }
   }
+  var readStoreVersion = () => {
+    const raw = figma.root.getSharedPluginData(NS, "version");
+    const n = raw ? parseInt(raw, 10) : 0;
+    return isNaN(n) ? 0 : n;
+  };
   var storeErrorShown = false;
   var storeWrite = (key, value) => {
     try {
@@ -492,6 +498,7 @@
     const [uiSize, setUiSize] = useSyncedState("uiSize", "comfortable");
     const [scope, setScope] = useSyncedState("scope", { kind: "team" });
     const [storeVersion] = useSyncedState("storeVersion", 0);
+    const [lastSyncedVersion, setLastSyncedVersion] = useSyncedState("lastSyncedVersion", -1);
     const widgetId = useWidgetNodeId();
     K = (_a = SCALES[uiSize]) != null ? _a : 1.35;
     const owner = scope.kind === "personal" ? scope.name : null;
@@ -520,6 +527,7 @@
           const person = { name: u.name, photoUrl: (_b2 = u.photoUrl) != null ? _b2 : null, seenAt: now };
           people.set(u.name, person);
           storeWrite("person:" + u.name, person);
+          bumpStoreVersion();
         }
       }
     };
@@ -547,6 +555,10 @@
     };
     const refresh = () => {
       const n = syncWithStore();
+      try {
+        setLastSyncedVersion(readStoreVersion());
+      } catch (_) {
+      }
       toast(n ? `Pulled ${n} update${n === 1 ? "" : "s"} from other boards` : "Up to date with the other boards");
     };
     const notifyOtherBoards = () => {
@@ -556,21 +568,15 @@
         if (!others.length) return;
         const taskMap = {};
         const personMap = {};
-        for (const k of figma.root.getSharedPluginDataKeys(NS)) {
-          if (k.startsWith("task:")) {
-            const v = storeRead(k);
-            if (v && v.id) taskMap[v.id] = v;
-          } else if (k.startsWith("person:")) {
-            const v = storeRead(k);
-            if (v && v.name) personMap[v.name] = v;
-          }
-        }
-        const version = Date.now();
+        for (const t of tasks.values()) taskMap[t.id] = t;
+        for (const p of people.values()) personMap[p.name] = p;
+        const version = readStoreVersion();
         for (const n of others) {
           const prev = n.widgetSyncedState || {};
           const next = {};
           for (const k of STATE_KEYS) if (k in prev) next[k] = prev[k];
           next.storeVersion = version;
+          next.lastSyncedVersion = version;
           n.setWidgetSyncedState(next, { tasks: taskMap, people: personMap });
         }
       } catch (_) {
@@ -584,17 +590,30 @@
       toast(`${here} ${here === 1 ? "person is" : "people are"} in this file right now${added ? ` \xB7 ${added} new` : ""}`);
       notifyOtherBoards();
     };
+    const bumpStoreVersion = () => {
+      const v = Date.now();
+      try {
+        figma.root.setSharedPluginData(NS, "version", String(v));
+      } catch (_) {
+        return v;
+      }
+      setLastSyncedVersion(v);
+      return v;
+    };
     const writeTask = (t) => {
       tasks.set(t.id, t);
       storeWrite("task:" + t.id, t);
+      bumpStoreVersion();
     };
     const deleteTask = (id) => {
       tasks.delete(id);
       storeWrite("task:" + id, null);
       storeWrite("deleted:" + id, { at: Date.now() });
+      bumpStoreVersion();
     };
     const syncWithStore = () => {
       let changes = 0;
+      let wrote = false;
       let keys = [];
       try {
         keys = figma.root.getSharedPluginDataKeys(NS);
@@ -627,8 +646,14 @@
           if (tomb.has(c.id)) {
             tasks.delete(c.id);
             changes++;
-          } else storeWrite("task:" + c.id, c);
-        } else if (st.updatedAt < c.updatedAt) storeWrite("task:" + c.id, c);
+          } else {
+            storeWrite("task:" + c.id, c);
+            wrote = true;
+          }
+        } else if (st.updatedAt < c.updatedAt) {
+          storeWrite("task:" + c.id, c);
+          wrote = true;
+        }
       }
       storePeople.forEach((sp, name) => {
         const c = people.get(name);
@@ -639,12 +664,24 @@
       });
       for (const c of people.values()) {
         const sp = storePeople.get(c.name);
-        if (!sp || sp.seenAt < c.seenAt) storeWrite("person:" + c.name, c);
+        if (!sp || sp.seenAt < c.seenAt) {
+          storeWrite("person:" + c.name, c);
+          wrote = true;
+        }
       }
+      if (wrote) bumpStoreVersion();
       return changes;
     };
     useEffect(() => {
+      let v = 0;
+      try {
+        v = readStoreVersion();
+      } catch (_) {
+        return;
+      }
+      if (v === lastSyncedVersion) return;
       syncWithStore();
+      setLastSyncedVersion(v);
     });
     const patch = (id, p) => {
       const t = tasks.get(id);
