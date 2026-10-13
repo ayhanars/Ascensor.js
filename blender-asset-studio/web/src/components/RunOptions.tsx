@@ -18,7 +18,14 @@ interface Props {
 
 /** Effort, model, materials and kit textures, shared by the new-asset form and the iterate panel. */
 export default function RunOptions({ health, effort, onEffort, model, onModel, materials, onMaterials, kit, textures, onTextures }: Props) {
-  const models = health?.models ?? [{ id: "", label: "Default", blurb: "" }];
+  // fallback list so the picker is usable even before the server answers
+  const models = health?.models ?? [
+    { id: "", label: "Default", blurb: "" },
+    { id: "fable", label: "Fable", blurb: "" },
+    { id: "opus", label: "Opus", blurb: "" },
+    { id: "sonnet", label: "Sonnet", blurb: "" },
+    { id: "haiku", label: "Haiku", blurb: "" },
+  ];
   const mats = health?.materials;
   const toggle = (id: string) => onTextures(textures.includes(id) ? textures.filter((x) => x !== id) : [...textures, id]);
   return (

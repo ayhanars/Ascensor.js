@@ -26,7 +26,8 @@ export type Materials = "flat" | "procedural" | "pbr";
 /** Model aliases the Claude CLI accepts. Empty id = the CLI's default. */
 export const MODELS: { id: string; label: string; blurb: string }[] = [
   { id: "", label: "Default", blurb: "Whatever your Claude Code is set to." },
-  { id: "opus", label: "Opus", blurb: "Strongest spatial reasoning, slowest, uses the most of your limits." },
+  { id: "fable", label: "Fable", blurb: "Most capable, if your plan includes it. Heaviest on your limits." },
+  { id: "opus", label: "Opus", blurb: "Strong spatial reasoning, slower, uses a lot of your limits." },
   { id: "sonnet", label: "Sonnet", blurb: "Good balance for most assets." },
   { id: "haiku", label: "Haiku", blurb: "Fastest and lightest on limits, for simple props and quick drafts." },
 ];

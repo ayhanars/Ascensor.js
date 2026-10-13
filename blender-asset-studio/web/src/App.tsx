@@ -114,7 +114,11 @@ export default function App() {
       <header className="topbar">
         <div className="brand"><span className="cube">⬢</span> Blender Asset Studio</div>
         <div className="topbar-status">
-          <span className={"dot " + (health?.blender.ok ? "done" : "failed")} /> Blender {health ? (health.blender.ok ? "connected" : "offline") : "…"}
+          {health === null ? (
+            <span className="tag failed" title="The page cannot reach the server on port 8787. Start it with npm run dev in the project folder.">server offline · run npm run dev</span>
+          ) : (
+            <><span className={"dot " + (health.blender.ok ? "done" : "failed")} /> Blender {health.blender.ok ? "connected" : "offline"}</>
+          )}
           {health?.queue.active && <span className="tag running">generating</span>}
           {health && health.queue.queued.length > 0 && <span className="tag">{health.queue.queued.length} queued</span>}
           <UsageMeters usage={health?.usage ?? null} />
