@@ -84,6 +84,24 @@ export function avatarColors(name: string): [string, string] {
   return AVATARS[h % AVATARS.length]
 }
 
+/** Label colours: a separate, slightly stronger set so labels read differently from avatars. */
+const LABELS: Array<[string, string]> = [
+  ['#E0E7FF', '#3730A3'],
+  ['#FCE7F3', '#9D174D'],
+  ['#D1FAE5', '#065F46'],
+  ['#FEF3C7', '#92400E'],
+  ['#CFFAFE', '#155E75'],
+  ['#FFE4E6', '#9F1239'],
+  ['#EDE9FE', '#5B21B6'],
+  ['#ECFCCB', '#3F6212'],
+]
+
+export function labelColors(name: string): [string, string] {
+  let h = 7
+  for (let i = 0; i < name.length; i++) h = (h * 33 + name.charCodeAt(i)) >>> 0
+  return LABELS[h % LABELS.length]
+}
+
 export function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean)
   if (parts.length === 0) return '?'
@@ -117,6 +135,8 @@ export type IconName =
   | 'alert'
   | 'clock'
   | 'user'
+  | 'tag'
+  | 'list'
 
 const PATHS: Record<IconName, string> = {
   plus: '<path d="M12 5v14M5 12h14"/>',
@@ -136,6 +156,8 @@ const PATHS: Record<IconName, string> = {
   alert: '<path d="M12 3.5l9.5 16.5H2.5z"/><path d="M12 10v4.5M12 17.5h.01"/>',
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
   user: '<circle cx="12" cy="8" r="3.8"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>',
+  tag: '<path d="M3 11V4h7l10 10-7 7z"/><circle cx="7.5" cy="8.5" r="1.2" fill="currentColor"/>',
+  list: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/>',
 }
 
 export function icon(name: IconName, color: string, size = 12, strokeWidth = 1.8): string {

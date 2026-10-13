@@ -4,6 +4,12 @@ export type View = 'board' | 'week' | 'done'
 export type SortMode = 'due' | 'priority' | 'created'
 export type DueFilter = 'overdue' | 'today' | 'week' | 'none'
 
+export interface Subtask {
+  id: string
+  title: string
+  done: boolean
+}
+
 export interface Task {
   id: string
   title: string
@@ -13,10 +19,20 @@ export interface Task {
   /** ISO date string YYYY-MM-DD or null */
   due: string | null
   priority: Priority | null
+  /** Project / topic labels, free text, coloured deterministically. */
+  labels?: string[]
+  subtasks?: Subtask[]
   createdAt: number
   updatedAt: number
   completedAt: number | null
   archived: boolean
+}
+
+/** A collaborator we have seen interact with the board (name → photo). */
+export interface Person {
+  name: string
+  photoUrl: string | null
+  seenAt: number
 }
 
 export interface Filters {
@@ -25,6 +41,7 @@ export interface Filters {
   due: DueFilter | null
   status: Status | null
   stale: boolean
+  label?: string | null
 }
 
 export interface Draft {
@@ -32,6 +49,7 @@ export interface Draft {
   priority: Priority | null
   due: string | null
   assignee: string
+  label?: string | null
 }
 
 export const EMPTY_FILTERS: Filters = {
@@ -40,6 +58,7 @@ export const EMPTY_FILTERS: Filters = {
   due: null,
   status: null,
   stale: false,
+  label: null,
 }
 
 export const STATUSES: Status[] = ['todo', 'inprogress', 'blocked', 'done']

@@ -7,6 +7,9 @@
   "containsWidget": true,
   "main": "dist/code.js",
   "ui": "dist/ui.html",
-  "permissions": ["currentuser"],
-  "networkAccess": { "allowedDomains": ["none"] }
+  "permissions": ["currentuser", "activeusers"],
+  "networkAccess": {
+    "allowedDomains": ["https://*.figma.com", "https://*.figmausercontent.com", "https://s3-alpha.figma.com"],
+    "reasoning": "Only to display collaborators' Figma profile photos on task avatars."
+  }
 }
