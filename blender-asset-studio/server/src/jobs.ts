@@ -9,6 +9,7 @@ import { store } from "./store.js";
 import { runClaude } from "./claude.js";
 import { buildPrompt } from "./prompts.js";
 import { collectParts, exportScene, renderViews } from "./finalize.js";
+import { startLivePolling, clearLive } from "./live.js";
 import type { LogLine, Version } from "./types.js";
 
 interface Job {
@@ -171,6 +172,7 @@ async function runJob(job: Job): Promise<void> {
   fs.writeFileSync(path.join(dir, "prompt.txt"), prompt);
 
   const started = Date.now();
+  const stopLive = startLivePolling(assetId, n);
   const result = await runClaude({
     cwd: dir,
     prompt,
@@ -179,6 +181,7 @@ async function runJob(job: Job): Promise<void> {
     signal: job.controller.signal,
     onLog: (kind, text) => log(kind, text),
   });
+  stopLive();
 
   if (!result.ok) {
     store.updateVersion(assetId, n, (v) => {
@@ -211,6 +214,7 @@ async function runJob(job: Job): Promise<void> {
       a.currentVersion = n;
     });
     log("info", "version ready");
+    clearLive(assetId, n);
   } catch (e) {
     const msg = (e as Error).message;
     store.updateVersion(assetId, n, (v) => {

@@ -3,6 +3,7 @@ import { api } from "../api";
 import type { Asset, Change, Effort, Health, KitTexture, Materials, Version } from "../types";
 import ImageDrop from "./ImageDrop";
 import RunOptions from "./RunOptions";
+import { SectionLabel, Toggle } from "./ui";
 
 interface Props {
   asset: Asset;
@@ -98,7 +99,7 @@ export default function IteratePanel({ asset, version, health, kit, selectedPart
   return (
     <section className="panel">
       <div className="panel-head"><span>Iterate on v{version.n}</span>{count > 0 && <span className="tag blue">{count} change{count === 1 ? "" : "s"}</span>}</div>
-      <p className="muted small">Continues from v{version.n}{version.n === asset.currentVersion ? " (current)" : ""}. Click a part in the viewer to scope a change to it.</p>
+      <p className="hint">Continues from v{version.n}{version.n === asset.currentVersion ? " (current)" : ""}. Click a part in the viewer to scope a change to it.</p>
 
       {changes.length > 0 && (
         <ol className="change-list">
@@ -126,30 +127,21 @@ export default function IteratePanel({ asset, version, health, kit, selectedPart
         />
         <div className="row gap">
           <button className="small" onClick={addChange} disabled={!draft.trim()}>+ Add to list</button>
-          {count > 1 && (
-            <label className="check small">
-              <input type="checkbox" checked={chain} onChange={(e) => setChain(e.target.checked)} />
-              One version per change
-            </label>
-          )}
         </div>
       </div>
+      {count > 1 && <Toggle checked={chain} onChange={setChain} label="One version per change" hint="Each change becomes its own version, built on the one before, so you can compare and roll back step by step." />}
 
-      <details>
-        <summary>Reference images <span className="muted">optional, inherits v{version.n}'s</span></summary>
+      <details className="disclosure">
+        <summary>Reference images <span className="muted">inherits v{version.n}'s</span></summary>
         <ImageDrop files={files} onFiles={setFiles} />
       </details>
       <RunOptions health={health} effort={effort} onEffort={setEffort} model={model} onModel={setModel} materials={materials} onMaterials={setMaterials} kit={kit} textures={textures} onTextures={setTextures} />
-      <label className="check">
-        <input type="checkbox" checked={fromScratch} onChange={(e) => setFromScratch(e.target.checked)} />
-        Start from scratch <span className="muted">ignore earlier scripts and build a new take</span>
-      </label>
-      {err && <p className="err">{err}</p>}
-      {!canIterate && !fromScratch && <p className="muted small">This version is {version.status}; iterate from a finished version or start from scratch.</p>}
-      <button className="primary" onClick={submit} disabled={busy || !count || (!canIterate && !fromScratch)}>
-        ✦ {label} <kbd>Ctrl ⏎</kbd>
+      <Toggle checked={fromScratch} onChange={setFromScratch} label="Start from scratch" hint="Ignore earlier scripts and build a new take." />
+      {err && <div className="notice err">{err}</div>}
+      {!canIterate && !fromScratch && <div className="notice">v{version.n} is {version.status}. Pick a finished version in the list below, or switch on "Start from scratch".</div>}
+      <button className="primary block" onClick={submit} disabled={busy || !count || (!canIterate && !fromScratch)}>
+        ✦ {label} <kbd>⌘⏎</kbd>
       </button>
-      {chain && count > 1 && <p className="muted small">Each change becomes its own version, built on the one before, so you can compare and roll back step by step.</p>}
     </section>
   );
 }

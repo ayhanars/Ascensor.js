@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useElapsed } from "../hooks";
 import type { LogLine, Version } from "../types";
 import ParticleScene from "./ParticleScene";
@@ -24,32 +25,62 @@ function stageOf(lines: LogLine[], status: Version["status"]): string {
   return "Working";
 }
 
-export default function GeneratingOverlay({ version, lines, parentGlbUrl, refUrl }: { version: Version; lines: LogLine[]; parentGlbUrl: string | null; refUrl: string | null }) {
+interface Props {
+  assetId: string;
+  version: Version;
+  lines: LogLine[];
+  refUrl: string | null;
+}
+
+export default function GeneratingOverlay({ assetId, version, lines, refUrl }: Props) {
   const elapsed = useElapsed(version.startedAt ?? version.createdAt, true);
   const stage = stageOf(lines, version.status);
   const lastText = [...lines].reverse().find((l) => l.kind === "text" || l.kind === "tool");
   const lastAt = lines.length ? lines[lines.length - 1].t : null;
   const sinceLast = useElapsed(lastAt, true);
   const staleMin = lastAt ? (Date.now() - new Date(lastAt).getTime()) / 60000 : 0;
+
+  // live scene sample from Blender (token-free), polled while running
+  const [live, setLive] = useState<{ points: number[]; objects: number; at: string | null }>({ points: [], objects: 0, at: null });
+  useEffect(() => {
+    if (version.status !== "running") return;
+    let alive = true;
+    const poll = () =>
+      fetch(`/api/assets/${assetId}/versions/${version.n}/live`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (alive && d && d.at && d.at !== live.at) setLive(d);
+        })
+        .catch(() => {});
+    void poll();
+    const t = setInterval(poll, 5000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assetId, version.n, version.status, live.at]);
+
   return (
     <div className="gen-overlay">
-      <ParticleScene glbUrl={parentGlbUrl} refUrl={refUrl} />
+      <ParticleScene livePoints={live.points.length ? live.points : null} />
       {refUrl && (
         <div className="gen-ref" title="The agent reads this image first and matches the model to it">
           <img src={refUrl} alt="reference" />
-          <span>matching reference</span>
+          <span>reference in use</span>
         </div>
       )}
       <div className="gen-caption">
         <div className="gen-title">
-          Building v{version.n}<span className="gen-dots"><i>.</i><i>.</i><i>.</i></span>
+          {live.objects > 0 ? `Building v${version.n} · ${live.objects} object${live.objects === 1 ? "" : "s"} so far` : `Building v${version.n}`}
+          <span className="gen-dots"><i>.</i><i>.</i><i>.</i></span>
         </div>
         <div className="gen-stage">{stage} · {elapsed}{lastAt && <span className="muted"> · last activity {sinceLast} ago</span>}</div>
         {staleMin >= 3 && version.status === "running" && (
           <div className="warn small">No activity for {Math.floor(staleMin)} min. If the Mac slept or Blender stopped answering, the run is stopped automatically after 8 min; you can also cancel it in the Versions panel.</div>
         )}
         {lastText && <div className="gen-last muted">{lastText.text.slice(0, 160)}</div>}
-        <div className="gen-hint muted small">Watch Blender to see it happen. This page updates on its own.</div>
+        <div className="gen-hint muted small">{live.objects > 0 ? "The dots are the live Blender scene, sampled every 15 s." : "The dots will take the shape of the model as soon as Blender has geometry."}</div>
       </div>
     </div>
   );

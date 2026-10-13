@@ -8,6 +8,7 @@ import { getUsage } from "./usage.js";
 import { store } from "./store.js";
 import { enqueue, cancel, events, readLog, queueState, finalizeVersion, logLine } from "./jobs.js";
 import { executeCode, ping } from "./blender.js";
+import { getLive } from "./live.js";
 import { tweakCode, RUN_BUILD_CODE } from "./finalize.js";
 import type { Asset, Change, Tweak, Version } from "./types.js";
 
@@ -265,6 +266,11 @@ api.get("/assets/:id/versions/:n/events", (req: Request, res: Response) => {
     clearInterval(ka);
     events.off(k, onLine);
   });
+});
+
+/** Latest live vertex sample of the scene while this version is being built (empty when none). */
+api.get("/assets/:id/versions/:n/live", (req, res) => {
+  res.json(getLive(req.params.id, Number(req.params.n)) ?? { at: null, points: [], objects: 0 });
 });
 
 /** Re-load a done version's script into Blender (so tweaks and re-exports target the right scene). */

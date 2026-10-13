@@ -45,7 +45,7 @@ export default function NewAssetForm({ health, kit, onCreated, onCancel }: { hea
       <p className="muted">Drop reference images and describe what to build. Claude models it in Blender, compares with the images, and iterates.</p>
       <label>Name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="Corner cafe and restaurant" /></label>
       <label>Tags<input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="citykit, commercial, mediterranean" /></label>
-      <label>Reference images <span className="muted">optional</span></label>
+      <label>Reference images <span className="muted">optional · first = main view, then close-ups</span></label>
       <ImageDrop files={files} onFiles={setFiles} />
       <label>
         Description
@@ -59,8 +59,8 @@ export default function NewAssetForm({ health, kit, onCreated, onCancel }: { hea
       <RunOptions health={health} effort={effort} onEffort={setEffort} model={model} onModel={setModel} materials={materials} onMaterials={setMaterials} kit={kit} textures={textures} onTextures={setTextures} />
       {err && <p className="err">{err}</p>}
       {health && !health.blender.ok && <p className="warn">Blender is not reachable: {health.blender.detail}</p>}
-      <div className="row gap">
-        <button className="primary" onClick={submit} disabled={busy}>{busy ? "Submitting…" : "Generate v1"}</button>
+      <div className="row gap" style={{ marginTop: 14 }}>
+        <button className="primary block" onClick={submit} disabled={busy}>{busy ? "Submitting…" : "✦ Generate v1"}</button>
         <button onClick={onCancel} disabled={busy}>Cancel</button>
       </div>
     </div>
