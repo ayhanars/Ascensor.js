@@ -497,6 +497,24 @@
       var _a2, _b2;
       return name ? (_b2 = (_a2 = people.get(name)) == null ? void 0 : _a2.photoUrl) != null ? _b2 : null : null;
     };
+    const makeMine = () => {
+      var _a2;
+      const u = figma.currentUser;
+      if (!u || !u.name) {
+        toast("Could not read your Figma name");
+        return;
+      }
+      syncPeople();
+      setScope({ kind: "personal", name: u.name, photoUrl: (_a2 = u.photoUrl) != null ? _a2 : null });
+      if (boardTitle === "Team tasks") setBoardTitle(`${u.name.split(/[\s|]+/)[0]}\u2019s tasks`);
+      if (view === "people") setView("board");
+      toast(`This is now ${u.name}'s board \u2014 only tasks assigned to you`);
+    };
+    const makeTeam = () => {
+      setScope({ kind: "team" });
+      if (/’s tasks$/.test(boardTitle)) setBoardTitle("Team tasks");
+      toast("This is now the team board \u2014 every task in the file");
+    };
     const refresh = () => {
       const n = syncWithStore();
       toast(n ? `Pulled ${n} update${n === 1 ? "" : "s"} from other boards` : "Up to date with the other boards");
@@ -838,30 +856,14 @@
         { itemType: "action", propertyName: "samples", tooltip: "Add sample tasks" }
       ],
       ({ propertyName, propertyValue }) => {
-        var _a2;
         switch (propertyName) {
           case "view":
             setView(propertyValue);
             break;
-          case "scope": {
-            if (propertyValue === "mine") {
-              const u = figma.currentUser;
-              if (!u || !u.name) {
-                toast("Could not read your Figma name");
-                break;
-              }
-              syncPeople();
-              setScope({ kind: "personal", name: u.name, photoUrl: (_a2 = u.photoUrl) != null ? _a2 : null });
-              if (boardTitle === "Team tasks") setBoardTitle(`${u.name.split(/[\s|]+/)[0]}\u2019s tasks`);
-              if (view === "people") setView("board");
-              toast(`This is now ${u.name}'s personal board`);
-            } else {
-              setScope({ kind: "team" });
-              if (/’s tasks$/.test(boardTitle)) setBoardTitle("Team tasks");
-              toast("This is now the team board");
-            }
+          case "scope":
+            if (propertyValue === "mine") makeMine();
+            else makeTeam();
             break;
-          }
           case "sort":
             setSort(propertyValue);
             break;
@@ -1536,7 +1538,17 @@
           inputBehavior: "truncate",
           inputFrameProps: { padding: px(0) }
         }
-      ), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(4), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(Pill, { text: owner ? "My board" : "Team board", color: owner ? C.accent : C.muted, fill: owner ? C.accentSoft : C.surface, size: 10, tooltip: owner ? `Shows tasks assigned to ${owner}. Switch scope in the property menu.` : "Shows every task in this file. Switch to \u201CMy board\u201D in the property menu." }), /* @__PURE__ */ figma.widget.h(Pill, { text: `${active.length} active`, color: C.muted, fill: C.surface, size: 10 }), overdueCount ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${overdueCount} overdue`, color: C.danger, fill: C.dangerSoft, size: 10, onClick: () => setFilter("due", filters.due === "overdue" ? null : "overdue"), tooltip: "Filter overdue" }) : null, blockedCount ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${blockedCount} blocked`, color: STATUS_COLOR.blocked, fill: STATUS_SOFT.blocked, size: 10 }) : null, unassignedCount ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${unassignedCount} unassigned`, color: C.muted, fill: C.surface, size: 10, onClick: () => setFilter("assignee", filters.assignee === "__none__" ? null : "__none__"), tooltip: "Filter unassigned" }) : null), /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", height: px(1) }), /* @__PURE__ */ figma.widget.h(Btn, { label: "Add task", icon: "plus", tone: quickAddOpen ? "default" : "primary", onClick: () => setQuickAddOpen(!quickAddOpen), tooltip: "Quick add with optional details (or type directly into a column)" })),
+      ), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(4), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(Pill, { text: owner ? "My board" : "Team board", color: owner ? C.accent : C.muted, fill: owner ? C.accentSoft : C.surface, size: 10, tooltip: owner ? `Shows only tasks assigned to ${owner}` : "Shows every task in this file" }), /* @__PURE__ */ figma.widget.h(Pill, { text: `${active.length} active`, color: C.muted, fill: C.surface, size: 10 }), overdueCount ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${overdueCount} overdue`, color: C.danger, fill: C.dangerSoft, size: 10, onClick: () => setFilter("due", filters.due === "overdue" ? null : "overdue"), tooltip: "Filter overdue" }) : null, blockedCount ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${blockedCount} blocked`, color: STATUS_COLOR.blocked, fill: STATUS_SOFT.blocked, size: 10 }) : null, unassignedCount ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${unassignedCount} unassigned`, color: C.muted, fill: C.surface, size: 10, onClick: () => setFilter("assignee", filters.assignee === "__none__" ? null : "__none__"), tooltip: "Filter unassigned" }) : null), /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", height: px(1) }), /* @__PURE__ */ figma.widget.h(
+        Btn,
+        {
+          small: true,
+          tone: "ghost",
+          icon: owner ? "users" : "user",
+          label: owner ? "Switch to team board" : "Make this my board",
+          onClick: owner ? makeTeam : makeMine,
+          tooltip: owner ? "Show every task in the file again" : "Show only tasks assigned to you. Duplicate the widget first if the team still needs this one."
+        }
+      ), /* @__PURE__ */ figma.widget.h(Btn, { label: "Add task", icon: "plus", tone: quickAddOpen ? "default" : "primary", onClick: () => setQuickAddOpen(!quickAddOpen), tooltip: "Quick add with optional details (or type directly into a column)" })),
       /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: BOARD_W, spacing: px(10), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(2), padding: px(3), fill: C.surface, cornerRadius: px(9) }, /* @__PURE__ */ figma.widget.h(ViewTab, { id: "board", label: "Board", iconName: "board" }), /* @__PURE__ */ figma.widget.h(ViewTab, { id: "week", label: "Week", iconName: "week" }), /* @__PURE__ */ figma.widget.h(ViewTab, { id: "done", label: "Done", iconName: "check", count: done.length }), /* @__PURE__ */ figma.widget.h(ViewTab, { id: "sync", label: "Sync", iconName: "chat", count: agendaCount }), owner ? null : /* @__PURE__ */ figma.widget.h(ViewTab, { id: "people", label: "People", iconName: "users" })), /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", height: px(1) }), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(6), verticalAlignItems: "center", padding: { vertical: px(6), horizontal: px(10) }, fill: C.surface, stroke: search ? C.accent : void 0, cornerRadius: px(8), width: px(220) }, /* @__PURE__ */ figma.widget.h(Icon, { name: "search", color: search ? C.accent : C.faint, size: 12 }), /* @__PURE__ */ figma.widget.h(
         Input,
         {

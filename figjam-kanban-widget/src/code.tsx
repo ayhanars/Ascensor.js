@@ -417,6 +417,25 @@ function Widget() {
     }
   }
   const photoOf = (name: string): string | null => (name ? people.get(name)?.photoUrl ?? null : null)
+  /** Turn this instance into the current user's personal board. */
+  const makeMine = () => {
+    const u = figma.currentUser
+    if (!u || !u.name) {
+      toast('Could not read your Figma name')
+      return
+    }
+    syncPeople()
+    setScope({ kind: 'personal', name: u.name, photoUrl: u.photoUrl ?? null })
+    if (boardTitle === 'Team tasks') setBoardTitle(`${u.name.split(/[\s|]+/)[0]}’s tasks`)
+    if (view === 'people') setView('board')
+    toast(`This is now ${u.name}'s board — only tasks assigned to you`)
+  }
+  const makeTeam = () => {
+    setScope({ kind: 'team' })
+    if (/’s tasks$/.test(boardTitle)) setBoardTitle('Team tasks')
+    toast('This is now the team board — every task in the file')
+  }
+
   const refresh = () => {
     const n = syncWithStore()
     toast(n ? `Pulled ${n} update${n === 1 ? '' : 's'} from other boards` : 'Up to date with the other boards')
@@ -803,25 +822,10 @@ function Widget() {
         case 'view':
           setView(propertyValue as View)
           break
-        case 'scope': {
-          if (propertyValue === 'mine') {
-            const u = figma.currentUser
-            if (!u || !u.name) {
-              toast('Could not read your Figma name')
-              break
-            }
-            syncPeople()
-            setScope({ kind: 'personal', name: u.name, photoUrl: u.photoUrl ?? null })
-            if (boardTitle === 'Team tasks') setBoardTitle(`${u.name.split(/[\s|]+/)[0]}’s tasks`)
-            if (view === 'people') setView('board')
-            toast(`This is now ${u.name}'s personal board`)
-          } else {
-            setScope({ kind: 'team' })
-            if (/’s tasks$/.test(boardTitle)) setBoardTitle('Team tasks')
-            toast('This is now the team board')
-          }
+        case 'scope':
+          if (propertyValue === 'mine') makeMine()
+          else makeTeam()
           break
-        }
         case 'sort':
           setSort(propertyValue as SortMode)
           break
@@ -2081,13 +2085,21 @@ function Widget() {
           inputFrameProps={{ padding: px(0) }}
         />
         <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center">
-          <Pill text={owner ? 'My board' : 'Team board'} color={owner ? C.accent : C.muted} fill={owner ? C.accentSoft : C.surface} size={10} tooltip={owner ? `Shows tasks assigned to ${owner}. Switch scope in the property menu.` : 'Shows every task in this file. Switch to “My board” in the property menu.'} />
+          <Pill text={owner ? 'My board' : 'Team board'} color={owner ? C.accent : C.muted} fill={owner ? C.accentSoft : C.surface} size={10} tooltip={owner ? `Shows only tasks assigned to ${owner}` : 'Shows every task in this file'} />
           <Pill text={`${active.length} active`} color={C.muted} fill={C.surface} size={10} />
           {overdueCount ? <Pill text={`${overdueCount} overdue`} color={C.danger} fill={C.dangerSoft} size={10} onClick={() => setFilter('due', filters.due === 'overdue' ? null : 'overdue')} tooltip="Filter overdue" /> : null}
           {blockedCount ? <Pill text={`${blockedCount} blocked`} color={STATUS_COLOR.blocked} fill={STATUS_SOFT.blocked} size={10} /> : null}
           {unassignedCount ? <Pill text={`${unassignedCount} unassigned`} color={C.muted} fill={C.surface} size={10} onClick={() => setFilter('assignee', filters.assignee === '__none__' ? null : '__none__')} tooltip="Filter unassigned" /> : null}
         </AutoLayout>
         <AutoLayout width="fill-parent" height={px(1)} />
+        <Btn
+          small
+          tone="ghost"
+          icon={owner ? 'users' : 'user'}
+          label={owner ? 'Switch to team board' : 'Make this my board'}
+          onClick={owner ? makeTeam : makeMine}
+          tooltip={owner ? 'Show every task in the file again' : 'Show only tasks assigned to you. Duplicate the widget first if the team still needs this one.'}
+        />
         <Btn label="Add task" icon="plus" tone={quickAddOpen ? 'default' : 'primary'} onClick={() => setQuickAddOpen(!quickAddOpen)} tooltip="Quick add with optional details (or type directly into a column)" />
       </AutoLayout>
 

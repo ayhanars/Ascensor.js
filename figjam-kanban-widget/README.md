@@ -74,7 +74,7 @@ document data. Place as many instances as you like:
 
 - **Team board** (default) shows every task in the file. Its **People** tab
   groups active tasks by owner, one column per person, with overdue counts.
-- **My board** (property menu → *Board scope → My board*) shows only the tasks
+- **My board** (header button **Make this my board**, or property menu → *Board scope*) shows only the tasks
   assigned to you, with your photo in the header. Tasks you add there are
   assigned to you automatically. Assigning one of your tasks to someone else
   moves it to their board; assigning a task to you on the team board makes it
