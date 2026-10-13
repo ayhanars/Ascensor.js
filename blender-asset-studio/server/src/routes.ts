@@ -3,7 +3,8 @@ import path from "node:path";
 import express, { type Request, type Response } from "express";
 import multer from "multer";
 import { nanoid } from "nanoid";
-import { config, DETAILS, EFFORTS, MODELS, MATERIALS, type Detail, type Effort, type Materials } from "./config.js";
+import { config, BASE_MESHES, DETAILS, EFFORTS, MODELS, MATERIALS, type BaseMesh, type Detail, type Effort, type Materials } from "./config.js";
+import { engineStatus } from "./engine.js";
 import { getUsage } from "./usage.js";
 import { store } from "./store.js";
 import { enqueue, cancel, events, readLog, queueState, finalizeVersion, logLine } from "./jobs.js";
@@ -18,6 +19,7 @@ export const api = express.Router();
 const isEffort = (e: unknown): e is Effort => typeof e === "string" && e in EFFORTS;
 const isMaterials = (m: unknown): m is Materials => typeof m === "string" && m in MATERIALS;
 const isDetail = (d: unknown): d is Detail => typeof d === "string" && d in DETAILS;
+const isBaseMesh = (b: unknown): b is BaseMesh => typeof b === "string" && b in BASE_MESHES;
 const pickModel = (m: unknown): string => (typeof m === "string" && MODELS.some((x) => x.id === m) ? m : "");
 function parseIds(raw: unknown): string[] {
   if (typeof raw !== "string" || !raw.trim()) return [];
@@ -53,6 +55,7 @@ function newVersion(a: Asset, init: Partial<Version>): Version {
     requestedModel: "",
     materials: "flat",
     detail: "game",
+    baseMesh: "claude",
     textures: [],
     parent: null,
     fromScratch: false,
@@ -67,7 +70,7 @@ function newVersion(a: Asset, init: Partial<Version>): Version {
     model: null,
     summary: null,
     error: null,
-    files: { glb: null, views: [], blend: null, script: null, reference: null, references: [] },
+    files: { glb: null, views: [], blend: null, script: null, reference: null, references: [], engineInput: null, base: null },
     parts: [],
     tweaks: [],
     triangles: null,
@@ -99,6 +102,8 @@ api.get("/health", async (_req, res) => {
     models: MODELS,
     materials: MATERIALS,
     details: DETAILS,
+    baseMeshes: BASE_MESHES,
+    engine: engineStatus(),
     usage: getUsage(),
     claudeBin: config.claudeBin,
     model: config.claudeModel || "default",
@@ -126,12 +131,16 @@ function thumbOf(a: Asset): string | null {
   return v && hero ? `/files/${a.id}/v${v.n}/${hero}` : null;
 }
 
-api.post("/assets", upload.array("references", 8), (req, res) => {
+const runUploads = upload.fields([{ name: "references", maxCount: 8 }, { name: "engineInput", maxCount: 1 }]);
+const filesOf = (req: Request) => (req.files as Record<string, Express.Multer.File[]> | undefined) ?? {};
+
+api.post("/assets", runUploads, (req, res) => {
   const name = String(req.body.name ?? "").trim();
   const prompt = String(req.body.prompt ?? "").trim();
   const effort = isEffort(req.body.effort) ? req.body.effort : "standard";
   const materials = isMaterials(req.body.materials) ? req.body.materials : "flat";
   const detail = isDetail(req.body.detail) ? req.body.detail : "game";
+  const baseMesh = isBaseMesh(req.body.baseMesh) ? req.body.baseMesh : "claude";
   const requestedModel = pickModel(req.body.model);
   const textures = parseIds(req.body.textures);
   const tags = String(req.body.tags ?? "")
@@ -149,10 +158,17 @@ api.post("/assets", upload.array("references", 8), (req, res) => {
     currentVersion: null,
     versions: [],
   };
-  const v = newVersion(asset, { prompt, effort, materials, detail, requestedModel, textures });
-  v.files.references = saveReferences(store.versionDir(asset.id, v.n), req.files as Express.Multer.File[]);
+  const v = newVersion(asset, { prompt, effort, materials, detail, baseMesh, requestedModel, textures });
+  const dir = store.versionDir(asset.id, v.n);
+  v.files.references = saveReferences(dir, filesOf(req).references);
   v.hasReference = v.files.references.length > 0;
   v.files.reference = v.files.references[0] ?? null;
+  const ei = filesOf(req).engineInput?.[0];
+  if (ei) {
+    fs.writeFileSync(path.join(dir, "engine_input.png"), ei.buffer);
+    v.files.engineInput = "engine_input.png";
+  }
+  if (baseMesh === "engine" && !ei && !v.hasReference) return res.status(400).json({ error: "the local engine needs a reference image" });
   asset.versions.push(v);
   store.add(asset);
   enqueue(asset.id, v.n);
@@ -193,7 +209,7 @@ api.delete("/assets/:id", (req, res) => {
  * Body: prompt (free text) and/or changes (JSON [{text, part}]), effort, model, materials,
  * parent, fromScratch, chain ("true" = one version per change, each building on the previous).
  */
-api.post("/assets/:id/versions", upload.array("references", 8), (req, res) => {
+api.post("/assets/:id/versions", runUploads, (req, res) => {
   const a = store.get(req.params.id);
   if (!a) return res.status(404).json({ error: "not found" });
   const effort = isEffort(req.body.effort) ? req.body.effort : "standard";
@@ -205,6 +221,7 @@ api.post("/assets/:id/versions", upload.array("references", 8), (req, res) => {
   const parent = a.versions.find((v) => v.n === parentN);
   const materials = isMaterials(req.body.materials) ? req.body.materials : parent?.materials ?? "flat";
   const detail = isDetail(req.body.detail) ? req.body.detail : parent?.detail ?? "game";
+  const baseMesh = isBaseMesh(req.body.baseMesh) ? req.body.baseMesh : parent?.baseMesh ?? "claude";
   const textures = typeof req.body.textures === "string" ? parseIds(req.body.textures) : parent?.textures ?? [];
 
   let changes = parseChanges(req.body.changes, scopedPart);
@@ -215,7 +232,8 @@ api.post("/assets/:id/versions", upload.array("references", 8), (req, res) => {
     return res.status(400).json({ error: "parent version must exist and not have failed" });
 
   const groups: Change[][] = chain ? changes.map((c) => [c]) : [changes];
-  const refs = req.files as Express.Multer.File[];
+  const refs = filesOf(req).references;
+  const engineInput = filesOf(req).engineInput?.[0];
   const created: number[] = [];
   store.update(a.id, (asset) => {
     let prev = fromScratch ? null : parent!.n;
@@ -230,9 +248,14 @@ api.post("/assets/:id/versions", upload.array("references", 8), (req, res) => {
         requestedModel,
         materials,
         detail,
+        baseMesh,
         textures,
       });
       const dir = store.versionDir(asset.id, v.n);
+      if (created.length === 0 && engineInput) {
+        fs.writeFileSync(path.join(dir, "engine_input.png"), engineInput.buffer);
+        v.files.engineInput = "engine_input.png";
+      }
       // new references only on the first version of a chain; later ones inherit from their parent at run time
       if (created.length === 0 && refs?.length) {
         v.files.references = saveReferences(dir, refs);

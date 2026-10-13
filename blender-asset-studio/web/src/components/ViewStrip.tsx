@@ -6,6 +6,7 @@ export default function ViewStrip({ assetId, version, active, onPick }: { assetI
   (version.files.references?.length ? version.files.references : version.files.reference ? [version.files.reference] : []).forEach((r, i) =>
     items.push({ rel: r, label: i === 0 ? "reference" : `ref ${i + 1}` }),
   );
+  if (version.files.engineInput) items.push({ rel: version.files.engineInput, label: "engine input" });
   for (const v of version.files.views) items.push({ rel: v, label: v.replace("views/", "").replace(".png", "") });
   return (
     <div className="strip">
@@ -19,6 +20,12 @@ export default function ViewStrip({ assetId, version, active, onPick }: { assetI
         <a className="strip-item dl" href={api.fileUrl(assetId, version.n, version.files.glb)} download={`${assetId}-v${version.n}.glb`}>
           <div className="strip-thumb"><span>⬇</span></div>
           <span>glb</span>
+        </a>
+      )}
+      {version.files.base && (
+        <a className="strip-item dl" href={api.fileUrl(assetId, version.n, version.files.base)} download={`${assetId}-v${version.n}-base.glb`} title="raw mesh from the local engine">
+          <div className="strip-thumb"><span>⬇</span></div>
+          <span>base mesh</span>
         </a>
       )}
       {version.files.blend && (

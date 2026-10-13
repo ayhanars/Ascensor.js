@@ -1,4 +1,4 @@
-import type { Detail, Effort, Health, KitTexture, Materials } from "../types";
+import type { BaseMesh, Detail, Effort, Health, KitTexture, Materials } from "../types";
 import { api } from "../api";
 import EffortPicker from "./EffortPicker";
 import { Seg, SectionLabel } from "./ui";
@@ -13,6 +13,10 @@ interface Props {
   onMaterials: (m: Materials) => void;
   detail: Detail;
   onDetail: (d: Detail) => void;
+  baseMesh: BaseMesh;
+  onBaseMesh: (b: BaseMesh) => void;
+  /** iterate panel: base mesh is inherited unless starting from scratch */
+  baseMeshNote?: string;
   kit: KitTexture[];
   textures: string[];
   onTextures: (ids: string[]) => void;
@@ -26,8 +30,10 @@ const DETAIL_FALLBACK: Record<Detail, { label: string; maxTriangles: number; blu
 const fmtTris = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
 
 /** Effort, detail, model, materials and kit textures, shared by the new-asset form and the iterate panel. */
-export default function RunOptions({ health, effort, onEffort, model, onModel, materials, onMaterials, detail, onDetail, kit, textures, onTextures }: Props) {
+export default function RunOptions({ health, effort, onEffort, model, onModel, materials, onMaterials, detail, onDetail, baseMesh, onBaseMesh, baseMeshNote, kit, textures, onTextures }: Props) {
   const details = health?.details ?? DETAIL_FALLBACK;
+  const bm = health?.baseMeshes;
+  const engine = health?.engine;
   // fallback list so the picker is usable even before the server answers
   const models = health?.models ?? [
     { id: "", label: "Default", blurb: "" },
@@ -43,6 +49,20 @@ export default function RunOptions({ health, effort, onEffort, model, onModel, m
       <SectionLabel>Effort</SectionLabel>
       <EffortPicker value={effort} onChange={onEffort} efforts={health?.efforts ?? null} />
       <p className="hint">{health?.efforts?.[effort]?.blurb}</p>
+
+      <SectionLabel>Base mesh</SectionLabel>
+      <Seg
+        value={baseMesh}
+        onChange={onBaseMesh}
+        options={(["claude", "engine"] as BaseMesh[]).map((b) => ({ id: b, label: bm?.[b]?.label ?? (b === "claude" ? "Claude builds it" : "Local engine"), title: bm?.[b]?.blurb }))}
+      />
+      {baseMesh === "engine" && (
+        <p className={"hint" + (engine && !engine.available ? " warn" : "")}>
+          {engine ? `${engine.name}: ${engine.hint}` : bm?.engine.blurb}
+          {baseMeshNote ? ` ${baseMeshNote}` : ""}
+        </p>
+      )}
+      {baseMesh === "claude" && baseMeshNote && <p className="hint">{baseMeshNote}</p>}
 
       <SectionLabel>Detail</SectionLabel>
       <Seg

@@ -2,6 +2,7 @@ export type Effort = "quick" | "standard" | "thorough" | "max";
 export type VersionStatus = "queued" | "running" | "done" | "failed";
 export type Materials = "flat" | "procedural" | "pbr";
 export type Detail = "draft" | "game" | "hero";
+export type BaseMesh = "claude" | "engine";
 
 export interface Change {
   text: string;
@@ -61,6 +62,7 @@ export interface Version {
   requestedModel: string;
   materials: Materials;
   detail: Detail;
+  baseMesh: BaseMesh;
   textures: string[];
   parent: number | null;
   fromScratch: boolean;
@@ -75,7 +77,7 @@ export interface Version {
   model: string | null;
   summary: string | null;
   error: string | null;
-  files: { glb: string | null; views: string[]; blend: string | null; script: string | null; reference: string | null; references: string[] };
+  files: { glb: string | null; views: string[]; blend: string | null; script: string | null; reference: string | null; references: string[]; engineInput: string | null; base: string | null };
   parts: PartInfo[];
   tweaks: Tweak[];
   triangles: number | null;
@@ -117,6 +119,8 @@ export interface Health {
   models: { id: string; label: string; blurb: string }[];
   materials: Record<Materials, { label: string; blurb: string }>;
   details: Record<Detail, { label: string; maxTriangles: number; blurb: string }>;
+  baseMeshes: Record<BaseMesh, { label: string; blurb: string }>;
+  engine: { available: boolean; name: string; hint: string };
   usage: Usage | null;
   model: string;
 }

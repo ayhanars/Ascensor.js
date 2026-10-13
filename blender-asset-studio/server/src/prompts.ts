@@ -25,6 +25,7 @@ export function buildPrompt(opts: {
   effort: Effort;
   materials: Materials;
   detail: Detail;
+  baseGlb: string | null;
   textures: string[];
   references: string[];
   isIteration: boolean;
@@ -40,6 +41,14 @@ export function buildPrompt(opts: {
   lines.push(`Allowed compare-and-fix passes for this run: ${e.passes}.`);
   lines.push(MATERIAL_BRIEF[opts.materials]);
   lines.push(`${DETAIL_BRIEF[opts.detail]} Triangle budget: ${DETAILS[opts.detail].maxTriangles.toLocaleString("en-US")} triangles for the whole asset; print count_tris() after each build pass and stay under it.`);
+  if (opts.baseGlb) {
+    lines.push("");
+    lines.push(`BASE MESH: a mesh generated from the reference by a local image-to-3D engine is at ${opts.baseGlb}.`);
+    lines.push("It has the right silhouette and likeness but no parts, no materials, no UVs and no rig. build.py must start by importing it");
+    lines.push("(after scene_reset) and then follow the Base mesh workflow in your conventions: orient and scale to meters, clean, split into");
+    lines.push("named parts, decimate to the budget, color it (projection from the reference and/or materials), add the rig if the task asks.");
+    lines.push("Do not rebuild the body from primitives; refine what the engine made.");
+  }
   const kit = describeTextures(opts.textures);
   if (kit) {
     lines.push("");

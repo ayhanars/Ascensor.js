@@ -16,6 +16,8 @@ function stageOf(lines: LogLine[], status: Version["status"]): string {
     if (t.includes("execute")) return "Building in Blender";
     return "Working in Blender";
   }
+  if (t.startsWith("engine:")) return "Generating the base mesh with the local engine";
+  if (t.startsWith("cleared")) return "Starting the agent";
   if (t.startsWith("collecting parts")) return "Collecting parts";
   if (t.startsWith("exporting")) return "Exporting the model";
   if (t.startsWith("rendering")) return "Rendering views";

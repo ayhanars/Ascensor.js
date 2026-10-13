@@ -11,6 +11,7 @@ import { buildPrompt } from "./prompts.js";
 import { collectParts, exportScene, renderViews } from "./finalize.js";
 import { startLivePolling, clearLive } from "./live.js";
 import { DETAILS } from "./config.js";
+import { generateBaseMesh, engineStatus } from "./engine.js";
 import { executeCode } from "./blender.js";
 
 /** Same reset the agent's build.py starts with, so nothing from an earlier run is shown or kept. */
@@ -174,8 +175,52 @@ async function runJob(job: Job): Promise<void> {
         v.files.references = [...parent!.files.references];
       });
     }
+    // the base mesh and the image it came from travel with the script
+    for (const f of ["base", "engineInput"] as const) {
+      const rel = parent!.files[f];
+      if (rel && !version.files[f] && fs.existsSync(path.join(pdir, rel))) {
+        fs.copyFileSync(path.join(pdir, rel), path.join(dir, rel));
+        store.updateVersion(assetId, n, (v) => {
+          v.files[f] = rel;
+        });
+      }
+    }
   }
-  const fresh = store.get(assetId)!.versions.find((v) => v.n === n)!;
+  let fresh = store.get(assetId)!.versions.find((v) => v.n === n)!;
+
+  // Local engine: make the base mesh before the agent starts. Iterations reuse the parent's.
+  if (fresh.baseMesh === "engine" && !fresh.files.base) {
+    const status = engineStatus();
+    if (!status.available) {
+      store.updateVersion(assetId, n, (v) => {
+        v.status = "failed";
+        v.error = `local engine not available: ${status.hint}`;
+        v.finishedAt = new Date().toISOString();
+      });
+      log("error", `local engine not available: ${status.hint}`);
+      return;
+    }
+    const input = path.join(dir, fresh.files.engineInput ?? fresh.files.reference ?? "reference.png");
+    const output = path.join(dir, "base.glb");
+    log("info", `engine: generating base mesh with ${status.name} from ${path.basename(input)} (this takes a few minutes)`);
+    try {
+      await generateBaseMesh(input, output, (line) => log("info", `engine: ${line}`), { signal: job.controller.signal });
+      store.updateVersion(assetId, n, (v) => {
+        v.files.base = "base.glb";
+      });
+      log("info", "engine: base mesh ready");
+    } catch (e) {
+      const msg = (e as Error).message;
+      store.updateVersion(assetId, n, (v) => {
+        v.status = "failed";
+        v.error = `engine: ${msg}`;
+        v.finishedAt = new Date().toISOString();
+      });
+      log("error", `engine failed: ${msg}`);
+      return;
+    }
+    fresh = store.get(assetId)!.versions.find((v) => v.n === n)!;
+  }
   const prompt = buildPrompt({
     versionDir: dir,
     assetName: asset.name,
@@ -184,6 +229,7 @@ async function runJob(job: Job): Promise<void> {
     effort: fresh.effort,
     materials: fresh.materials,
     detail: fresh.detail ?? "game",
+    baseGlb: fresh.files.base ? path.join(dir, fresh.files.base) : null,
     textures: fresh.textures ?? [],
     references: fresh.files.references,
     isIteration,

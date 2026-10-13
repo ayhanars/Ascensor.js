@@ -193,3 +193,8 @@ select { appearance: auto; }
 .kit-chip { display: flex; align-items: center; gap: 6px; padding: 3px 8px 3px 3px; border-radius: 999px; font-size: 12px; }
 .kit-chip img { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; }
 .kit-chip.on { border-color: var(--accent); background: #1e3a8a; color: #fff; }
+
+/* crop tool */
+.crop canvas { display: block; max-width: 100%; border-radius: 8px; border: 1px solid var(--line); cursor: crosshair; touch-action: none; }
+.crop .row { margin-top: 6px; }
+.hint.warn { color: #fcd34d; }

@@ -23,6 +23,12 @@ export const config = {
 export type Effort = "quick" | "standard" | "thorough" | "max";
 export type Materials = "flat" | "procedural" | "pbr";
 export type Detail = "draft" | "game" | "hero";
+export type BaseMesh = "claude" | "engine";
+
+export const BASE_MESHES: Record<BaseMesh, { label: string; blurb: string }> = {
+  claude: { label: "Claude builds it", blurb: "Everything modeled from code. Best for buildings, props, furniture, hard-surface." },
+  engine: { label: "Local engine", blurb: "A free local image-to-3D model makes the base mesh from the reference; Claude then splits it into parts, cleans, colors and rigs it. Best for characters, creatures, organic shapes." },
+};
 
 /** Geometry budget and modeling recipe per run. Turn and time limits scale with it. */
 export const DETAILS: Record<Detail, { label: string; maxTriangles: number; turnsFactor: number; minutesFactor: number; blurb: string }> = {

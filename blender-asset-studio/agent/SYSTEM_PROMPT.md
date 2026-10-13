@@ -157,3 +157,46 @@ def count_tris():
   Decimate modifier (collapse) to the heaviest parts rather than removing detail by hand.
 
 Spend the budget where the reference has detail; leave flat surfaces as flat quads.
+
+## Base mesh workflow
+
+When the task gives a BASE MESH path, build.py starts like this, right after `scene_reset()`:
+
+```python
+bpy.ops.import_scene.gltf(filepath=BASE_GLB)
+base = [o for o in bpy.context.selected_objects if o.type == 'MESH'][0]
+base.name = "Body"
+# orient Z-up and put the feet on the ground, scale to the real height in meters
+bpy.context.view_layer.objects.active = base
+bpy.ops.object.transform_apply(rotation=True, scale=True)
+dims = base.dimensions
+target_h = 1.8  # from the task description
+s = target_h / max(dims.z, 1e-6)
+base.scale = (s, s, s)
+bpy.ops.object.transform_apply(scale=True)
+lowest = min((base.matrix_world @ v.co).z for v in base.data.vertices)
+base.location.z -= lowest
+```
+
+Then, in order:
+
+1. **Clean**: `bpy.ops.mesh.remove_doubles` (merge by distance 0.5 mm), delete loose, recalculate
+   normals, `shade_smooth`. Fill small holes if any.
+2. **Split into named parts**: the viewer needs separate top-level objects. Use
+   `bpy.ops.mesh.separate(type='LOOSE')` first; then cut the remaining body with
+   `bpy.ops.mesh.bisect` planes (or select vertices by height and `separate(type='SELECTED')`)
+   into at least Head, Hair, Torso, ArmLeft, ArmRight, LegLeft, LegRight, FootLeft, FootRight
+   for a figure; for props, split by the parts the reference shows. Name every object.
+3. **Decimate** to the triangle budget with a Decimate modifier (collapse) on the heaviest parts,
+   applied; keep the head's share of the budget the largest.
+4. **Color**: give each part a material. When the reference shows the object from the front,
+   project it: add an orthographic camera facing the front (+Y looking at -Y), load the
+   reference image, use a UV Project modifier with that camera on each part, then an Image
+   Texture node with a Mapping node (offset/scale) that frames the front view within the
+   reference image; mix with a flat base color for faces that point away from the camera
+   (Geometry node's Backfacing or Normal dot view). Add UVs (`uv_layers.new()` + the UV
+   Project modifier applied) so the export carries them.
+5. **Rig** only if the task asks: an Armature with `bpy.ops.object.armature_add` bones placed
+   from the part bounds, parent with automatic weights.
+
+Keep every edit in build.py so the version can be rebuilt from BASE_GLB alone.

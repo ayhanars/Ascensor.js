@@ -75,6 +75,14 @@ Only one generation runs at a time because Blender holds a single scene; later r
   the next change to it, press "+ Add to list", and generate. By default the agent applies the whole
   list in one version; tick "One version per change" to get a chain of versions, each built on the
   previous one, so you can compare and roll back step by step.
+- **Base mesh.** "Claude builds it" models everything from code, which suits buildings, props
+  and hard-surface objects. "Local engine" first runs a free, local image-to-3D model on one
+  view of the reference (drag a crop box in the form) and hands the result to the agent, which
+  imports it in `build.py`, splits it into named parts, cleans and decimates it, colors it by
+  projecting the reference, and rigs it on request. Best for characters and organic shapes. The
+  shipped engine is Hunyuan3D 2 mini in shape-only mode; set it up once with
+  `bash engines/hunyuan3d/setup.sh` (see `engines/hunyuan3d/README.md`). Iterations reuse the
+  parent's base mesh. `BASE_MESH_CMD` points the server at any other local engine command.
 - **Detail.** Draft (5k triangles), Game (60k, default) or Hero (300k) per run. Each level
   comes with a modeling recipe for the agent (bevels and light subdivision for Game;
   subdivision level 2, displacement, dense curves and remeshing for Hero) and scales the turn
@@ -108,6 +116,7 @@ Only one generation runs at a time because Blender holds a single scene; later r
 | `CLAUDE_MODEL` | CLI default | force a model alias such as `opus` or `sonnet` |
 | `MCP_CONFIG` | `./mcp.json` | MCP servers passed to the agent |
 | `RENDER_SIZE` | `768` | pixel size of the rendered views |
+| `BASE_MESH_CMD` | shipped Hunyuan3D runner | local image-to-3D command with `{input}` and `{output}` placeholders |
 
 ## Layout
 
@@ -131,7 +140,7 @@ web/src
 ```
 GET    /api/health
 GET    /api/assets
-POST   /api/assets                       multipart: name, prompt, effort, detail, model, materials, tags, references[]
+POST   /api/assets                       multipart: name, prompt, effort, detail, baseMesh, model, materials, tags, references[], engineInput
 GET    /api/assets/:id
 PATCH  /api/assets/:id                   { name?, tags?, currentVersion? }
 DELETE /api/assets/:id

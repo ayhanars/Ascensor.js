@@ -1,4 +1,4 @@
-import type { Detail, Effort, Materials } from "./config.js";
+import type { BaseMesh, Detail, Effort, Materials } from "./config.js";
 
 export type VersionStatus = "queued" | "running" | "done" | "failed";
 
@@ -49,6 +49,7 @@ export interface Version {
   requestedModel: string;
   materials: Materials;
   detail: Detail;
+  baseMesh: BaseMesh;
   /** ids of texture-kit items the agent must use */
   textures: string[];
   parent: number | null;
@@ -71,6 +72,10 @@ export interface Version {
     script: string | null;
     reference: string | null;
     references: string[];
+    /** image fed to the local engine (a cropped single view) */
+    engineInput: string | null;
+    /** GLB produced by the local engine, imported by build.py */
+    base: string | null;
   };
   parts: PartInfo[];
   tweaks: Tweak[];

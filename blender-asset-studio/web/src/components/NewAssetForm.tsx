@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "../api";
-import type { Detail, Effort, Health, KitTexture, Materials } from "../types";
+import type { BaseMesh, Detail, Effort, Health, KitTexture, Materials } from "../types";
+import CropImage from "./CropImage";
 import ImageDrop from "./ImageDrop";
 import RunOptions from "./RunOptions";
 
@@ -13,6 +14,8 @@ export default function NewAssetForm({ health, kit, onCreated, onCancel }: { hea
   const [model, setModel] = useState("");
   const [materials, setMaterials] = useState<Materials>("flat");
   const [detail, setDetail] = useState<Detail>("game");
+  const [baseMesh, setBaseMesh] = useState<BaseMesh>("claude");
+  const [engineCrop, setEngineCrop] = useState<Blob | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -20,6 +23,7 @@ export default function NewAssetForm({ health, kit, onCreated, onCancel }: { hea
   const submit = async () => {
     setErr(null);
     if (!name.trim() || !prompt.trim()) return setErr("Name and description are required.");
+    if (baseMesh === "engine" && files.length === 0) return setErr("The local engine needs a reference image.");
     const fd = new FormData();
     fd.set("name", name.trim());
     fd.set("tags", tags);
@@ -28,8 +32,10 @@ export default function NewAssetForm({ health, kit, onCreated, onCancel }: { hea
     fd.set("model", model);
     fd.set("materials", materials);
     fd.set("detail", detail);
+    fd.set("baseMesh", baseMesh);
     fd.set("textures", JSON.stringify(textures));
     for (const f of files) fd.append("references", f);
+    if (baseMesh === "engine" && engineCrop) fd.set("engineInput", engineCrop, "engine_input.png");
     setBusy(true);
     try {
       const a = await api.createAsset(fd);
@@ -58,7 +64,13 @@ export default function NewAssetForm({ health, kit, onCreated, onCancel }: { hea
           placeholder="A two-storey corner cafe-restaurant: ground floor with big folding glass doors, a front terrace with tables, chairs and umbrellas under a timber pergola, a canvas awning, first floor flat with a balcony. Cream and blue paint. Ground 4 x 6 m."
         />
       </label>
-      <RunOptions health={health} effort={effort} onEffort={setEffort} model={model} onModel={setModel} materials={materials} onMaterials={setMaterials} detail={detail} onDetail={setDetail} kit={kit} textures={textures} onTextures={setTextures} />
+      <RunOptions health={health} effort={effort} onEffort={setEffort} model={model} onModel={setModel} materials={materials} onMaterials={setMaterials} detail={detail} onDetail={setDetail} baseMesh={baseMesh} onBaseMesh={setBaseMesh} kit={kit} textures={textures} onTextures={setTextures} />
+      {baseMesh === "engine" && files.length > 0 && (
+        <>
+          <label>Engine input <span className="muted">drag a box around one clean view, ideally the front figure; the engine works from a single view</span></label>
+          <CropImage file={files[0]} onCrop={setEngineCrop} />
+        </>
+      )}
       {err && <p className="err">{err}</p>}
       {health && !health.blender.ok && <p className="warn">Blender is not reachable: {health.blender.detail}</p>}
       <div className="row gap" style={{ marginTop: 14 }}>
