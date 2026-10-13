@@ -175,11 +175,11 @@ function Label(props: {
 }
 
 /** Button. Labelled buttons render no icon (keeps SVG parsing out of the common path). */
-function Btn(props: { label?: string; icon?: IconName; onClick: Click; tone?: 'default' | 'primary' | 'ghost' | 'danger'; tooltip?: string; small?: boolean }) {
+function Btn(props: { label?: string; icon?: IconName; onClick: Click; tone?: 'default' | 'primary' | 'ghost' | 'danger' | 'dangerGhost'; tooltip?: string; small?: boolean }) {
   const tone = props.tone ?? 'default'
-  const fill = tone === 'primary' ? C.accent : tone === 'ghost' ? undefined : tone === 'danger' ? C.dangerSoft : C.bg
-  const color = tone === 'primary' ? '#FFFFFF' : tone === 'danger' ? C.danger : tone === 'ghost' ? C.muted : C.text
-  const hover = tone === 'primary' ? C.accentHover : tone === 'danger' ? '#FECACA' : C.surfaceAlt
+  const fill = tone === 'primary' ? C.accent : tone === 'ghost' || tone === 'dangerGhost' ? undefined : tone === 'danger' ? C.dangerSoft : C.bg
+  const color = tone === 'primary' ? '#FFFFFF' : tone === 'danger' || tone === 'dangerGhost' ? C.danger : tone === 'ghost' ? C.muted : C.text
+  const hover = tone === 'primary' ? C.accentHover : tone === 'danger' ? '#FECACA' : tone === 'dangerGhost' ? C.dangerSoft : C.surfaceAlt
   const pad = props.small ? { vertical: px(3), horizontal: px(7) } : { vertical: px(6), horizontal: px(10) }
   return (
     <AutoLayout direction="horizontal" padding={pad} cornerRadius={px(8)} fill={fill} stroke={tone === 'default' ? C.border : undefined} strokeWidth={1} verticalAlignItems="center" onClick={props.onClick} hoverStyle={{ fill: hover }} tooltip={props.tooltip}>
@@ -241,10 +241,10 @@ function Chip(props: { label: string; active?: boolean; onClick: Click; color?: 
 }
 
 /** Filled count/status pill — header and column chrome only (cards use plain text). */
-function Pill({ text, color, fill, size = 9, onClick, tooltip }: { text: string; color: string; fill: string; size?: number; onClick?: Click; tooltip?: string }) {
+function Pill({ text, color, fill, size = 9, onClick, tooltip, solid }: { text: string; color: string; fill?: string; size?: number; onClick?: Click; tooltip?: string; solid?: boolean }) {
   return (
-    <AutoLayout padding={{ vertical: px(1), horizontal: px(6) }} cornerRadius={px(999)} fill={fill} verticalAlignItems="center" onClick={onClick} tooltip={tooltip}>
-      <Label size={size} weight={700} color={color}>
+    <AutoLayout padding={{ vertical: px(1), horizontal: px(6) }} cornerRadius={px(999)} fill={solid ? color : fill ?? C.surface} verticalAlignItems="center" onClick={onClick} tooltip={tooltip}>
+      <Label size={size} weight={700} color={solid ? '#FFFFFF' : color}>
         {text}
       </Label>
     </AutoLayout>
@@ -290,7 +290,7 @@ function Progress({ done, total, width, onClick, tooltip }: { done: number; tota
 // ---------------------------------------------------------------------------
 function pickDate(title: string, current: string | null, onPick: (iso: string | null) => void): Promise<void> {
   return new Promise<void>((resolve) => {
-    figma.showUI(__html__, { width: 300, height: 190, title: 'Due date' })
+    figma.showUI(__html__, { width: 320, height: 236, title: 'Due date' })
     figma.ui.postMessage({ type: 'init', title, value: current, today: todayISO() })
     figma.ui.onmessage = (msg: { type: string; value?: string | null }) => {
       if (msg && msg.type === 'set') onPick(msg.value ?? null)
@@ -402,19 +402,66 @@ function tasksToCsv(list: Task[]): string {
   return [header.join(','), ...rows].join('\r\n')
 }
 
-function exportCsv(list: Task[], boardTitle: string): Promise<void> {
+interface Backup {
+  format: 'kanban-lite-backup'
+  version: 1
+  exportedAt: string
+  board: string
+  tasks: Task[]
+  people: Person[]
+}
+
+/** Export dialog: CSV for spreadsheets, JSON backup (full fidelity) for re-import. */
+function exportDialog(list: Task[], everything: Task[], peopleList: Person[], boardTitle: string): Promise<void> {
   const csv = tasksToCsv(list)
+  const backup: Backup = { format: 'kanban-lite-backup', version: 1, exportedAt: new Date().toISOString(), board: boardTitle, tasks: everything, people: peopleList }
   const safe = boardTitle.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'tasks'
-  const filename = `${safe}-${todayISO()}.csv`
+  const base = `${safe}-${todayISO()}`
   return new Promise<void>((resolve) => {
-    figma.showUI(__html__, { width: 420, height: 300, title: 'Export tasks as CSV' })
-    figma.ui.postMessage({ type: 'export', csv, filename, count: list.length })
-    figma.ui.onmessage = (msg: { type: string }) => {
-      if (msg && msg.type === 'saved') toast(`Exported ${list.length} tasks`)
-      figma.closePlugin()
-      resolve()
+    figma.showUI(__html__, { width: 440, height: 330, title: 'Export tasks' })
+    figma.ui.postMessage({ type: 'export', csv, json: JSON.stringify(backup, null, 2), filename: base, count: list.length, total: everything.length })
+    figma.ui.onmessage = (msg: { type: string; what?: string }) => {
+      if (msg && msg.type === 'saved') toast(msg.what === 'json' ? `Backup saved · ${everything.length} tasks` : `Exported ${list.length} tasks as CSV`)
+      if (msg && (msg.type === 'saved' || msg.type === 'cancel')) {
+        figma.closePlugin()
+        resolve()
+      }
     }
   })
+}
+
+const VALID_STATUS: Record<string, true> = { todo: true, inprogress: true, blocked: true, done: true }
+/** Coerce one record from a backup (or any JSON) into a Task, or null if unusable. */
+function coerceTask(raw: any): Task | null {
+  if (!raw || typeof raw !== 'object') return null
+  const title = typeof raw.title === 'string' ? raw.title : ''
+  const id = typeof raw.id === 'string' && raw.id ? raw.id : null
+  if (!id && !title.trim()) return null
+  const now = Date.now()
+  const num = (v: any, d: number) => (typeof v === 'number' && isFinite(v) ? v : d)
+  const statusRaw = typeof raw.status === 'string' ? raw.status.toLowerCase().replace(/[^a-z]/g, '') : 'todo'
+  const status = (VALID_STATUS[statusRaw] ? statusRaw : 'todo') as Status
+  const prioRaw = typeof raw.priority === 'string' ? raw.priority.toLowerCase() : ''
+  const priority = prioRaw === 'high' || prioRaw === 'medium' || prioRaw === 'low' ? prioRaw : null
+  return {
+    id: id ?? uid(),
+    title,
+    description: typeof raw.description === 'string' ? raw.description : '',
+    status,
+    assignee: typeof raw.assignee === 'string' ? raw.assignee : '',
+    due: typeof raw.due === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.due) ? raw.due : null,
+    priority,
+    labels: Array.isArray(raw.labels) ? raw.labels.filter((l: any) => typeof l === 'string' && l).slice(0, 20) : [],
+    subtasks: Array.isArray(raw.subtasks)
+      ? raw.subtasks.filter((x: any) => x && typeof x.title === 'string').map((x: any) => ({ id: typeof x.id === 'string' ? x.id : uid(), title: x.title, done: !!x.done }))
+      : [],
+    discuss: !!raw.discuss,
+    discussNote: typeof raw.discussNote === 'string' ? raw.discussNote : '',
+    createdAt: num(raw.createdAt, now),
+    updatedAt: num(raw.updatedAt, now),
+    completedAt: raw.completedAt === null || raw.completedAt === undefined ? (status === 'done' ? now : null) : num(raw.completedAt, now),
+    archived: !!raw.archived,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -730,6 +777,50 @@ function Widget() {
     touched = new Set<string>()
   }
 
+  /** Import a JSON backup (or any JSON list of tasks): newer edit wins per id, unknown ids are added. */
+  const importBackup = (): Promise<void> =>
+    new Promise<void>((resolve) => {
+      figma.showUI(__html__, { width: 440, height: 330, title: 'Import backup' })
+      figma.ui.postMessage({ type: 'import-init' })
+      figma.ui.onmessage = (msg: { type: string; tasks?: unknown[]; people?: unknown[] }) => {
+        if (msg && msg.type === 'import') {
+          let added = 0
+          let updated = 0
+          let skipped = 0
+          for (const raw of msg.tasks ?? []) {
+            const t = coerceTask(raw)
+            if (!t) {
+              skipped++
+              continue
+            }
+            const cur = tasks.get(t.id)
+            if (!cur) {
+              writeTask(t)
+              added++
+            } else if (t.updatedAt > cur.updatedAt) {
+              writeTask(t)
+              updated++
+            } else skipped++
+          }
+          for (const raw of (msg.people ?? []) as any[]) {
+            if (raw && typeof raw.name === 'string' && raw.name && !people.get(raw.name)) {
+              const person: Person = { name: raw.name, photoUrl: typeof raw.photoUrl === 'string' ? raw.photoUrl : null, seenAt: typeof raw.seenAt === 'number' ? raw.seenAt : Date.now() }
+              people.set(raw.name, person)
+              storeWrite('person:' + raw.name, person)
+              dirty = true
+            }
+          }
+          touched = null
+          commit()
+          toast(`Imported: ${added} new, ${updated} updated, ${skipped} unchanged or skipped`)
+        }
+        if (msg && (msg.type === 'import' || msg.type === 'cancel')) {
+          figma.closePlugin()
+          resolve()
+        }
+      }
+    })
+
   // ------------------------------------------------------------- mutations
   const patch = (id: string, p: Partial<Task>) => {
     const t = tasks.get(id)
@@ -989,29 +1080,6 @@ function Widget() {
     [
       {
         itemType: 'dropdown',
-        propertyName: 'scope',
-        tooltip: 'Board scope',
-        selectedOption: scope.kind === 'team' ? 'team' : 'mine',
-        options: [
-          { option: 'team', label: 'Team board (everyone)' },
-          { option: 'mine', label: 'My board (only my tasks)' },
-        ],
-      },
-      {
-        itemType: 'dropdown',
-        propertyName: 'view',
-        tooltip: 'View',
-        selectedOption: view,
-        options: [
-          { option: 'board', label: 'Board' },
-          { option: 'people', label: 'People' },
-          { option: 'week', label: 'Week' },
-          { option: 'done', label: 'Done' },
-          { option: 'sync', label: 'Team sync' },
-        ],
-      },
-      {
-        itemType: 'dropdown',
         propertyName: 'sort',
         tooltip: 'Sort cards',
         selectedOption: sort,
@@ -1046,7 +1114,8 @@ function Widget() {
       },
       { itemType: 'separator' },
       { itemType: 'toggle', propertyName: 'live', tooltip: 'Live sync between boards', isToggled: liveSync },
-      { itemType: 'action', propertyName: 'export', tooltip: 'Export CSV' },
+      { itemType: 'action', propertyName: 'export', tooltip: 'Export CSV / backup' },
+      { itemType: 'action', propertyName: 'import', tooltip: 'Import backup' },
       { itemType: 'action', propertyName: 'agenda', tooltip: 'Create sync agenda on canvas' },
       { itemType: 'action', propertyName: 'expandAll', tooltip: 'Expand all columns' },
       { itemType: 'action', propertyName: 'collapseAll', tooltip: 'Collapse all columns' },
@@ -1057,13 +1126,6 @@ function Widget() {
     ],
     ({ propertyName, propertyValue }) => {
       switch (propertyName) {
-        case 'view':
-          setView(propertyValue as View)
-          break
-        case 'scope':
-          if (propertyValue === 'mine') makeMine()
-          else makeTeam()
-          break
         case 'sort':
           setSort(propertyValue as SortMode)
           break
@@ -1077,7 +1139,9 @@ function Widget() {
           setLive(!liveSync)
           break
         case 'export':
-          return exportCsv(all, boardTitle)
+          return exportDialog(all, everything, people.values(), boardTitle)
+        case 'import':
+          return importBackup()
         case 'agenda':
           return createAgendaOnCanvas()
         case 'expandAll':
@@ -1404,13 +1468,17 @@ function Widget() {
           ))}
         </PropRow>
 
-        <PropRow label="Labels">
-          {knownLabels.map((l) => (
-            <LabelPill key={l} name={l} size={10} active={labels.includes(l)} onClick={() => toggleLabel(task.id, l)} />
-          ))}
+        <PropRow label="Labels" stack>
+          {knownLabels.length ? (
+            <AutoLayout direction="horizontal" width="fill-parent" spacing={px(4)} wrap verticalAlignItems="center">
+              {knownLabels.map((l) => (
+                <LabelPill key={l} name={l} size={10} active={labels.includes(l)} onClick={() => toggleLabel(task.id, l)} />
+              ))}
+            </AutoLayout>
+          ) : null}
           <Input
             value={null}
-            placeholder="+ label"
+            placeholder="+ Add a label, press Enter"
             onTextEditEnd={(e) => {
               const v = resolveLabel(e.characters)
               if (v && !labels.includes(v)) toggleLabel(task.id, v)
@@ -1419,10 +1487,10 @@ function Widget() {
             fontSize={px(10)}
             fontWeight={600}
             fill={C.text}
-            placeholderProps={{ fill: C.faint }}
-            width={px(80)}
+            placeholderProps={{ fill: C.faint, fontWeight: 400 }}
+            width="fill-parent"
             inputBehavior="truncate"
-            inputFrameProps={{ padding: { vertical: px(2), horizontal: px(7) }, cornerRadius: px(4), stroke: C.border, strokeDashPattern: [3, 2] }}
+            inputFrameProps={{ padding: { vertical: px(4), horizontal: px(8) }, cornerRadius: px(6), fill: C.surface }}
           />
         </PropRow>
 
@@ -1510,13 +1578,14 @@ function Widget() {
 
         <Divider />
 
-        <AutoLayout direction="horizontal" width="fill-parent" verticalAlignItems="center" spacing={px(6)}>
+        <AutoLayout direction="horizontal" width="fill-parent" verticalAlignItems="center" spacing={px(12)}>
           <Label size={9} color={C.faint} width="fill-parent" truncate>
             {`Created ${fromTimestamp(task.createdAt)}${task.completedAt ? ` · Done ${fromTimestamp(task.completedAt)}` : ''}`}
           </Label>
           <Btn small tone="ghost" label="Archive" onClick={() => archive(task.id, true)} />
-          {confirming ? <Btn small tone="danger" label="Confirm delete" onClick={() => remove(task.id)} /> : <Btn small tone="ghost" label="Delete" onClick={() => setConfirmDeleteId(task.id)} />}
-          <Btn small tone="ghost" label="Close" onClick={closeCard} />
+          {confirming ? <Btn small tone="danger" label="Confirm delete" onClick={() => remove(task.id)} /> : <Btn small tone="dangerGhost" label="Delete" onClick={() => setConfirmDeleteId(task.id)} />}
+          <AutoLayout width={px(6)} height={px(1)} />
+          <Btn small label="Close" onClick={closeCard} />
         </AutoLayout>
       </AutoLayout>
     )
@@ -1543,7 +1612,7 @@ function Widget() {
         <AutoLayout key={status} direction="vertical" width={COLLAPSED_W} spacing={px(8)} padding={{ vertical: px(10), horizontal: px(4) }} fill={STATUS_TINT[status]} cornerRadius={px(12)} horizontalAlignItems="center" onClick={() => setCollapsed({ ...collapsed, [status]: false })} hoverStyle={{ fill: STATUS_SOFT[status] }} tooltip={`Expand ${STATUS_LABEL[status]}`}>
           <Rectangle width={px(20)} height={px(3)} cornerRadius={px(2)} fill={color} />
           <StatusGlyph status={status} size={14} />
-          <Pill text={String(items.length)} color={color} fill={C.bg} size={10} />
+          <Pill text={String(items.length)} color={color} solid size={10} />
           <Label size={9} weight={700} color={color} align="center">
             {STATUS_SHORT[status].split('').join('\n')}
           </Label>
@@ -1561,7 +1630,7 @@ function Widget() {
             <Label size={12} weight={700} color={C.text}>
               {STATUS_LABEL[status]}
             </Label>
-            <Pill text={String(visible.length)} color={color} fill={C.bg} size={10} />
+            <Pill text={String(visible.length)} color={color} solid size={10} />
             <Label size={9} color={C.faint} width="fill-parent">
               {hiddenByFilter > 0 ? `+${hiddenByFilter} filtered` : ''}
             </Label>
@@ -1766,7 +1835,7 @@ function Widget() {
               <Label size={12} weight={700}>
                 {showArchived ? 'Completed & archived' : 'Completed'}
               </Label>
-              <Pill text={String(pool.length)} color={C.success} fill={C.bg} size={10} />
+              <Pill text={String(pool.length)} color={C.success} solid size={10} />
             </AutoLayout>
             {shown.map((t) => (
               <DoneRow key={t.id} task={t} />
@@ -1808,7 +1877,7 @@ function Widget() {
                     {name || 'Unassigned'}
                   </Label>
                   {od ? <Pill text={`${od} overdue`} color={C.danger} fill={C.dangerSoft} /> : null}
-                  <Pill text={String(items.length)} color={fg} fill={bg} size={10} />
+                  <Pill text={String(items.length)} color={fg} solid size={10} />
                 </AutoLayout>
                 {shown.map((t) => (
                   <Card key={t.id} task={t} width="fill-parent" showStatus />
@@ -1840,7 +1909,7 @@ function Widget() {
               <Label size={12} weight={700}>
                 {`Team sync agenda · ${weekdayDate(today)}`}
               </Label>
-              <Pill text={String(agenda.length)} color={C.accent} fill={C.bg} size={10} />
+              <Pill text={String(agenda.length)} color={C.accent} solid size={10} />
             </AutoLayout>
             {agenda.length ? (
               agenda.map((t) => <AgendaRow key={t.id} task={t} />)
@@ -1986,7 +2055,7 @@ function Widget() {
         <Label size={11} weight={on ? 700 : 500} color={on ? C.text : C.muted}>
           {label}
         </Label>
-        {count !== undefined && count > 0 ? <Pill text={String(count)} color={id === 'sync' ? C.accent : on ? C.success : C.muted} fill={id === 'sync' ? C.accentSoft : on ? C.successSoft : C.surfaceAlt} /> : null}
+        {count !== undefined && count > 0 ? <Pill text={String(count)} color={id === 'sync' ? C.accent : on ? C.success : C.muted} solid /> : null}
       </AutoLayout>
     )
   }
@@ -2052,7 +2121,8 @@ function Widget() {
         </AutoLayout>
         <Btn label={activeFilterCount ? `Filters · ${activeFilterCount}` : 'Filters'} tone={filtersOpen || activeFilterCount ? 'primary' : 'default'} onClick={() => setFiltersOpen(!filtersOpen)} />
         <Btn icon="refresh" onClick={refresh} tooltip="Sync all boards" />
-        <Btn icon="download" onClick={() => exportCsv(all, boardTitle)} tooltip="Export CSV" />
+        <Btn icon="download" onClick={() => exportDialog(all, everything, people.values(), boardTitle)} tooltip="Export CSV / backup" />
+        <Btn icon="upload" onClick={importBackup} tooltip="Import backup" />
       </AutoLayout>
 
       {filtersOpen ? <FilterPanel /> : null}

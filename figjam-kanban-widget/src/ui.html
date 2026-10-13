@@ -5,45 +5,39 @@
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
-  body {
-    margin: 0; padding: 14px 16px 16px;
-    font: 12px/1.4 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    color: #111827; background: #fff;
-  }
+  body { margin: 0; padding: 14px 16px 16px; font: 12px/1.4 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #111827; background: #fff; }
   .hidden { display: none; }
   .task { font-weight: 600; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 10px; }
   .task span, .hint { color: #6b7280; font-weight: 400; }
   .hint { margin: 0 0 10px; }
   .quick { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
-  button {
-    font: inherit; font-size: 11px; font-weight: 600; border: 1px solid #e5e7eb; background: #f3f4f6; color: #111827;
-    border-radius: 8px; padding: 6px 10px; cursor: pointer;
-  }
+  button { font: inherit; font-size: 11px; font-weight: 600; border: 1px solid #e5e7eb; background: #f3f4f6; color: #111827; border-radius: 8px; padding: 6px 10px; cursor: pointer; }
   button:hover { border-color: #cbd0d8; background: #e9eaee; }
   button.primary { background: #4f46e5; border-color: #4f46e5; color: #fff; }
   button.primary:hover { background: #4338ca; }
+  button.primary:disabled { opacity: .5; cursor: default; }
   button.ghost { background: transparent; border-color: transparent; color: #6b7280; }
-  input[type=date] {
-    font: inherit; width: 100%; padding: 6px 8px; border: 1px solid #cbd0d8; border-radius: 8px;
-    margin-bottom: 12px; color: #111827;
-  }
-  textarea {
-    font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; width: 100%; height: 150px; resize: none;
-    border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; color: #374151; background: #f9fafb; margin-bottom: 10px;
-  }
-  .row { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
+  input[type=date] { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid #cbd0d8; border-radius: 8px; margin-bottom: 12px; color: #111827; }
+  textarea { font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; width: 100%; resize: none; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; color: #374151; background: #f9fafb; margin-bottom: 10px; }
+  .row { display: flex; gap: 6px; justify-content: flex-end; align-items: center; flex-wrap: wrap; }
   .row .spacer { flex: 1; }
+  .drop { border: 1.5px dashed #cbd0d8; border-radius: 10px; padding: 14px; text-align: center; color: #6b7280; margin-bottom: 10px; background: #fafafb; }
+  .drop.over { border-color: #4f46e5; background: #eef2ff; }
+  .drop input { display: none; }
+  .drop label { color: #4f46e5; font-weight: 600; cursor: pointer; }
+  .status { font-size: 11px; color: #374151; margin-bottom: 10px; min-height: 16px; }
+  .status.err { color: #dc2626; }
 </style>
 </head>
 <body>
-  <!-- Date picker mode -->
+  <!-- Date picker -->
   <div id="date-mode" class="hidden">
     <div class="task" id="task">Due date</div>
     <div class="quick">
       <button data-days="0">Today</button>
       <button data-days="1">Tomorrow</button>
-      <button id="nextMon">Next Monday</button>
-      <button data-days="7">In a week</button>
+      <button data-days="7">Next week</button>
+      <button data-days="14">In two weeks</button>
     </div>
     <input type="date" id="date" />
     <div class="row">
@@ -54,16 +48,34 @@
     </div>
   </div>
 
-  <!-- CSV export mode -->
+  <!-- Export -->
   <div id="export-mode" class="hidden">
     <div class="task" id="export-title">Export tasks</div>
-    <p class="hint">Opens in Excel, Numbers or Google Sheets. One row per task, including completed and archived ones.</p>
-    <textarea id="csv" readonly spellcheck="false"></textarea>
+    <p class="hint">CSV opens in Excel, Numbers or Google Sheets (one row per task in this board's scope). The JSON backup keeps everything — every task in the file, labels, subtasks, people — and can be re-imported with the Import button.</p>
+    <textarea id="csv" readonly spellcheck="false" style="height:120px"></textarea>
     <div class="row">
-      <button class="ghost" id="copy">Copy to clipboard</button>
+      <button class="ghost" id="copy">Copy CSV</button>
       <span class="spacer"></span>
       <button id="export-cancel">Close</button>
+      <button id="download-json">Download backup .json</button>
       <button class="primary" id="download">Download .csv</button>
+    </div>
+  </div>
+
+  <!-- Import -->
+  <div id="import-mode" class="hidden">
+    <div class="task">Import backup <span>· JSON from the Export dialog</span></div>
+    <div class="drop" id="drop">
+      Drop a <b>.json</b> backup here, or <label for="file">choose a file</label>
+      <input type="file" id="file" accept=".json,application/json" />
+    </div>
+    <textarea id="paste" placeholder="…or paste the JSON here" spellcheck="false" style="height:90px"></textarea>
+    <div class="status" id="import-status">Nothing loaded yet.</div>
+    <p class="hint">Tasks are matched by id: newer edits win, unknown ids are added, nothing is deleted.</p>
+    <div class="row">
+      <span class="spacer"></span>
+      <button id="import-cancel">Cancel</button>
+      <button class="primary" id="import-go" disabled>Import</button>
     </div>
   </div>
 
@@ -73,7 +85,8 @@
   const $ = (id) => document.getElementById(id)
   const send = (msg) => parent.postMessage({ pluginMessage: msg }, '*')
   const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
-  let exportFilename = 'tasks.csv'
+  let exportBase = 'tasks', exportJson = ''
+  let parsed = null
 
   window.onmessage = (e) => {
     const m = e.data && e.data.pluginMessage
@@ -86,43 +99,62 @@
     }
     if (m.type === 'export') {
       $('export-mode').classList.remove('hidden')
-      exportFilename = m.filename || 'tasks.csv'
-      $('export-title').innerHTML = escapeHtml(exportFilename) + ' <span>· ' + m.count + ' task' + (m.count === 1 ? '' : 's') + '</span>'
+      exportBase = m.filename || 'tasks'
+      exportJson = m.json || ''
+      $('export-title').innerHTML = escapeHtml(exportBase) + ' <span>· ' + m.count + ' task' + (m.count === 1 ? '' : 's') + ' in CSV · ' + m.total + ' in backup</span>'
       $('csv').value = m.csv
+    }
+    if (m.type === 'import-init') {
+      $('import-mode').classList.remove('hidden')
     }
   }
 
-  // --- date mode
+  // --- date
   document.querySelectorAll('button[data-days]').forEach((b) => {
-    b.onclick = () => {
-      const d = new Date(); d.setDate(d.getDate() + parseInt(b.dataset.days, 10))
-      send({ type: 'set', value: iso(d) })
-    }
+    b.onclick = () => { const d = new Date(); d.setDate(d.getDate() + parseInt(b.dataset.days, 10)); send({ type: 'set', value: iso(d) }) }
   })
-  $('nextMon').onclick = () => {
-    const d = new Date(); const day = d.getDay()
-    d.setDate(d.getDate() + (day === 0 ? 1 : 8 - day))
-    send({ type: 'set', value: iso(d) })
-  }
   $('set').onclick = () => send({ type: 'set', value: $('date').value || null })
   $('clear').onclick = () => send({ type: 'set', value: null })
   $('cancel').onclick = () => send({ type: 'cancel' })
   $('date').addEventListener('keydown', (e) => { if (e.key === 'Enter') send({ type: 'set', value: $('date').value || null }) })
 
-  // --- export mode
-  $('download').onclick = () => {
-    const blob = new Blob(['﻿' + $('csv').value], { type: 'text/csv;charset=utf-8' })
+  // --- export
+  const download = (text, name, mime) => {
+    const blob = new Blob(['﻿' + text], { type: mime })
     const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url; a.download = exportFilename
+    const a = document.createElement('a'); a.href = url; a.download = name
     document.body.appendChild(a); a.click(); a.remove()
-    setTimeout(() => { URL.revokeObjectURL(url); send({ type: 'saved' }) }, 300)
+    setTimeout(() => URL.revokeObjectURL(url), 500)
   }
-  $('copy').onclick = async () => {
-    try { await navigator.clipboard.writeText($('csv').value) } catch (_) { $('csv').select(); document.execCommand('copy') }
-    $('copy').textContent = 'Copied ✓'
-  }
+  $('download').onclick = () => { download($('csv').value, exportBase + '.csv', 'text/csv;charset=utf-8'); setTimeout(() => send({ type: 'saved', what: 'csv' }), 300) }
+  $('download-json').onclick = () => { download(exportJson, exportBase + '-backup.json', 'application/json;charset=utf-8'); setTimeout(() => send({ type: 'saved', what: 'json' }), 300) }
+  $('copy').onclick = async () => { try { await navigator.clipboard.writeText($('csv').value) } catch (_) { $('csv').select(); document.execCommand('copy') } $('copy').textContent = 'Copied ✓' }
   $('export-cancel').onclick = () => send({ type: 'cancel' })
+
+  // --- import
+  const setStatus = (msg, err) => { const el = $('import-status'); el.textContent = msg; el.className = 'status' + (err ? ' err' : '') }
+  const tryParse = (text) => {
+    parsed = null; $('import-go').disabled = true
+    if (!text.trim()) { setStatus('Nothing loaded yet.'); return }
+    try {
+      const obj = JSON.parse(text)
+      const tasks = Array.isArray(obj) ? obj : Array.isArray(obj.tasks) ? obj.tasks : null
+      if (!tasks) throw new Error('No "tasks" array found')
+      const people = Array.isArray(obj.people) ? obj.people : []
+      parsed = { tasks, people }
+      setStatus(tasks.length + ' task' + (tasks.length === 1 ? '' : 's') + (people.length ? ', ' + people.length + ' people' : '') + (obj.board ? ' · from "' + obj.board + '"' : '') + (obj.exportedAt ? ' · exported ' + obj.exportedAt.slice(0, 10) : ''))
+      $('import-go').disabled = false
+    } catch (e) { setStatus('Could not read this file: ' + e.message, true) }
+  }
+  const readFile = (f) => { const r = new FileReader(); r.onload = () => { $('paste').value = String(r.result); tryParse(String(r.result)) }; r.readAsText(f) }
+  $('file').onchange = (e) => { if (e.target.files[0]) readFile(e.target.files[0]) }
+  const drop = $('drop')
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over') }
+  drop.ondragleave = () => drop.classList.remove('over')
+  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]) }
+  $('paste').addEventListener('input', () => tryParse($('paste').value))
+  $('import-go').onclick = () => { if (parsed) send({ type: 'import', tasks: parsed.tasks, people: parsed.people }) }
+  $('import-cancel').onclick = () => send({ type: 'cancel' })
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') send({ type: 'cancel' }) })
 </script>
 </body>

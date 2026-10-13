@@ -138,6 +138,7 @@ export type IconName =
   | 'tag'
   | 'list'
   | 'download'
+  | 'upload'
   | 'chat'
   | 'users'
   | 'sticky'
@@ -163,6 +164,7 @@ const PATHS: Record<IconName, string> = {
   user: '<circle cx="12" cy="8" r="3.8"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>',
   tag: '<path d="M3 11V4h7l10 10-7 7z"/><circle cx="7.5" cy="8.5" r="1.2" fill="currentColor"/>',
   download: '<path d="M12 4v11M7 10l5 5 5-5M4 19h16"/>',
+  upload: '<path d="M12 15V4M7 9l5-5 5 5M4 19h16"/>',
   chat: '<path d="M4 5h16v11H9l-5 4z"/>',
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-5-6.3"/>',
   sticky: '<path d="M4 4h16v10l-6 6H4z"/><path d="M14 20v-6h6"/>',
