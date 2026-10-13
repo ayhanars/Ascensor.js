@@ -86,13 +86,14 @@ document data. Place as many instances as you like:
   skips the merge entirely while it matches what the board last merged; only a
   write from another board triggers a full merge. Pushes carry the stamp too, so
   a board that just received a push does not re-merge.
-- **Changes push instantly.** When a board writes, it also sets the synced
-  state of every other board instance on the page (the Widget API allows this
-  between instances of the same widget), which re-renders them with the merged
-  store. So adding a task on a personal board shows up on the team board right
-  away, and vice versa. The per-render merge and the **Refresh** button
-  (circular arrow next to Export) remain as a fallback, e.g. for boards on
-  another page of the same file.
+- **Manual sync (default) vs. Live sync.** In manual mode a board merges
+  changes from the others the moment you touch it (any click) or press
+  **Refresh**. In live mode every write also pushes straight into every other
+  board on the page, which re-renders all of them on each click — instant, but
+  noticeably heavier with several boards or many tasks. Toggle it for the whole
+  file from the **Manual sync / Live sync** pill in the header or the property
+  menu. Choose live for a workshop where everyone watches the boards, manual
+  for day-to-day use.
 - Views, filters, size and collapsed columns stay per instance, so each person
   can keep their own layout.
 - Existing single-board data migrates automatically: the first render after

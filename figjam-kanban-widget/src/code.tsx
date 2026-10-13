@@ -314,6 +314,7 @@ const STATE_KEYS = [
   'scope',
   'storeVersion',
   'lastSyncedVersion',
+  'liveSync',
 ]
 function storeRead<T>(key: string): T | null {
   const raw = figma.root.getSharedPluginData(NS, key)
@@ -418,6 +419,8 @@ function Widget() {
   const [storeVersion] = useSyncedState<number>('storeVersion', 0)
   /** The store version this instance has already merged; renders skip the merge while it matches. */
   const [lastSyncedVersion, setLastSyncedVersion] = useSyncedState<number>('lastSyncedVersion', -1)
+  /** Mirror of the file-wide 'live' flag: push changes into other boards immediately (costs a re-render of each). */
+  const [liveSync, setLiveSync] = useSyncedState<boolean>('liveSync', false)
   const widgetId = useWidgetNodeId()
   K = SCALES[uiSize] ?? 1.35
   const owner = scope.kind === 'personal' ? scope.name : null
@@ -479,6 +482,27 @@ function Widget() {
     toast('This is now the team board — every task in the file')
   }
 
+  /** File-wide switch: live push between boards (every click re-renders all boards) vs. manual/on-touch merge. */
+  const setLive = (on: boolean) => {
+    storeWrite('live', on ? '1' : null)
+    setLiveSync(on)
+    const v = bumpStoreVersion()
+    try {
+      if (figma.widgetId) {
+        for (const n of figma.currentPage.findWidgetNodesByWidgetId(figma.widgetId)) {
+          if (n.id === widgetId) continue
+          const prev = (n.widgetSyncedState || {}) as Record<string, unknown>
+          const next: Record<string, unknown> = {}
+          for (const k of STATE_KEYS) if (k in prev) next[k] = prev[k]
+          next.liveSync = on
+          next.lastSyncedVersion = v
+          n.setWidgetSyncedState(next)
+        }
+      }
+    } catch (_) {}
+    toast(on ? 'Live sync on — other boards update instantly (heavier)' : 'Manual sync — boards update when touched or on Refresh (lighter)')
+  }
+
   const refresh = () => {
     const n = syncWithStore()
     try {
@@ -494,6 +518,7 @@ function Widget() {
    * store merge remains as the fallback for boards that were not reachable.
    */
   const notifyOtherBoards = () => {
+    if (!liveSync) return
     try {
       if (!figma.widgetId) return
       const others = figma.currentPage.findWidgetNodesByWidgetId(figma.widgetId).filter((n) => n.id !== widgetId)
@@ -567,6 +592,8 @@ function Widget() {
     const storeTasks = new Map<string, Task>()
     const tomb = new Set<string>()
     const storePeople = new Map<string, Person>()
+    const live = keys.indexOf('live') >= 0 && figma.root.getSharedPluginData(NS, 'live') === '"1"'
+    if (live !== liveSync) setLiveSync(live)
     for (const k of keys) {
       if (k.startsWith('task:')) {
         const v = storeRead<Task>(k)
@@ -920,6 +947,7 @@ function Widget() {
         ],
       },
       { itemType: 'separator' },
+      { itemType: 'toggle', propertyName: 'live', tooltip: 'Live sync between boards', isToggled: liveSync },
       { itemType: 'action', propertyName: 'export', tooltip: 'Export CSV' },
       { itemType: 'action', propertyName: 'agenda', tooltip: 'Create sync agenda on canvas' },
       { itemType: 'action', propertyName: 'expandAll', tooltip: 'Expand all columns' },
@@ -946,6 +974,9 @@ function Widget() {
           break
         case 'size':
           setUiSize(propertyValue as string)
+          break
+        case 'live':
+          setLive(!liveSync)
           break
         case 'export':
           return exportCsv(all, boardTitle)
@@ -2209,6 +2240,14 @@ function Widget() {
         />
         <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center">
           <Pill text={owner ? 'My board' : 'Team board'} color={owner ? C.accent : C.muted} fill={owner ? C.accentSoft : C.surface} size={10} tooltip={owner ? `Shows only tasks assigned to ${owner}` : 'Shows every task in this file'} />
+          <Pill
+            text={liveSync ? 'Live sync' : 'Manual sync'}
+            color={liveSync ? C.success : C.muted}
+            fill={liveSync ? C.successSoft : C.surface}
+            size={10}
+            onClick={() => setLive(!liveSync)}
+            tooltip={liveSync ? 'Other boards update instantly on every change (re-renders them each time). Click for manual.' : 'Boards update when you touch them or press Refresh. Click for live updates.'}
+          />
           <Pill text={`${active.length} active`} color={C.muted} fill={C.surface} size={10} />
           {overdueCount ? <Pill text={`${overdueCount} overdue`} color={C.danger} fill={C.dangerSoft} size={10} onClick={() => setFilter('due', filters.due === 'overdue' ? null : 'overdue')} tooltip="Filter overdue" /> : null}
           {blockedCount ? <Pill text={`${blockedCount} blocked`} color={STATUS_COLOR.blocked} fill={STATUS_SOFT.blocked} size={10} /> : null}
@@ -2269,7 +2308,7 @@ function Widget() {
           onClick={() => setFiltersOpen(!filtersOpen)}
           tooltip="Filter by label, person, priority, due date, status"
         />
-        <Btn icon="refresh" onClick={refresh} tooltip="Pull changes made on other boards in this file" />
+        <Btn icon="refresh" onClick={refresh} tooltip={liveSync ? 'Pull changes made on other boards' : 'Pull changes made on other boards (manual sync is on)'} />
         <Btn icon="download" onClick={() => exportCsv(all, boardTitle)} tooltip={owner ? 'Export my tasks as CSV' : 'Export all tasks as CSV'} />
       </AutoLayout>
 

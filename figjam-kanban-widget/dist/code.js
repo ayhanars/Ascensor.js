@@ -405,7 +405,8 @@
     "uiSize",
     "scope",
     "storeVersion",
-    "lastSyncedVersion"
+    "lastSyncedVersion",
+    "liveSync"
   ];
   function storeRead(key) {
     const raw = figma.root.getSharedPluginData(NS, key);
@@ -499,6 +500,7 @@
     const [scope, setScope] = useSyncedState("scope", { kind: "team" });
     const [storeVersion] = useSyncedState("storeVersion", 0);
     const [lastSyncedVersion, setLastSyncedVersion] = useSyncedState("lastSyncedVersion", -1);
+    const [liveSync, setLiveSync] = useSyncedState("liveSync", false);
     const widgetId = useWidgetNodeId();
     K = (_a = SCALES[uiSize]) != null ? _a : 1.35;
     const owner = scope.kind === "personal" ? scope.name : null;
@@ -553,6 +555,26 @@
       if (/’s tasks$/.test(boardTitle)) setBoardTitle("Team tasks");
       toast("This is now the team board \u2014 every task in the file");
     };
+    const setLive = (on) => {
+      storeWrite("live", on ? "1" : null);
+      setLiveSync(on);
+      const v = bumpStoreVersion();
+      try {
+        if (figma.widgetId) {
+          for (const n of figma.currentPage.findWidgetNodesByWidgetId(figma.widgetId)) {
+            if (n.id === widgetId) continue;
+            const prev = n.widgetSyncedState || {};
+            const next = {};
+            for (const k of STATE_KEYS) if (k in prev) next[k] = prev[k];
+            next.liveSync = on;
+            next.lastSyncedVersion = v;
+            n.setWidgetSyncedState(next);
+          }
+        }
+      } catch (_) {
+      }
+      toast(on ? "Live sync on \u2014 other boards update instantly (heavier)" : "Manual sync \u2014 boards update when touched or on Refresh (lighter)");
+    };
     const refresh = () => {
       const n = syncWithStore();
       try {
@@ -562,6 +584,7 @@
       toast(n ? `Pulled ${n} update${n === 1 ? "" : "s"} from other boards` : "Up to date with the other boards");
     };
     const notifyOtherBoards = () => {
+      if (!liveSync) return;
       try {
         if (!figma.widgetId) return;
         const others = figma.currentPage.findWidgetNodesByWidgetId(figma.widgetId).filter((n) => n.id !== widgetId);
@@ -623,6 +646,8 @@
       const storeTasks = /* @__PURE__ */ new Map();
       const tomb = /* @__PURE__ */ new Set();
       const storePeople = /* @__PURE__ */ new Map();
+      const live2 = keys.indexOf("live") >= 0 && figma.root.getSharedPluginData(NS, "live") === '"1"';
+      if (live2 !== liveSync) setLiveSync(live2);
       for (const k of keys) {
         if (k.startsWith("task:")) {
           const v = storeRead(k);
@@ -944,6 +969,7 @@
           ]
         },
         { itemType: "separator" },
+        { itemType: "toggle", propertyName: "live", tooltip: "Live sync between boards", isToggled: liveSync },
         { itemType: "action", propertyName: "export", tooltip: "Export CSV" },
         { itemType: "action", propertyName: "agenda", tooltip: "Create sync agenda on canvas" },
         { itemType: "action", propertyName: "expandAll", tooltip: "Expand all columns" },
@@ -970,6 +996,9 @@
             break;
           case "size":
             setUiSize(propertyValue);
+            break;
+          case "live":
+            setLive(!liveSync);
             break;
           case "export":
             return exportCsv(all, boardTitle);
@@ -1659,7 +1688,17 @@
           inputBehavior: "truncate",
           inputFrameProps: { padding: px(0) }
         }
-      ), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(4), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(Pill, { text: owner ? "My board" : "Team board", color: owner ? C.accent : C.muted, fill: owner ? C.accentSoft : C.surface, size: 10, tooltip: owner ? `Shows only tasks assigned to ${owner}` : "Shows every task in this file" }), /* @__PURE__ */ figma.widget.h(Pill, { text: `${active.length} active`, color: C.muted, fill: C.surface, size: 10 }), overdueCount ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${overdueCount} overdue`, color: C.danger, fill: C.dangerSoft, size: 10, onClick: () => setFilter("due", filters.due === "overdue" ? null : "overdue"), tooltip: "Filter overdue" }) : null, blockedCount ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${blockedCount} blocked`, color: STATUS_COLOR.blocked, fill: STATUS_SOFT.blocked, size: 10 }) : null, unassignedCount ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${unassignedCount} unassigned`, color: C.muted, fill: C.surface, size: 10, onClick: () => setFilter("assignee", filters.assignee === "__none__" ? null : "__none__"), tooltip: "Filter unassigned" }) : null), /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", height: px(1) }), /* @__PURE__ */ figma.widget.h(
+      ), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(4), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(Pill, { text: owner ? "My board" : "Team board", color: owner ? C.accent : C.muted, fill: owner ? C.accentSoft : C.surface, size: 10, tooltip: owner ? `Shows only tasks assigned to ${owner}` : "Shows every task in this file" }), /* @__PURE__ */ figma.widget.h(
+        Pill,
+        {
+          text: liveSync ? "Live sync" : "Manual sync",
+          color: liveSync ? C.success : C.muted,
+          fill: liveSync ? C.successSoft : C.surface,
+          size: 10,
+          onClick: () => setLive(!liveSync),
+          tooltip: liveSync ? "Other boards update instantly on every change (re-renders them each time). Click for manual." : "Boards update when you touch them or press Refresh. Click for live updates."
+        }
+      ), /* @__PURE__ */ figma.widget.h(Pill, { text: `${active.length} active`, color: C.muted, fill: C.surface, size: 10 }), overdueCount ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${overdueCount} overdue`, color: C.danger, fill: C.dangerSoft, size: 10, onClick: () => setFilter("due", filters.due === "overdue" ? null : "overdue"), tooltip: "Filter overdue" }) : null, blockedCount ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${blockedCount} blocked`, color: STATUS_COLOR.blocked, fill: STATUS_SOFT.blocked, size: 10 }) : null, unassignedCount ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${unassignedCount} unassigned`, color: C.muted, fill: C.surface, size: 10, onClick: () => setFilter("assignee", filters.assignee === "__none__" ? null : "__none__"), tooltip: "Filter unassigned" }) : null), /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", height: px(1) }), /* @__PURE__ */ figma.widget.h(
         Btn,
         {
           small: true,
@@ -1706,7 +1745,7 @@
           onClick: () => setFiltersOpen(!filtersOpen),
           tooltip: "Filter by label, person, priority, due date, status"
         }
-      ), /* @__PURE__ */ figma.widget.h(Btn, { icon: "refresh", onClick: refresh, tooltip: "Pull changes made on other boards in this file" }), /* @__PURE__ */ figma.widget.h(Btn, { icon: "download", onClick: () => exportCsv(all, boardTitle), tooltip: owner ? "Export my tasks as CSV" : "Export all tasks as CSV" })),
+      ), /* @__PURE__ */ figma.widget.h(Btn, { icon: "refresh", onClick: refresh, tooltip: liveSync ? "Pull changes made on other boards" : "Pull changes made on other boards (manual sync is on)" }), /* @__PURE__ */ figma.widget.h(Btn, { icon: "download", onClick: () => exportCsv(all, boardTitle), tooltip: owner ? "Export my tasks as CSV" : "Export all tasks as CSV" })),
       quickAddOpen && view !== "board" ? /* @__PURE__ */ figma.widget.h(AutoLayout, { width: COL_W }, /* @__PURE__ */ figma.widget.h(Composer, null)) : null,
       filtersOpen ? /* @__PURE__ */ figma.widget.h(FilterPanel, null) : null,
       live.length === 0 ? /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: BOARD_W, spacing: px(8), padding: { vertical: px(8), horizontal: px(10) }, fill: C.surface, cornerRadius: px(10), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(Label, { size: 11, color: C.muted, width: "fill-parent" }, "Empty board. Type a title into any column, use \u201CAdd task\u201D, or load a few sample tasks to see how it works."), /* @__PURE__ */ figma.widget.h(Btn, { small: true, label: "Load sample tasks", onClick: addSamples })) : null,
