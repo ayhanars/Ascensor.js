@@ -5,6 +5,7 @@ import {
   Filters,
   Person,
   PRIORITIES,
+  Scope,
   PRIORITY_LABEL,
   PRIORITY_RANK,
   SortMode,
@@ -33,7 +34,7 @@ import {
 } from './theme'
 
 const { widget } = figma
-const { AutoLayout, Text, Input, SVG, Image, Ellipse, Rectangle, useSyncedState, useSyncedMap, usePropertyMenu, useWidgetNodeId } = widget
+const { AutoLayout, Text, Input, SVG, Image, Ellipse, Rectangle, useSyncedState, useSyncedMap, usePropertyMenu, useWidgetNodeId, useEffect } = widget
 
 // ---------------------------------------------------------------------------
 // Layout constants
@@ -289,6 +290,21 @@ function pickDate(title: string, current: string | null, onPick: (iso: string | 
 }
 
 // ---------------------------------------------------------------------------
+// Shared store: document-level plugin data, visible to every board in the file
+// ---------------------------------------------------------------------------
+const NS = 'kanban-lite'
+function storeRead<T>(key: string): T | null {
+  const raw = figma.root.getSharedPluginData(NS, key)
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as T
+  } catch (_) {
+    return null
+  }
+}
+const storeWrite = (key: string, value: unknown | null) => figma.root.setSharedPluginData(NS, key, value === null ? '' : JSON.stringify(value))
+
+// ---------------------------------------------------------------------------
 // CSV export – builds the file in the sandbox, hands it to the iframe to save
 // ---------------------------------------------------------------------------
 const csvCell = (v: string | number | boolean | null | undefined): string => {
@@ -359,8 +375,10 @@ function Widget() {
   const [staleDays, setStaleDays] = useSyncedState<number>('staleDays', 7)
   const [boardTitle, setBoardTitle] = useSyncedState<string>('boardTitle', 'Team tasks')
   const [uiSize, setUiSize] = useSyncedState<string>('uiSize', 'comfortable')
+  const [scope, setScope] = useSyncedState<Scope>('scope', { kind: 'team' })
   const widgetId = useWidgetNodeId()
   K = SCALES[uiSize] ?? 1.35
+  const owner = scope.kind === 'personal' ? scope.name : null
 
   const COL_W = px(300)
   const COL_GAP = px(10)
@@ -371,7 +389,9 @@ function Widget() {
   const today = todayISO()
   const tomorrow = addDaysISO(today, 1)
   const nextWeek = addDaysISO(today, 7)
-  const all = tasks.values()
+  const everything = tasks.values()
+  /** Personal boards only show tasks assigned to their owner; the store still holds everything. */
+  const all = owner ? everything.filter((t) => t.assignee === owner) : everything
   const live = all.filter((t) => !t.archived)
   const active = live.filter((t) => t.status !== 'done')
   const done = live.filter((t) => t.status === 'done')
@@ -390,11 +410,18 @@ function Widget() {
       if (!u || !u.name) continue
       const prev = people.get(u.name)
       if (!prev || prev.photoUrl !== (u.photoUrl ?? null) || now - prev.seenAt > 3600000) {
-        people.set(u.name, { name: u.name, photoUrl: u.photoUrl ?? null, seenAt: now })
+        const person: Person = { name: u.name, photoUrl: u.photoUrl ?? null, seenAt: now }
+        people.set(u.name, person)
+        storeWrite('person:' + u.name, person)
       }
     }
   }
   const photoOf = (name: string): string | null => (name ? people.get(name)?.photoUrl ?? null : null)
+  const refresh = () => {
+    const n = syncWithStore()
+    toast(n ? `Pulled ${n} update${n === 1 ? '' : 's'} from other boards` : 'Up to date with the other boards')
+  }
+
   const findTeammates = () => {
     const before = people.size
     syncPeople()
@@ -404,10 +431,83 @@ function Widget() {
   }
 
   // ------------------------------------------------------------- mutations
+  /** Every write goes to this instance's cache AND the file-wide store. */
+  const writeTask = (t: Task) => {
+    tasks.set(t.id, t)
+    storeWrite('task:' + t.id, t)
+  }
+  const deleteTask = (id: string) => {
+    tasks.delete(id)
+    storeWrite('task:' + id, null)
+    storeWrite('deleted:' + id, { at: Date.now() })
+  }
+
+  /**
+   * Two-way merge between this instance's cache and the file store.
+   * Newer updatedAt wins per task; tombstones delete; people merge by seenAt.
+   * Runs after every render (useEffect) and on the Refresh button.
+   */
+  const syncWithStore = (): number => {
+    let changes = 0
+    let keys: string[] = []
+    try {
+      keys = figma.root.getSharedPluginDataKeys(NS)
+    } catch (_) {
+      return 0
+    }
+    const storeTasks = new Map<string, Task>()
+    const tomb = new Set<string>()
+    const storePeople = new Map<string, Person>()
+    for (const k of keys) {
+      if (k.startsWith('task:')) {
+        const v = storeRead<Task>(k)
+        if (v && v.id) storeTasks.set(v.id, v)
+      } else if (k.startsWith('deleted:')) tomb.add(k.slice(8))
+      else if (k.startsWith('person:')) {
+        const v = storeRead<Person>(k)
+        if (v && v.name) storePeople.set(v.name, v)
+      }
+    }
+    storeTasks.forEach((st, id) => {
+      const c = tasks.get(id)
+      if (!c || c.updatedAt < st.updatedAt) {
+        tasks.set(id, st)
+        changes++
+      }
+    })
+    for (const c of tasks.values()) {
+      const st = storeTasks.get(c.id)
+      if (!st) {
+        if (tomb.has(c.id)) {
+          tasks.delete(c.id)
+          changes++
+        } else storeWrite('task:' + c.id, c)
+      } else if (st.updatedAt < c.updatedAt) storeWrite('task:' + c.id, c)
+    }
+    storePeople.forEach((sp, name) => {
+      const c = people.get(name)
+      if (!c || c.seenAt < sp.seenAt) {
+        people.set(name, sp)
+        changes++
+      }
+    })
+    for (const c of people.values()) {
+      const sp = storePeople.get(c.name)
+      if (!sp || sp.seenAt < c.seenAt) storeWrite('person:' + c.name, c)
+    }
+    return changes
+  }
+  useEffect(() => {
+    syncWithStore()
+  })
+
   const patch = (id: string, p: Partial<Task>) => {
     const t = tasks.get(id)
     if (!t) return
-    tasks.set(id, { ...t, ...p, updatedAt: Date.now() })
+    writeTask({ ...t, ...p, updatedAt: Date.now() })
+    if (owner && 'assignee' in p && t.assignee === owner && p.assignee !== owner) {
+      toast(p.assignee ? `Moved to ${p.assignee}'s board` : 'Unassigned — now only on the team board')
+    }
     syncPeople()
   }
 
@@ -431,8 +531,9 @@ function Widget() {
       archived: false,
       ...extra,
     }
+    if (owner && !t.assignee) t.assignee = owner
     if (t.status === 'done') t.completedAt = now
-    tasks.set(t.id, t)
+    writeTask(t)
     syncPeople()
     toast(`Added “${shortName(clean, 34)}”`)
   }
@@ -472,7 +573,7 @@ function Widget() {
   }
 
   const remove = (id: string) => {
-    tasks.delete(id)
+    deleteTask(id)
     setConfirmDeleteId(null)
     if (openId === id) setOpenId(null)
     toast('Task deleted')
@@ -632,11 +733,22 @@ function Widget() {
     [
       {
         itemType: 'dropdown',
+        propertyName: 'scope',
+        tooltip: 'Board scope',
+        selectedOption: scope.kind === 'team' ? 'team' : 'mine',
+        options: [
+          { option: 'team', label: 'Team board (everyone)' },
+          { option: 'mine', label: 'My board (only my tasks)' },
+        ],
+      },
+      {
+        itemType: 'dropdown',
         propertyName: 'view',
         tooltip: 'View',
         selectedOption: view,
         options: [
           { option: 'board', label: 'Board' },
+          { option: 'people', label: 'People' },
           { option: 'week', label: 'Week' },
           { option: 'done', label: 'Done' },
           { option: 'sync', label: 'Team sync' },
@@ -691,6 +803,25 @@ function Widget() {
         case 'view':
           setView(propertyValue as View)
           break
+        case 'scope': {
+          if (propertyValue === 'mine') {
+            const u = figma.currentUser
+            if (!u || !u.name) {
+              toast('Could not read your Figma name')
+              break
+            }
+            syncPeople()
+            setScope({ kind: 'personal', name: u.name, photoUrl: u.photoUrl ?? null })
+            if (boardTitle === 'Team tasks') setBoardTitle(`${u.name.split(/[\s|]+/)[0]}’s tasks`)
+            if (view === 'people') setView('board')
+            toast(`This is now ${u.name}'s personal board`)
+          } else {
+            setScope({ kind: 'team' })
+            if (/’s tasks$/.test(boardTitle)) setBoardTitle('Team tasks')
+            toast('This is now the team board')
+          }
+          break
+        }
         case 'sort':
           setSort(propertyValue as SortMode)
           break
@@ -727,7 +858,7 @@ function Widget() {
     let n = 0
     for (const t of done) {
       if (t.completedAt && ageInDays(t.completedAt) >= 14) {
-        tasks.set(t.id, { ...t, archived: true, updatedAt: Date.now() })
+        writeTask({ ...t, archived: true, updatedAt: Date.now() })
         n++
       }
     }
@@ -764,7 +895,7 @@ function Widget() {
         completedAt: s.status === 'done' ? now - 2 * 86400000 : null,
         archived: false,
       }
-      tasks.set(t.id, t)
+      writeTask(t)
     })
     syncPeople()
     toast('Added 8 sample tasks')
@@ -1585,6 +1716,43 @@ function Widget() {
     )
   }
 
+  function PeopleView() {
+    const pool = active.filter(matches)
+    const names = Array.from(new Set(pool.map((t) => t.assignee))).sort((a, b) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)))
+    return (
+      <AutoLayout direction="horizontal" spacing={COL_GAP} wrap width={BOARD_W} verticalAlignItems="start">
+        {names.length === 0 ? (
+          <Label size={10} color={C.faint} italic>
+            No active tasks.
+          </Label>
+        ) : null}
+        {names.map((name) => {
+          const items = pool.filter((t) => t.assignee === name).sort(compare)
+          const od = items.filter((t) => isOverdue(t.due)).length
+          const [bg, fg] = name ? avatarColors(name) : [C.surface, C.muted]
+          return (
+            <AutoLayout key={name || '__none__'} direction="vertical" width={COL_W} spacing={0} fill={C.canvas} cornerRadius={px(12)} overflow="hidden" stroke={C.border}>
+              <Rectangle width="fill-parent" height={px(4)} fill={fg} />
+              <AutoLayout direction="vertical" width="fill-parent" spacing={px(8)} padding={{ top: px(8), bottom: px(10), left: px(10), right: px(10) }}>
+                <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
+                  <Avatar name={name} photo={photoOf(name)} size={20} />
+                  <Label size={12} weight={700} color={name ? C.text : C.muted} italic={!name} width="fill-parent" truncate>
+                    {name || 'Unassigned'}
+                  </Label>
+                  {od ? <Pill text={`${od} overdue`} color={C.danger} fill={C.dangerSoft} /> : null}
+                  <Pill text={String(items.length)} color={fg} fill={bg} size={10} />
+                </AutoLayout>
+                {items.map((t) => (
+                  <Card key={t.id} task={t} width="fill-parent" showStatus />
+                ))}
+              </AutoLayout>
+            </AutoLayout>
+          )
+        })}
+      </AutoLayout>
+    )
+  }
+
   function SyncView() {
     const agenda = live.filter((t) => t.discuss).filter(matches).sort(compare)
     return (
@@ -1883,7 +2051,7 @@ function Widget() {
 
   // ----------------------------------------------------------------- header
   const agendaCount = live.filter((t) => t.discuss).length
-  const mainView = view === 'board' ? <BoardView /> : view === 'week' ? <WeekView /> : view === 'sync' ? <SyncView /> : <DoneView />
+  const mainView = view === 'board' || (view === 'people' && owner) ? <BoardView /> : view === 'week' ? <WeekView /> : view === 'sync' ? <SyncView /> : view === 'people' ? <PeopleView /> : <DoneView />
 
   return (
     <AutoLayout
@@ -1899,6 +2067,7 @@ function Widget() {
     >
       {/* Row 1: identity + primary action */}
       <AutoLayout direction="horizontal" width={BOARD_W} spacing={px(12)} verticalAlignItems="center">
+        {owner ? <Avatar name={owner} photo={scope.kind === 'personal' ? scope.photoUrl ?? photoOf(owner) : null} size={30} /> : null}
         <Input
           value={boardTitle}
           placeholder="Board title"
@@ -1912,6 +2081,7 @@ function Widget() {
           inputFrameProps={{ padding: px(0) }}
         />
         <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center">
+          <Pill text={owner ? 'My board' : 'Team board'} color={owner ? C.accent : C.muted} fill={owner ? C.accentSoft : C.surface} size={10} tooltip={owner ? `Shows tasks assigned to ${owner}. Switch scope in the property menu.` : 'Shows every task in this file. Switch to “My board” in the property menu.'} />
           <Pill text={`${active.length} active`} color={C.muted} fill={C.surface} size={10} />
           {overdueCount ? <Pill text={`${overdueCount} overdue`} color={C.danger} fill={C.dangerSoft} size={10} onClick={() => setFilter('due', filters.due === 'overdue' ? null : 'overdue')} tooltip="Filter overdue" /> : null}
           {blockedCount ? <Pill text={`${blockedCount} blocked`} color={STATUS_COLOR.blocked} fill={STATUS_SOFT.blocked} size={10} /> : null}
@@ -1928,6 +2098,7 @@ function Widget() {
           <ViewTab id="week" label="Week" iconName="week" />
           <ViewTab id="done" label="Done" iconName="check" count={done.length} />
           <ViewTab id="sync" label="Sync" iconName="chat" count={agendaCount} />
+          {owner ? null : <ViewTab id="people" label="People" iconName="users" />}
         </AutoLayout>
         <AutoLayout width="fill-parent" height={px(1)} />
         <AutoLayout direction="horizontal" spacing={px(6)} verticalAlignItems="center" padding={{ vertical: px(6), horizontal: px(10) }} fill={C.surface} stroke={search ? C.accent : undefined} cornerRadius={px(8)} width={px(220)}>
@@ -1953,7 +2124,8 @@ function Widget() {
           onClick={() => setFiltersOpen(!filtersOpen)}
           tooltip="Filter by label, person, priority, due date, status"
         />
-        <Btn icon="download" onClick={() => exportCsv(all, boardTitle)} tooltip="Export all tasks as CSV" />
+        <Btn icon="refresh" onClick={refresh} tooltip="Pull changes made on other boards in this file" />
+        <Btn icon="download" onClick={() => exportCsv(all, boardTitle)} tooltip={owner ? 'Export my tasks as CSV' : 'Export all tasks as CSV'} />
       </AutoLayout>
 
       {quickAddOpen ? <QuickAddPanel /> : null}

@@ -1,6 +1,6 @@
 export type Status = 'todo' | 'inprogress' | 'blocked' | 'done'
 export type Priority = 'low' | 'medium' | 'high'
-export type View = 'board' | 'week' | 'done' | 'sync'
+export type View = 'board' | 'week' | 'done' | 'sync' | 'people'
 export type SortMode = 'due' | 'priority' | 'created'
 export type DueFilter = 'overdue' | 'today' | 'week' | 'none'
 
@@ -46,6 +46,9 @@ export interface Filters {
   stale: boolean
   label?: string | null
 }
+
+/** Whether this widget instance shows the whole team or one person's tasks. */
+export type Scope = { kind: 'team' } | { kind: 'personal'; name: string; photoUrl: string | null }
 
 export interface Draft {
   status: Status

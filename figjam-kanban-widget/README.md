@@ -67,6 +67,34 @@ on the next widget interaction (or re-import the manifest).
 | 9 Micro-interactions | Toast feedback on create / move / complete / schedule. Completing a task fills the check circle green, strikes through the title and shows "Done! Moving to Completed…" for ~0.65 s before the card moves. Hover styles on every control. No sound (see limitations). |
 | 10 Visual design | Each column has its own identity: a coloured top bar, a tinted background (slate / blue / orange / green), a status glyph and a count pill. Cards are white on the tint with initials avatars, arrow-prefixed priority pills (↑ High, → Med, ↓ Low) and an indigo accent. 11–12px type, 6–10px spacing, 1px borders. The board is ~1060px wide with four expanded columns, less when columns are collapsed. |
 
+## Personal boards and the team board (same file)
+
+Every board instance in a FigJam file shares one task store, kept in the file's
+document data. Place as many instances as you like:
+
+- **Team board** (default) shows every task in the file. Its **People** tab
+  groups active tasks by owner, one column per person, with overdue counts.
+- **My board** (property menu → *Board scope → My board*) shows only the tasks
+  assigned to you, with your photo in the header. Tasks you add there are
+  assigned to you automatically. Assigning one of your tasks to someone else
+  moves it to their board; assigning a task to you on the team board makes it
+  appear on yours.
+- All instances write every change straight to the store and merge on each
+  render. Per-task "newest edit wins", deletions use tombstones, and the people
+  directory (names + photos) is shared too, so a teammate found on one board is
+  known on all of them.
+- **Refresh** (circular arrow next to Export) pulls changes made elsewhere.
+  Boards also refresh automatically whenever they render — on any interaction
+  with them, or when the file is opened. There is no push between widgets, so a
+  board you are only looking at updates when you next touch it.
+- Views, filters, size and collapsed columns stay per instance, so each person
+  can keep their own layout.
+- Existing single-board data migrates automatically: the first render after
+  this update seeds the store from the board's own tasks.
+
+This works within one file only. Boards in different files would need an
+external backend, which this prototype deliberately avoids.
+
 ## Size, export and other controls
 
 - **Widget size** — property menu → *Size: compact / comfortable / large*. Comfortable (default) is sized to sit well next to FigJam sticky notes; compact is the original dense layout; large is for presenting. Every dimension scales together, so nothing wraps differently.

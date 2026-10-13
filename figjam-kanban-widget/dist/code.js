@@ -219,6 +219,7 @@
     chat: '<path d="M4 5h16v11H9l-5 4z"/>',
     users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-5-6.3"/>',
     sticky: '<path d="M4 4h16v10l-6 6H4z"/><path d="M14 20v-6h6"/>',
+    refresh: '<path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/>',
     list: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/>'
   };
   function icon(name, color, size = 12, strokeWidth = 1.8) {
@@ -227,7 +228,7 @@
 
   // src/code.tsx
   var { widget } = figma;
-  var { AutoLayout, Text, Input, SVG, Image, Ellipse, Rectangle, useSyncedState, useSyncedMap, usePropertyMenu, useWidgetNodeId } = widget;
+  var { AutoLayout, Text, Input, SVG, Image, Ellipse, Rectangle, useSyncedState, useSyncedMap, usePropertyMenu, useWidgetNodeId, useEffect } = widget;
   var FONT = "Inter";
   var K = 1.35;
   var px = (n) => Math.round(n * K);
@@ -385,6 +386,17 @@
       };
     });
   }
+  var NS = "kanban-lite";
+  function storeRead(key) {
+    const raw = figma.root.getSharedPluginData(NS, key);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+  var storeWrite = (key, value) => figma.root.setSharedPluginData(NS, key, value === null ? "" : JSON.stringify(value));
   var csvCell = (v) => {
     const str = v === null || v === void 0 ? "" : String(v);
     return /[",\n\r]/.test(str) ? '"' + str.replace(/"/g, '""') + '"' : str;
@@ -430,7 +442,7 @@
     });
   }
   function Widget() {
-    var _a;
+    var _a, _b;
     const tasks = useSyncedMap("tasks");
     const people = useSyncedMap("people");
     const [view, setView] = useSyncedState("view", "board");
@@ -449,8 +461,10 @@
     const [staleDays, setStaleDays] = useSyncedState("staleDays", 7);
     const [boardTitle, setBoardTitle] = useSyncedState("boardTitle", "Team tasks");
     const [uiSize, setUiSize] = useSyncedState("uiSize", "comfortable");
+    const [scope, setScope] = useSyncedState("scope", { kind: "team" });
     const widgetId = useWidgetNodeId();
     K = (_a = SCALES[uiSize]) != null ? _a : 1.35;
+    const owner = scope.kind === "personal" ? scope.name : null;
     const COL_W = px(300);
     const COL_GAP = px(10);
     const BOARD_W = COL_W * 4 + COL_GAP * 3;
@@ -459,26 +473,33 @@
     const today = todayISO();
     const tomorrow = addDaysISO(today, 1);
     const nextWeek = addDaysISO(today, 7);
-    const all = tasks.values();
+    const everything = tasks.values();
+    const all = owner ? everything.filter((t) => t.assignee === owner) : everything;
     const live = all.filter((t) => !t.archived);
     const active = live.filter((t) => t.status !== "done");
     const done = live.filter((t) => t.status === "done");
     const archived = all.filter((t) => t.archived);
     const syncPeople = () => {
-      var _a2, _b;
+      var _a2, _b2;
       const seen = [figma.currentUser, ...figma.activeUsers];
       const now = Date.now();
       for (const u of seen) {
         if (!u || !u.name) continue;
         const prev = people.get(u.name);
         if (!prev || prev.photoUrl !== ((_a2 = u.photoUrl) != null ? _a2 : null) || now - prev.seenAt > 36e5) {
-          people.set(u.name, { name: u.name, photoUrl: (_b = u.photoUrl) != null ? _b : null, seenAt: now });
+          const person = { name: u.name, photoUrl: (_b2 = u.photoUrl) != null ? _b2 : null, seenAt: now };
+          people.set(u.name, person);
+          storeWrite("person:" + u.name, person);
         }
       }
     };
     const photoOf = (name) => {
-      var _a2, _b;
-      return name ? (_b = (_a2 = people.get(name)) == null ? void 0 : _a2.photoUrl) != null ? _b : null : null;
+      var _a2, _b2;
+      return name ? (_b2 = (_a2 = people.get(name)) == null ? void 0 : _a2.photoUrl) != null ? _b2 : null : null;
+    };
+    const refresh = () => {
+      const n = syncWithStore();
+      toast(n ? `Pulled ${n} update${n === 1 ? "" : "s"} from other boards` : "Up to date with the other boards");
     };
     const findTeammates = () => {
       const before = people.size;
@@ -487,10 +508,75 @@
       const added = people.size - before;
       toast(`${here} ${here === 1 ? "person is" : "people are"} in this file right now${added ? ` \xB7 ${added} new` : ""}`);
     };
+    const writeTask = (t) => {
+      tasks.set(t.id, t);
+      storeWrite("task:" + t.id, t);
+    };
+    const deleteTask = (id) => {
+      tasks.delete(id);
+      storeWrite("task:" + id, null);
+      storeWrite("deleted:" + id, { at: Date.now() });
+    };
+    const syncWithStore = () => {
+      let changes = 0;
+      let keys = [];
+      try {
+        keys = figma.root.getSharedPluginDataKeys(NS);
+      } catch (_) {
+        return 0;
+      }
+      const storeTasks = /* @__PURE__ */ new Map();
+      const tomb = /* @__PURE__ */ new Set();
+      const storePeople = /* @__PURE__ */ new Map();
+      for (const k of keys) {
+        if (k.startsWith("task:")) {
+          const v = storeRead(k);
+          if (v && v.id) storeTasks.set(v.id, v);
+        } else if (k.startsWith("deleted:")) tomb.add(k.slice(8));
+        else if (k.startsWith("person:")) {
+          const v = storeRead(k);
+          if (v && v.name) storePeople.set(v.name, v);
+        }
+      }
+      storeTasks.forEach((st, id) => {
+        const c = tasks.get(id);
+        if (!c || c.updatedAt < st.updatedAt) {
+          tasks.set(id, st);
+          changes++;
+        }
+      });
+      for (const c of tasks.values()) {
+        const st = storeTasks.get(c.id);
+        if (!st) {
+          if (tomb.has(c.id)) {
+            tasks.delete(c.id);
+            changes++;
+          } else storeWrite("task:" + c.id, c);
+        } else if (st.updatedAt < c.updatedAt) storeWrite("task:" + c.id, c);
+      }
+      storePeople.forEach((sp, name) => {
+        const c = people.get(name);
+        if (!c || c.seenAt < sp.seenAt) {
+          people.set(name, sp);
+          changes++;
+        }
+      });
+      for (const c of people.values()) {
+        const sp = storePeople.get(c.name);
+        if (!sp || sp.seenAt < c.seenAt) storeWrite("person:" + c.name, c);
+      }
+      return changes;
+    };
+    useEffect(() => {
+      syncWithStore();
+    });
     const patch = (id, p) => {
       const t = tasks.get(id);
       if (!t) return;
-      tasks.set(id, __spreadProps(__spreadValues(__spreadValues({}, t), p), { updatedAt: Date.now() }));
+      writeTask(__spreadProps(__spreadValues(__spreadValues({}, t), p), { updatedAt: Date.now() }));
+      if (owner && "assignee" in p && t.assignee === owner && p.assignee !== owner) {
+        toast(p.assignee ? `Moved to ${p.assignee}'s board` : "Unassigned \u2014 now only on the team board");
+      }
       syncPeople();
     };
     const createTask = (title, extra = {}) => {
@@ -512,8 +598,9 @@
         completedAt: null,
         archived: false
       }, extra);
+      if (owner && !t.assignee) t.assignee = owner;
       if (t.status === "done") t.completedAt = now;
-      tasks.set(t.id, t);
+      writeTask(t);
       syncPeople();
       toast(`Added \u201C${shortName(clean, 34)}\u201D`);
     };
@@ -547,7 +634,7 @@
       toast(flag ? "Archived" : "Restored");
     };
     const remove = (id) => {
-      tasks.delete(id);
+      deleteTask(id);
       setConfirmDeleteId(null);
       if (openId === id) setOpenId(null);
       toast("Task deleted");
@@ -662,10 +749,10 @@
       return true;
     };
     const compare = (a, b) => {
-      var _a2, _b, _c, _d;
+      var _a2, _b2, _c, _d;
       if (sort === "created") return b.createdAt - a.createdAt;
       if (sort === "priority") {
-        const pr2 = PRIORITY_RANK[(_a2 = a.priority) != null ? _a2 : "none"] - PRIORITY_RANK[(_b = b.priority) != null ? _b : "none"];
+        const pr2 = PRIORITY_RANK[(_a2 = a.priority) != null ? _a2 : "none"] - PRIORITY_RANK[(_b2 = b.priority) != null ? _b2 : "none"];
         if (pr2 !== 0) return pr2;
       }
       if (a.due && b.due && a.due !== b.due) return a.due < b.due ? -1 : 1;
@@ -685,11 +772,22 @@
       [
         {
           itemType: "dropdown",
+          propertyName: "scope",
+          tooltip: "Board scope",
+          selectedOption: scope.kind === "team" ? "team" : "mine",
+          options: [
+            { option: "team", label: "Team board (everyone)" },
+            { option: "mine", label: "My board (only my tasks)" }
+          ]
+        },
+        {
+          itemType: "dropdown",
           propertyName: "view",
           tooltip: "View",
           selectedOption: view,
           options: [
             { option: "board", label: "Board" },
+            { option: "people", label: "People" },
             { option: "week", label: "Week" },
             { option: "done", label: "Done" },
             { option: "sync", label: "Team sync" }
@@ -740,10 +838,30 @@
         { itemType: "action", propertyName: "samples", tooltip: "Add sample tasks" }
       ],
       ({ propertyName, propertyValue }) => {
+        var _a2;
         switch (propertyName) {
           case "view":
             setView(propertyValue);
             break;
+          case "scope": {
+            if (propertyValue === "mine") {
+              const u = figma.currentUser;
+              if (!u || !u.name) {
+                toast("Could not read your Figma name");
+                break;
+              }
+              syncPeople();
+              setScope({ kind: "personal", name: u.name, photoUrl: (_a2 = u.photoUrl) != null ? _a2 : null });
+              if (boardTitle === "Team tasks") setBoardTitle(`${u.name.split(/[\s|]+/)[0]}\u2019s tasks`);
+              if (view === "people") setView("board");
+              toast(`This is now ${u.name}'s personal board`);
+            } else {
+              setScope({ kind: "team" });
+              if (/’s tasks$/.test(boardTitle)) setBoardTitle("Team tasks");
+              toast("This is now the team board");
+            }
+            break;
+          }
           case "sort":
             setSort(propertyValue);
             break;
@@ -779,7 +897,7 @@
       let n = 0;
       for (const t of done) {
         if (t.completedAt && ageInDays(t.completedAt) >= 14) {
-          tasks.set(t.id, __spreadProps(__spreadValues({}, t), { archived: true, updatedAt: Date.now() }));
+          writeTask(__spreadProps(__spreadValues({}, t), { archived: true, updatedAt: Date.now() }));
           n++;
         }
       }
@@ -799,13 +917,13 @@
         { title: "Fix mobile nav overlap", status: "done", priority: "high", due: d(-6), assignee: "Maya Chen", labels: ["Website"] }
       ];
       samples.forEach((s, i) => {
-        var _a2, _b, _c, _d, _e, _f, _g;
+        var _a2, _b2, _c, _d, _e, _f, _g;
         const now = Date.now() - (samples.length - i) * 1e3;
         const t = {
           id: uid() + i,
           title: s.title,
           description: (_a2 = s.description) != null ? _a2 : "",
-          status: (_b = s.status) != null ? _b : "todo",
+          status: (_b2 = s.status) != null ? _b2 : "todo",
           assignee: (_c = s.assignee) != null ? _c : "",
           due: (_d = s.due) != null ? _d : null,
           priority: (_e = s.priority) != null ? _e : null,
@@ -816,7 +934,7 @@
           completedAt: s.status === "done" ? now - 2 * 864e5 : null,
           archived: false
         };
-        tasks.set(t.id, t);
+        writeTask(t);
       });
       syncPeople();
       toast("Added 8 sample tasks");
@@ -1133,8 +1251,8 @@
       const isCollapsed = !!collapsed[status];
       const items = live.filter((t) => t.status === status);
       const visible = items.filter(matches).sort(status === "done" ? (a, b) => {
-        var _a2, _b;
-        return ((_a2 = b.completedAt) != null ? _a2 : b.updatedAt) - ((_b = a.completedAt) != null ? _b : a.updatedAt);
+        var _a2, _b2;
+        return ((_a2 = b.completedAt) != null ? _a2 : b.updatedAt) - ((_b2 = a.completedAt) != null ? _b2 : a.updatedAt);
       } : compare);
       const color = STATUS_COLOR[status];
       const hiddenByFilter = items.length - visible.length;
@@ -1231,8 +1349,8 @@
     function DoneView() {
       const dq = doneSearch.trim().toLowerCase();
       const pool = (showArchived ? all.filter((t) => t.archived || t.status === "done") : done).filter(matches).filter((t) => !dq || `${t.title} ${t.description} ${t.assignee} ${labelsOf(t).join(" ")}`.toLowerCase().includes(dq)).sort((a, b) => {
-        var _a2, _b;
-        return ((_a2 = b.completedAt) != null ? _a2 : b.updatedAt) - ((_b = a.completedAt) != null ? _b : a.updatedAt);
+        var _a2, _b2;
+        return ((_a2 = b.completedAt) != null ? _a2 : b.updatedAt) - ((_b2 = a.completedAt) != null ? _b2 : a.updatedAt);
       });
       return /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", spacing: px(8), width: BOARD_W }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: "fill-parent", spacing: px(8), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(6), verticalAlignItems: "center", padding: { vertical: px(5), horizontal: px(9) }, fill: C.surface, cornerRadius: px(8), width: px(260) }, /* @__PURE__ */ figma.widget.h(Icon, { name: "search", color: C.faint, size: 12 }), /* @__PURE__ */ figma.widget.h(
         Input,
@@ -1249,6 +1367,16 @@
           inputFrameProps: { padding: px(0) }
         }
       ), doneSearch ? /* @__PURE__ */ figma.widget.h(IconBtn, { icon: "x", size: 16, tooltip: "Clear search", onClick: () => setDoneSearch("") }) : null), /* @__PURE__ */ figma.widget.h(Chip, { label: `Show archived (${archived.length})`, active: showArchived, onClick: () => setShowArchived(!showArchived) }), /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", height: px(1) }), /* @__PURE__ */ figma.widget.h(Btn, { small: true, label: "Archive done > 14 days", icon: "archive", onClick: archiveOld, tooltip: "Move completed tasks older than 14 days to the archive" })), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", width: "fill-parent", spacing: 0, fill: STATUS_TINT.done, cornerRadius: px(12), overflow: "hidden" }, /* @__PURE__ */ figma.widget.h(Rectangle, { width: "fill-parent", height: px(4), fill: STATUS_COLOR.done }), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", width: "fill-parent", spacing: px(6), padding: { top: px(8), bottom: px(10), left: px(10), right: px(10) } }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: "fill-parent", spacing: px(6), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(StatusGlyph, { status: "done", size: 13 }), /* @__PURE__ */ figma.widget.h(Label, { size: 12, weight: 700 }, showArchived ? "Completed & archived" : "Completed"), /* @__PURE__ */ figma.widget.h(Pill, { text: String(pool.length), color: C.success, fill: C.bg, size: 10 })), pool.length ? pool.map((t) => /* @__PURE__ */ figma.widget.h(DoneRow, { key: t.id, task: t })) : /* @__PURE__ */ figma.widget.h(Label, { size: 10, color: C.faint, italic: true }, dq || anyFilter ? "No completed tasks match." : "No completed tasks yet \u2014 click a card\u2019s circle to mark it done."))));
+    }
+    function PeopleView() {
+      const pool = active.filter(matches);
+      const names = Array.from(new Set(pool.map((t) => t.assignee))).sort((a, b) => a === "" ? 1 : b === "" ? -1 : a.localeCompare(b));
+      return /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: COL_GAP, wrap: true, width: BOARD_W, verticalAlignItems: "start" }, names.length === 0 ? /* @__PURE__ */ figma.widget.h(Label, { size: 10, color: C.faint, italic: true }, "No active tasks.") : null, names.map((name) => {
+        const items = pool.filter((t) => t.assignee === name).sort(compare);
+        const od = items.filter((t) => isOverdue(t.due)).length;
+        const [bg, fg] = name ? avatarColors(name) : [C.surface, C.muted];
+        return /* @__PURE__ */ figma.widget.h(AutoLayout, { key: name || "__none__", direction: "vertical", width: COL_W, spacing: 0, fill: C.canvas, cornerRadius: px(12), overflow: "hidden", stroke: C.border }, /* @__PURE__ */ figma.widget.h(Rectangle, { width: "fill-parent", height: px(4), fill: fg }), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", width: "fill-parent", spacing: px(8), padding: { top: px(8), bottom: px(10), left: px(10), right: px(10) } }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: "fill-parent", spacing: px(6), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(Avatar, { name, photo: photoOf(name), size: 20 }), /* @__PURE__ */ figma.widget.h(Label, { size: 12, weight: 700, color: name ? C.text : C.muted, italic: !name, width: "fill-parent", truncate: true }, name || "Unassigned"), od ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${od} overdue`, color: C.danger, fill: C.dangerSoft }) : null, /* @__PURE__ */ figma.widget.h(Pill, { text: String(items.length), color: fg, fill: bg, size: 10 })), items.map((t) => /* @__PURE__ */ figma.widget.h(Card, { key: t.id, task: t, width: "fill-parent", showStatus: true }))));
+      }));
     }
     function SyncView() {
       const agenda = live.filter((t) => t.discuss).filter(matches).sort(compare);
@@ -1380,7 +1508,7 @@
       );
     }
     const agendaCount = live.filter((t) => t.discuss).length;
-    const mainView = view === "board" ? /* @__PURE__ */ figma.widget.h(BoardView, null) : view === "week" ? /* @__PURE__ */ figma.widget.h(WeekView, null) : view === "sync" ? /* @__PURE__ */ figma.widget.h(SyncView, null) : /* @__PURE__ */ figma.widget.h(DoneView, null);
+    const mainView = view === "board" || view === "people" && owner ? /* @__PURE__ */ figma.widget.h(BoardView, null) : view === "week" ? /* @__PURE__ */ figma.widget.h(WeekView, null) : view === "sync" ? /* @__PURE__ */ figma.widget.h(SyncView, null) : view === "people" ? /* @__PURE__ */ figma.widget.h(PeopleView, null) : /* @__PURE__ */ figma.widget.h(DoneView, null);
     return /* @__PURE__ */ figma.widget.h(
       AutoLayout,
       {
@@ -1394,7 +1522,7 @@
         width: "hug-contents",
         effect: { type: "drop-shadow", color: { r: 0.07, g: 0.09, b: 0.15, a: 0.08 }, offset: { x: 0, y: 4 }, blur: 16 }
       },
-      /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: BOARD_W, spacing: px(12), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(
+      /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: BOARD_W, spacing: px(12), verticalAlignItems: "center" }, owner ? /* @__PURE__ */ figma.widget.h(Avatar, { name: owner, photo: scope.kind === "personal" ? (_b = scope.photoUrl) != null ? _b : photoOf(owner) : null, size: 30 }) : null, /* @__PURE__ */ figma.widget.h(
         Input,
         {
           value: boardTitle,
@@ -1408,8 +1536,8 @@
           inputBehavior: "truncate",
           inputFrameProps: { padding: px(0) }
         }
-      ), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(4), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(Pill, { text: `${active.length} active`, color: C.muted, fill: C.surface, size: 10 }), overdueCount ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${overdueCount} overdue`, color: C.danger, fill: C.dangerSoft, size: 10, onClick: () => setFilter("due", filters.due === "overdue" ? null : "overdue"), tooltip: "Filter overdue" }) : null, blockedCount ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${blockedCount} blocked`, color: STATUS_COLOR.blocked, fill: STATUS_SOFT.blocked, size: 10 }) : null, unassignedCount ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${unassignedCount} unassigned`, color: C.muted, fill: C.surface, size: 10, onClick: () => setFilter("assignee", filters.assignee === "__none__" ? null : "__none__"), tooltip: "Filter unassigned" }) : null), /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", height: px(1) }), /* @__PURE__ */ figma.widget.h(Btn, { label: "Add task", icon: "plus", tone: quickAddOpen ? "default" : "primary", onClick: () => setQuickAddOpen(!quickAddOpen), tooltip: "Quick add with optional details (or type directly into a column)" })),
-      /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: BOARD_W, spacing: px(10), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(2), padding: px(3), fill: C.surface, cornerRadius: px(9) }, /* @__PURE__ */ figma.widget.h(ViewTab, { id: "board", label: "Board", iconName: "board" }), /* @__PURE__ */ figma.widget.h(ViewTab, { id: "week", label: "Week", iconName: "week" }), /* @__PURE__ */ figma.widget.h(ViewTab, { id: "done", label: "Done", iconName: "check", count: done.length }), /* @__PURE__ */ figma.widget.h(ViewTab, { id: "sync", label: "Sync", iconName: "chat", count: agendaCount })), /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", height: px(1) }), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(6), verticalAlignItems: "center", padding: { vertical: px(6), horizontal: px(10) }, fill: C.surface, stroke: search ? C.accent : void 0, cornerRadius: px(8), width: px(220) }, /* @__PURE__ */ figma.widget.h(Icon, { name: "search", color: search ? C.accent : C.faint, size: 12 }), /* @__PURE__ */ figma.widget.h(
+      ), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(4), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(Pill, { text: owner ? "My board" : "Team board", color: owner ? C.accent : C.muted, fill: owner ? C.accentSoft : C.surface, size: 10, tooltip: owner ? `Shows tasks assigned to ${owner}. Switch scope in the property menu.` : "Shows every task in this file. Switch to \u201CMy board\u201D in the property menu." }), /* @__PURE__ */ figma.widget.h(Pill, { text: `${active.length} active`, color: C.muted, fill: C.surface, size: 10 }), overdueCount ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${overdueCount} overdue`, color: C.danger, fill: C.dangerSoft, size: 10, onClick: () => setFilter("due", filters.due === "overdue" ? null : "overdue"), tooltip: "Filter overdue" }) : null, blockedCount ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${blockedCount} blocked`, color: STATUS_COLOR.blocked, fill: STATUS_SOFT.blocked, size: 10 }) : null, unassignedCount ? /* @__PURE__ */ figma.widget.h(Pill, { text: `${unassignedCount} unassigned`, color: C.muted, fill: C.surface, size: 10, onClick: () => setFilter("assignee", filters.assignee === "__none__" ? null : "__none__"), tooltip: "Filter unassigned" }) : null), /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", height: px(1) }), /* @__PURE__ */ figma.widget.h(Btn, { label: "Add task", icon: "plus", tone: quickAddOpen ? "default" : "primary", onClick: () => setQuickAddOpen(!quickAddOpen), tooltip: "Quick add with optional details (or type directly into a column)" })),
+      /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: BOARD_W, spacing: px(10), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(2), padding: px(3), fill: C.surface, cornerRadius: px(9) }, /* @__PURE__ */ figma.widget.h(ViewTab, { id: "board", label: "Board", iconName: "board" }), /* @__PURE__ */ figma.widget.h(ViewTab, { id: "week", label: "Week", iconName: "week" }), /* @__PURE__ */ figma.widget.h(ViewTab, { id: "done", label: "Done", iconName: "check", count: done.length }), /* @__PURE__ */ figma.widget.h(ViewTab, { id: "sync", label: "Sync", iconName: "chat", count: agendaCount }), owner ? null : /* @__PURE__ */ figma.widget.h(ViewTab, { id: "people", label: "People", iconName: "users" })), /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", height: px(1) }), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(6), verticalAlignItems: "center", padding: { vertical: px(6), horizontal: px(10) }, fill: C.surface, stroke: search ? C.accent : void 0, cornerRadius: px(8), width: px(220) }, /* @__PURE__ */ figma.widget.h(Icon, { name: "search", color: search ? C.accent : C.faint, size: 12 }), /* @__PURE__ */ figma.widget.h(
         Input,
         {
           value: search || null,
@@ -1432,7 +1560,7 @@
           onClick: () => setFiltersOpen(!filtersOpen),
           tooltip: "Filter by label, person, priority, due date, status"
         }
-      ), /* @__PURE__ */ figma.widget.h(Btn, { icon: "download", onClick: () => exportCsv(all, boardTitle), tooltip: "Export all tasks as CSV" })),
+      ), /* @__PURE__ */ figma.widget.h(Btn, { icon: "refresh", onClick: refresh, tooltip: "Pull changes made on other boards in this file" }), /* @__PURE__ */ figma.widget.h(Btn, { icon: "download", onClick: () => exportCsv(all, boardTitle), tooltip: owner ? "Export my tasks as CSV" : "Export all tasks as CSV" })),
       quickAddOpen ? /* @__PURE__ */ figma.widget.h(QuickAddPanel, null) : null,
       filtersOpen ? /* @__PURE__ */ figma.widget.h(FilterPanel, null) : null,
       live.length === 0 ? /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: BOARD_W, spacing: px(8), padding: { vertical: px(8), horizontal: px(10) }, fill: C.surface, cornerRadius: px(10), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(Label, { size: 11, color: C.muted, width: "fill-parent" }, "Empty board. Type a title into any column, use \u201CAdd task\u201D, or load a few sample tasks to see how it works."), /* @__PURE__ */ figma.widget.h(Btn, { small: true, label: "Load sample tasks", onClick: addSamples })) : null,
