@@ -1,5 +1,4 @@
 import {
-  ACTIVE_STATUSES,
   Draft,
   EMPTY_FILTERS,
   Filters,
@@ -292,7 +291,8 @@ function pickDate(title: string, current: string | null, onPick: (iso: string | 
 // ---------------------------------------------------------------------------
 // Shared store: document-level plugin data, visible to every board in the file
 // ---------------------------------------------------------------------------
-const NS = 'kanban-lite'
+// Figma requires an alphanumeric namespace for shared plugin data (a hyphen here silently broke every write).
+const NS = 'kanbanlite'
 /** Every useSyncedState key this widget uses — preserved when pushing state into another instance. */
 const STATE_KEYS = [
   'view',
@@ -323,7 +323,17 @@ function storeRead<T>(key: string): T | null {
     return null
   }
 }
-const storeWrite = (key: string, value: unknown | null) => figma.root.setSharedPluginData(NS, key, value === null ? '' : JSON.stringify(value))
+let storeErrorShown = false
+const storeWrite = (key: string, value: unknown | null) => {
+  try {
+    figma.root.setSharedPluginData(NS, key, value === null ? '' : JSON.stringify(value))
+  } catch (e) {
+    if (!storeErrorShown) {
+      storeErrorShown = true
+      figma.notify('Could not sync to the other boards: ' + String(e), { timeout: 4000, error: true })
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // CSV export – builds the file in the sandbox, hands it to the iframe to save
@@ -1566,10 +1576,11 @@ function Widget() {
           </AutoLayout>
         ) : (
           <AutoLayout direction="vertical" width="fill-parent" spacing={px(6)}>
+            {status === 'todo' && quickAddOpen ? <Composer /> : null}
             {visible.map((t) => (
               <Card key={t.id} task={t} width="fill-parent" />
             ))}
-            {visible.length === 0 ? (
+            {visible.length === 0 && !(status === 'todo' && quickAddOpen) ? (
               <AutoLayout width="fill-parent" padding={{ vertical: px(4), horizontal: px(4) }}>
                 <Label size={10} color={C.faint} italic>
                   {items.length > 0 ? 'No matches for current filters.' : status === 'todo' && live.length === 0 ? 'Type below to add your first task.' : 'Nothing here.'}
@@ -1929,78 +1940,85 @@ function Widget() {
   }
 
   // ---------------------------------------------------------------- panels
-  function QuickAddPanel() {
+  /** New-task composer, rendered as a card at the top of the To Do column. */
+  function Composer() {
     const customDue = !!draft.due && draft.due !== today && draft.due !== tomorrow && draft.due !== nextWeek
+    const assignee = draft.assignee || owner || ''
     return (
-      <AutoLayout direction="vertical" width="fill-parent" spacing={px(8)} padding={px(10)} fill={C.accentSoft} cornerRadius={px(12)}>
-        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
+      <AutoLayout
+        direction="vertical"
+        width="fill-parent"
+        spacing={px(6)}
+        padding={{ vertical: px(8), horizontal: px(9) }}
+        fill={C.bg}
+        cornerRadius={px(8)}
+        stroke={C.accent}
+        strokeWidth={2}
+        effect={{ type: 'drop-shadow', color: { r: 0.31, g: 0.27, b: 0.9, a: 0.18 }, offset: { x: 0, y: 4 }, blur: 14 }}
+      >
+        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="start">
+          <AutoLayout width={px(16)} height={px(16)} cornerRadius={px(8)} stroke={C.borderStrong} strokeWidth={1.5} strokeAlign="inside" />
           <Input
             value={null}
-            placeholder="New task title — press Enter to add, then type the next one"
-            onTextEditEnd={(e) =>
-              createTask(e.characters, { status: draft.status, priority: draft.priority, due: draft.due, assignee: draft.assignee, labels: draft.label ? [draft.label] : [] })
-            }
+            placeholder="Task title, press Enter"
+            onTextEditEnd={(e) => createTask(e.characters, { status: 'todo', priority: draft.priority, due: draft.due, assignee, labels: draft.label ? [draft.label] : [] })}
             fontFamily={FONT}
-            fontSize={px(12)}
-            fontWeight={500}
+            fontSize={px(13)}
+            fontWeight={600}
             fill={C.text}
             placeholderProps={{ fill: C.faint, fontWeight: 400 }}
             width="fill-parent"
             inputBehavior="wrap"
-            inputFrameProps={{ padding: { vertical: px(7), horizontal: px(10) }, fill: C.bg, stroke: C.accent, cornerRadius: px(8) }}
+            inputFrameProps={{ padding: 0 }}
           />
-          <IconBtn icon="x" tooltip="Close quick add" onClick={() => setQuickAddOpen(false)} />
+          <IconBtn icon="x" size={18} tooltip="Close" onClick={() => setQuickAddOpen(false)} />
         </AutoLayout>
-        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(14)} wrap verticalAlignItems="center">
-          <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center">
-            {ACTIVE_STATUSES.map((s) => (
-              <Chip key={s} small label={STATUS_LABEL[s]} lead={<StatusGlyph status={s} size={10} muted={draft.status !== s} />} active={draft.status === s} color={STATUS_COLOR[s]} soft={STATUS_SOFT[s]} onClick={() => setDraft({ ...draft, status: s })} />
+        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(4)} wrap verticalAlignItems="center">
+          <Chip small label="Today" active={draft.due === today} onClick={() => setDraft({ ...draft, due: draft.due === today ? null : today })} />
+          <Chip small label="Tomorrow" active={draft.due === tomorrow} onClick={() => setDraft({ ...draft, due: draft.due === tomorrow ? null : tomorrow })} />
+          <Chip small label="Next week" active={draft.due === nextWeek} onClick={() => setDraft({ ...draft, due: draft.due === nextWeek ? null : nextWeek })} />
+          <Chip small label={customDue ? weekdayDate(draft.due as string) : 'Pick…'} active={customDue} onClick={() => pickDate('New task', draft.due, (iso) => setDraft({ ...draft, due: iso }))} />
+        </AutoLayout>
+        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(4)} wrap verticalAlignItems="center">
+          {PRIORITIES.map((p) => (
+            <Chip key={p} small label={PRIORITY_GLYPH[p]} active={draft.priority === p} color={PRIORITY_COLOR[p]} soft={PRIORITY_SOFT[p]} onClick={() => setDraft({ ...draft, priority: draft.priority === p ? null : p })} />
+          ))}
+        </AutoLayout>
+        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(4)} verticalAlignItems="center">
+          <Avatar name={assignee} photo={photoOf(assignee)} size={18} />
+          <Input
+            value={assignee || null}
+            placeholder="Assignee"
+            onTextEditEnd={(e) => setDraft({ ...draft, assignee: resolvePerson(e.characters) })}
+            fontFamily={FONT}
+            fontSize={px(10)}
+            fontWeight={600}
+            fill={C.text}
+            placeholderProps={{ fill: C.faint, italic: true }}
+            width="fill-parent"
+            inputBehavior="truncate"
+            inputFrameProps={{ padding: { vertical: px(3), horizontal: px(8) }, fill: C.surface, cornerRadius: px(999) }}
+          />
+          <Chip
+            small
+            label="Me"
+            tooltip="Assign to me"
+            onClick={() => {
+              const name = myName()
+              if (name) setDraft({ ...draft, assignee: draft.assignee === name ? '' : name })
+            }}
+          />
+        </AutoLayout>
+        {knownLabels.length ? (
+          <AutoLayout direction="horizontal" width="fill-parent" spacing={px(4)} wrap verticalAlignItems="center">
+            {knownLabels.slice(0, 6).map((l) => (
+              <LabelPill key={l} name={l} size={10} active={draft.label === l} onClick={() => setDraft({ ...draft, label: draft.label === l ? null : l })} />
             ))}
           </AutoLayout>
-          <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center">
-            <Chip small label="Today" active={draft.due === today} onClick={() => setDraft({ ...draft, due: draft.due === today ? null : today })} />
-            <Chip small label="Tomorrow" active={draft.due === tomorrow} onClick={() => setDraft({ ...draft, due: draft.due === tomorrow ? null : tomorrow })} />
-            <Chip small label="Next week" active={draft.due === nextWeek} onClick={() => setDraft({ ...draft, due: draft.due === nextWeek ? null : nextWeek })} />
-            <Chip small label={customDue ? weekdayDate(draft.due as string) : 'Pick…'} active={customDue} onClick={() => pickDate('New task', draft.due, (iso) => setDraft({ ...draft, due: iso }))} />
-          </AutoLayout>
-          <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center">
-            {PRIORITIES.map((p) => (
-              <Chip key={p} small label={PRIORITY_GLYPH[p]} active={draft.priority === p} color={PRIORITY_COLOR[p]} soft={PRIORITY_SOFT[p]} onClick={() => setDraft({ ...draft, priority: draft.priority === p ? null : p })} />
-            ))}
-          </AutoLayout>
-          <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center">
-            <Avatar name={draft.assignee} photo={photoOf(draft.assignee)} size={18} />
-            <Input
-              value={draft.assignee || null}
-              placeholder="Assignee"
-              onTextEditEnd={(e) => setDraft({ ...draft, assignee: e.characters.trim() })}
-              fontFamily={FONT}
-              fontSize={px(10)}
-              fontWeight={600}
-              fill={C.text}
-              placeholderProps={{ fill: C.faint, italic: true }}
-              width={px(88)}
-              inputBehavior="truncate"
-              inputFrameProps={{ padding: { vertical: px(3), horizontal: px(8) }, fill: C.bg, stroke: C.border, cornerRadius: px(999) }}
-            />
-            <Chip
-              small
-              label="Me"
-              tooltip="Assign to me"
-              onClick={() => {
-                const name = myName()
-                if (name) setDraft({ ...draft, assignee: draft.assignee === name ? '' : name })
-              }}
-            />
-          </AutoLayout>
-          {knownLabels.length ? (
-            <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center">
-              {knownLabels.slice(0, 6).map((l) => (
-                <LabelPill key={l} name={l} size={10} active={draft.label === l} onClick={() => setDraft({ ...draft, label: draft.label === l ? null : l })} />
-              ))}
-            </AutoLayout>
-          ) : null}
-        </AutoLayout>
+        ) : null}
+        <Label size={9} color={C.faint}>
+          Enter adds the task and keeps this open for the next one.
+        </Label>
       </AutoLayout>
     )
   }
@@ -2165,7 +2183,17 @@ function Widget() {
           onClick={owner ? makeTeam : makeMine}
           tooltip={owner ? 'Show every task in the file again' : 'Show only tasks assigned to you. Duplicate the widget first if the team still needs this one.'}
         />
-        <Btn label="Add task" icon="plus" tone={quickAddOpen ? 'default' : 'primary'} onClick={() => setQuickAddOpen(!quickAddOpen)} tooltip="Quick add with optional details (or type directly into a column)" />
+        <Btn
+          label="Add task"
+          icon="plus"
+          tone={quickAddOpen ? 'default' : 'primary'}
+          onClick={() => {
+            const next = !quickAddOpen
+            setQuickAddOpen(next)
+            if (next && collapsed.todo) setCollapsed({ ...collapsed, todo: false })
+          }}
+          tooltip="Opens a new task card at the top of To Do (or type directly into any column)"
+        />
       </AutoLayout>
 
       {/* Row 2: navigation + search/filter */}
@@ -2205,7 +2233,11 @@ function Widget() {
         <Btn icon="download" onClick={() => exportCsv(all, boardTitle)} tooltip={owner ? 'Export my tasks as CSV' : 'Export all tasks as CSV'} />
       </AutoLayout>
 
-      {quickAddOpen ? <QuickAddPanel /> : null}
+      {quickAddOpen && view !== 'board' ? (
+        <AutoLayout width={COL_W}>
+          <Composer />
+        </AutoLayout>
+      ) : null}
       {filtersOpen ? <FilterPanel /> : null}
 
       {live.length === 0 ? (
