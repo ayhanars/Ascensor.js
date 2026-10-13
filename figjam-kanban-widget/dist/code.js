@@ -387,6 +387,26 @@
     });
   }
   var NS = "kanban-lite";
+  var STATE_KEYS = [
+    "view",
+    "collapsed2",
+    "openId",
+    "confirmDeleteId",
+    "filters",
+    "filtersOpen",
+    "search",
+    "sort",
+    "quickAddOpen",
+    "draft",
+    "celebrating",
+    "showArchived",
+    "doneSearch",
+    "staleDays",
+    "boardTitle",
+    "uiSize",
+    "scope",
+    "storeVersion"
+  ];
   function storeRead(key) {
     const raw = figma.root.getSharedPluginData(NS, key);
     if (!raw) return null;
@@ -462,6 +482,7 @@
     const [boardTitle, setBoardTitle] = useSyncedState("boardTitle", "Team tasks");
     const [uiSize, setUiSize] = useSyncedState("uiSize", "comfortable");
     const [scope, setScope] = useSyncedState("scope", { kind: "team" });
+    const [storeVersion] = useSyncedState("storeVersion", 0);
     const widgetId = useWidgetNodeId();
     K = (_a = SCALES[uiSize]) != null ? _a : 1.35;
     const owner = scope.kind === "personal" ? scope.name : null;
@@ -519,12 +540,40 @@
       const n = syncWithStore();
       toast(n ? `Pulled ${n} update${n === 1 ? "" : "s"} from other boards` : "Up to date with the other boards");
     };
+    const notifyOtherBoards = () => {
+      try {
+        if (!figma.widgetId) return;
+        const others = figma.currentPage.findWidgetNodesByWidgetId(figma.widgetId).filter((n) => n.id !== widgetId);
+        if (!others.length) return;
+        const taskMap = {};
+        const personMap = {};
+        for (const k of figma.root.getSharedPluginDataKeys(NS)) {
+          if (k.startsWith("task:")) {
+            const v = storeRead(k);
+            if (v && v.id) taskMap[v.id] = v;
+          } else if (k.startsWith("person:")) {
+            const v = storeRead(k);
+            if (v && v.name) personMap[v.name] = v;
+          }
+        }
+        const version = Date.now();
+        for (const n of others) {
+          const prev = n.widgetSyncedState || {};
+          const next = {};
+          for (const k of STATE_KEYS) if (k in prev) next[k] = prev[k];
+          next.storeVersion = version;
+          n.setWidgetSyncedState(next, { tasks: taskMap, people: personMap });
+        }
+      } catch (_) {
+      }
+    };
     const findTeammates = () => {
       const before = people.size;
       syncPeople();
       const here = figma.activeUsers.filter((u) => u.name).length;
       const added = people.size - before;
       toast(`${here} ${here === 1 ? "person is" : "people are"} in this file right now${added ? ` \xB7 ${added} new` : ""}`);
+      notifyOtherBoards();
     };
     const writeTask = (t) => {
       tasks.set(t.id, t);
@@ -596,6 +645,7 @@
         toast(p.assignee ? `Moved to ${p.assignee}'s board` : "Unassigned \u2014 now only on the team board");
       }
       syncPeople();
+      notifyOtherBoards();
     };
     const createTask = (title, extra = {}) => {
       const clean = title.trim();
@@ -621,6 +671,7 @@
       writeTask(t);
       syncPeople();
       toast(`Added \u201C${shortName(clean, 34)}\u201D`);
+      notifyOtherBoards();
     };
     const complete = (id) => {
       const t = tasks.get(id);
@@ -656,6 +707,7 @@
       setConfirmDeleteId(null);
       if (openId === id) setOpenId(null);
       toast("Task deleted");
+      notifyOtherBoards();
     };
     const setDiscuss = (id, flag) => {
       patch(id, { discuss: flag });
@@ -904,6 +956,7 @@
         }
       }
       toast(n ? `Archived ${n} completed task${n === 1 ? "" : "s"}` : "Nothing older than 14 days to archive");
+      if (n) notifyOtherBoards();
     };
     const addSamples = () => {
       const d = (n) => addDaysISO(today, n);
@@ -940,6 +993,7 @@
       });
       syncPeople();
       toast("Added 8 sample tasks");
+      notifyOtherBoards();
     };
     const resolveAgainst = (typed, known) => {
       const v = typed.trim();
@@ -1510,6 +1564,7 @@
       );
     }
     const agendaCount = live.filter((t) => t.discuss).length;
+    void storeVersion;
     const mainView = view === "board" || view === "people" && owner ? /* @__PURE__ */ figma.widget.h(BoardView, null) : view === "week" ? /* @__PURE__ */ figma.widget.h(WeekView, null) : view === "sync" ? /* @__PURE__ */ figma.widget.h(SyncView, null) : view === "people" ? /* @__PURE__ */ figma.widget.h(PeopleView, null) : /* @__PURE__ */ figma.widget.h(DoneView, null);
     return /* @__PURE__ */ figma.widget.h(
       AutoLayout,

@@ -83,10 +83,13 @@ document data. Place as many instances as you like:
   render. Per-task "newest edit wins", deletions use tombstones, and the people
   directory (names + photos) is shared too, so a teammate found on one board is
   known on all of them.
-- **Refresh** (circular arrow next to Export) pulls changes made elsewhere.
-  Boards also refresh automatically whenever they render — on any interaction
-  with them, or when the file is opened. There is no push between widgets, so a
-  board you are only looking at updates when you next touch it.
+- **Changes push instantly.** When a board writes, it also sets the synced
+  state of every other board instance on the page (the Widget API allows this
+  between instances of the same widget), which re-renders them with the merged
+  store. So adding a task on a personal board shows up on the team board right
+  away, and vice versa. The per-render merge and the **Refresh** button
+  (circular arrow next to Export) remain as a fallback, e.g. for boards on
+  another page of the same file.
 - Views, filters, size and collapsed columns stay per instance, so each person
   can keep their own layout.
 - Existing single-board data migrates automatically: the first render after

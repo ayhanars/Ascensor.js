@@ -293,6 +293,27 @@ function pickDate(title: string, current: string | null, onPick: (iso: string | 
 // Shared store: document-level plugin data, visible to every board in the file
 // ---------------------------------------------------------------------------
 const NS = 'kanban-lite'
+/** Every useSyncedState key this widget uses — preserved when pushing state into another instance. */
+const STATE_KEYS = [
+  'view',
+  'collapsed2',
+  'openId',
+  'confirmDeleteId',
+  'filters',
+  'filtersOpen',
+  'search',
+  'sort',
+  'quickAddOpen',
+  'draft',
+  'celebrating',
+  'showArchived',
+  'doneSearch',
+  'staleDays',
+  'boardTitle',
+  'uiSize',
+  'scope',
+  'storeVersion',
+]
 function storeRead<T>(key: string): T | null {
   const raw = figma.root.getSharedPluginData(NS, key)
   if (!raw) return null
@@ -376,6 +397,8 @@ function Widget() {
   const [boardTitle, setBoardTitle] = useSyncedState<string>('boardTitle', 'Team tasks')
   const [uiSize, setUiSize] = useSyncedState<string>('uiSize', 'comfortable')
   const [scope, setScope] = useSyncedState<Scope>('scope', { kind: 'team' })
+  /** Bumped by other boards on this page when they write, which re-renders this one. */
+  const [storeVersion] = useSyncedState<number>('storeVersion', 0)
   const widgetId = useWidgetNodeId()
   K = SCALES[uiSize] ?? 1.35
   const owner = scope.kind === 'personal' ? scope.name : null
@@ -441,12 +464,48 @@ function Widget() {
     toast(n ? `Pulled ${n} update${n === 1 ? '' : 's'} from other boards` : 'Up to date with the other boards')
   }
 
+  /**
+   * Push the merged store into every other board on this page. Setting another
+   * widget instance's synced state re-renders it immediately, so the team board
+   * updates the moment a personal board writes (and vice versa). The per-render
+   * store merge remains as the fallback for boards that were not reachable.
+   */
+  const notifyOtherBoards = () => {
+    try {
+      if (!figma.widgetId) return
+      const others = figma.currentPage.findWidgetNodesByWidgetId(figma.widgetId).filter((n) => n.id !== widgetId)
+      if (!others.length) return
+      const taskMap: Record<string, Task> = {}
+      const personMap: Record<string, Person> = {}
+      for (const k of figma.root.getSharedPluginDataKeys(NS)) {
+        if (k.startsWith('task:')) {
+          const v = storeRead<Task>(k)
+          if (v && v.id) taskMap[v.id] = v
+        } else if (k.startsWith('person:')) {
+          const v = storeRead<Person>(k)
+          if (v && v.name) personMap[v.name] = v
+        }
+      }
+      const version = Date.now()
+      for (const n of others) {
+        const prev = (n.widgetSyncedState || {}) as Record<string, unknown>
+        const next: Record<string, unknown> = {}
+        for (const k of STATE_KEYS) if (k in prev) next[k] = prev[k]
+        next.storeVersion = version
+        n.setWidgetSyncedState(next, { tasks: taskMap, people: personMap })
+      }
+    } catch (_) {
+      // best effort: the other boards will still merge from the store on their next render
+    }
+  }
+
   const findTeammates = () => {
     const before = people.size
     syncPeople()
     const here = figma.activeUsers.filter((u) => u.name).length
     const added = people.size - before
     toast(`${here} ${here === 1 ? 'person is' : 'people are'} in this file right now${added ? ` · ${added} new` : ''}`)
+    notifyOtherBoards()
   }
 
   // ------------------------------------------------------------- mutations
@@ -528,6 +587,7 @@ function Widget() {
       toast(p.assignee ? `Moved to ${p.assignee}'s board` : 'Unassigned — now only on the team board')
     }
     syncPeople()
+    notifyOtherBoards()
   }
 
   const createTask = (title: string, extra: Partial<Task> = {}) => {
@@ -555,6 +615,7 @@ function Widget() {
     writeTask(t)
     syncPeople()
     toast(`Added “${shortName(clean, 34)}”`)
+    notifyOtherBoards()
   }
 
   /** Completing a task plays a brief check state before the card moves. */
@@ -596,6 +657,7 @@ function Widget() {
     setConfirmDeleteId(null)
     if (openId === id) setOpenId(null)
     toast('Task deleted')
+    notifyOtherBoards()
   }
 
   const setDiscuss = (id: string, flag: boolean) => {
@@ -867,6 +929,7 @@ function Widget() {
       }
     }
     toast(n ? `Archived ${n} completed task${n === 1 ? '' : 's'}` : 'Nothing older than 14 days to archive')
+    if (n) notifyOtherBoards()
   }
 
   const addSamples = () => {
@@ -903,6 +966,7 @@ function Widget() {
     })
     syncPeople()
     toast('Added 8 sample tasks')
+    notifyOtherBoards()
   }
 
   /** Prefix-match typed text against known names so "jon" → "Jon Park". */
@@ -2055,6 +2119,7 @@ function Widget() {
 
   // ----------------------------------------------------------------- header
   const agendaCount = live.filter((t) => t.discuss).length
+  void storeVersion
   const mainView = view === 'board' || (view === 'people' && owner) ? <BoardView /> : view === 'week' ? <WeekView /> : view === 'sync' ? <SyncView /> : view === 'people' ? <PeopleView /> : <DoneView />
 
   return (
