@@ -87,8 +87,10 @@ document data. Place as many instances as you like:
   write from another board triggers a full merge. Pushes carry the stamp too, so
   a board that just received a push does not re-merge.
 - **Manual sync (default) vs. Live sync.** In manual mode a board merges
-  changes from the others the moment you touch it (any click) or press
-  **Refresh**. In live mode every write also pushes straight into every other
+  changes from the others the moment you touch it (any click). **Refresh**
+  (circular arrow) goes further: it merges this board and then pushes the
+  result into every other board on the page, so one click brings the whole
+  page up to date. In live mode every write also pushes straight into every other
   board on the page, which re-renders all of them on each click — instant, but
   noticeably heavier with several boards or many tasks. Toggle it for the whole
   file from the **Manual sync / Live sync** pill in the header or the property
@@ -106,7 +108,7 @@ external backend, which this prototype deliberately avoids.
 
 - **Widget size** — property menu → *Size: compact / comfortable / large*. Comfortable (default) is sized to sit well next to FigJam sticky notes; compact is the original dense layout; large is for presenting. Every dimension scales together, so nothing wraps differently.
 - **Export CSV** — the download icon next to *Filters*, or property menu → *Export CSV*. Opens a small dialog with a **Download .csv** button and a copy-to-clipboard fallback. One row per task (active, completed and archived) with: id, title, description, status, assignee, due, priority, labels, subtasks done/total, subtask list, created/updated/completed timestamps (ISO 8601), archived. Values are RFC 4180 quoted, UTF-8 with BOM so Excel opens it cleanly.
-- **Tooltips** always render below the hovered element; the Widget API only takes a tooltip string and Figma decides the placement.
+- **Tooltips** always render below the hovered element; the Widget API only takes a tooltip string and Figma decides the placement. They are kept to one or two words, and labelled buttons have none, so they cover as little as possible.
 
 ## Performance notes
 

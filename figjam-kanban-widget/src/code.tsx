@@ -503,12 +503,15 @@ function Widget() {
     toast(on ? 'Live sync on — other boards update instantly (heavier)' : 'Manual sync — boards update when touched or on Refresh (lighter)')
   }
 
+  /** Refresh: merge this board with the store, then push the result into every other board on the page. */
   const refresh = () => {
     const n = syncWithStore()
     try {
       setLastSyncedVersion(readStoreVersion())
     } catch (_) {}
-    toast(n ? `Pulled ${n} update${n === 1 ? '' : 's'} from other boards` : 'Up to date with the other boards')
+    const pushed = notifyOtherBoards(true) ?? 0
+    const pulled = n ? `pulled ${n} update${n === 1 ? '' : 's'}` : 'nothing new here'
+    toast(pushed ? `Synced: ${pulled}, updated ${pushed} other board${pushed === 1 ? '' : 's'}` : `Synced: ${pulled}`)
   }
 
   /**
@@ -517,8 +520,8 @@ function Widget() {
    * updates the moment a personal board writes (and vice versa). The per-render
    * store merge remains as the fallback for boards that were not reachable.
    */
-  const notifyOtherBoards = () => {
-    if (!liveSync) return
+  const notifyOtherBoards = (force = false) => {
+    if (!liveSync && !force) return
     try {
       if (!figma.widgetId) return
       const others = figma.currentPage.findWidgetNodesByWidgetId(figma.widgetId).filter((n) => n.id !== widgetId)
@@ -536,9 +539,11 @@ function Widget() {
         next.lastSyncedVersion = version
         n.setWidgetSyncedState(next, { tasks: taskMap, people: personMap })
       }
+      return others.length
     } catch (_) {
       // best effort: the other boards will still merge from the store on their next render
     }
+    return 0
   }
 
   const findTeammates = () => {
@@ -1180,7 +1185,7 @@ function Widget() {
 
           {/* Row 2: avatar, due, subtasks, stale, (status pill), selector */}
           <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center" wrap>
-            <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center" onClick={() => setOpenId(task.id)} tooltip={task.assignee ? `Assigned to ${task.assignee}` : 'Unassigned — click to assign'}>
+            <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center" onClick={() => setOpenId(task.id)} tooltip={task.assignee || 'Unassigned'}>
               <Avatar name={task.assignee} photo={photoOf(task.assignee)} />
               {task.assignee ? null : (
                 <Label size={10} weight={500} color={C.faint} italic>
@@ -1196,14 +1201,14 @@ function Widget() {
                 fill={overdue ? C.dangerSoft : task.due === today ? C.accentSoft : C.surface}
                 onClick={() => setOpenId(task.id)}
                 hoverStyle={{ fill: overdue ? '#FECACA' : C.surfaceAlt }}
-                tooltip={overdue ? `Overdue — was due ${weekdayDate(task.due)}` : `Due ${weekdayDate(task.due)}`}
+                tooltip={weekdayDate(task.due)}
               >
                 <Label size={10} weight={overdue || task.due === today ? 700 : 500} color={overdue ? C.danger : task.due === today ? C.accentText : C.muted}>
                   {overdue ? `Overdue · ${dueLabel(task.due)}` : dueLabel(task.due)}
                 </Label>
               </AutoLayout>
             ) : (
-              <AutoLayout padding={{ vertical: px(1), horizontal: px(6) }} cornerRadius={px(999)} onClick={() => setDue(task.id, today)} hoverStyle={{ fill: C.surface }} tooltip="No due date — click to set Today">
+              <AutoLayout padding={{ vertical: px(1), horizontal: px(6) }} cornerRadius={px(999)} onClick={() => setDue(task.id, today)} hoverStyle={{ fill: C.surface }} tooltip="Set due today">
                 <Label size={10} weight={500} color={C.faint}>
                   + date
                 </Label>
@@ -1229,11 +1234,11 @@ function Widget() {
             ) : null}
 
             {stale && !isDone ? (
-              <Pill text={`${ageInDays(task.createdAt)}d old`} color={C.warn} fill={C.warnSoft} size={10} tooltip={`In To Do for ${ageInDays(task.createdAt)} days`} />
+              <Pill text={`${ageInDays(task.createdAt)}d old`} color={C.warn} fill={C.warnSoft} size={10} tooltip={`${ageInDays(task.createdAt)} days in To Do`} />
             ) : null}
 
             {task.discuss ? (
-              <AutoLayout direction="horizontal" spacing={px(3)} padding={{ vertical: px(1), horizontal: px(6) }} cornerRadius={px(999)} fill={C.accentSoft} verticalAlignItems="center" onClick={() => setView('sync')} tooltip="On the team sync agenda">
+              <AutoLayout direction="horizontal" spacing={px(3)} padding={{ vertical: px(1), horizontal: px(6) }} cornerRadius={px(999)} fill={C.accentSoft} verticalAlignItems="center" onClick={() => setView('sync')} tooltip="Open agenda">
                 <Icon name="chat" color={C.accentText} size={10} />
                 <Label size={10} weight={700} color={C.accentText}>
                   Sync
@@ -1414,7 +1419,7 @@ function Widget() {
                 if (name) patch(task.id, { assignee: task.assignee === name ? '' : name })
               }}
             />
-            <IconBtn icon="users" tooltip="Find teammates who are in this file right now" onClick={findTeammates} />
+            <IconBtn icon="users" tooltip="Find teammates" onClick={findTeammates} />
           </AutoLayout>
           {peopleRow.length ? (
             <AutoLayout direction="horizontal" spacing={px(4)} wrap width="fill-parent" verticalAlignItems="center">
@@ -1564,11 +1569,11 @@ function Widget() {
           <Label size={9} color={C.faint} width="fill-parent" truncate>
             {`Created ${fromTimestamp(task.createdAt)}${task.completedAt ? ` · Done ${fromTimestamp(task.completedAt)}` : ''}`}
           </Label>
-          <Btn small tone="ghost" icon="archive" tooltip="Archive (keeps the task, hides it from views)" onClick={() => archive(task.id, true)} />
+          <Btn small tone="ghost" icon="archive" tooltip="Archive" onClick={() => archive(task.id, true)} />
           {confirming ? (
             <Btn small tone="danger" icon="trash" label="Confirm delete" onClick={() => remove(task.id)} />
           ) : (
-            <Btn small tone="ghost" icon="trash" tooltip="Delete permanently" onClick={() => setConfirmDeleteId(task.id)} />
+            <Btn small tone="ghost" icon="trash" tooltip="Delete" onClick={() => setConfirmDeleteId(task.id)} />
           )}
           <Btn small tone="ghost" icon="chevronUp" tooltip="Collapse" onClick={() => setOpenId(null)} />
         </AutoLayout>
@@ -1598,7 +1603,7 @@ function Widget() {
           horizontalAlignItems="center"
           onClick={() => setCollapsed({ ...collapsed, [status]: false })}
           hoverStyle={{ fill: STATUS_SOFT[status] }}
-          tooltip={`Expand ${STATUS_LABEL[status]} (${items.length})`}
+          tooltip={`Expand ${STATUS_LABEL[status]}`}
         >
           <Rectangle width={px(20)} height={px(3)} cornerRadius={px(2)} fill={color} />
           <StatusGlyph status={status} size={14} />
@@ -1630,7 +1635,7 @@ function Widget() {
             </Label>
           ) : null}
           <AutoLayout width="fill-parent" height={px(1)} />
-          <IconBtn icon="chevronDown" tooltip="Collapse column" onClick={() => setCollapsed({ ...collapsed, [status]: true })} />
+          <IconBtn icon="chevronDown" tooltip="Collapse" onClick={() => setCollapsed({ ...collapsed, [status]: true })} />
         </AutoLayout>
 
         {status === 'done' ? (
@@ -1695,7 +1700,7 @@ function Widget() {
       >
       <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} padding={{ vertical: px(5), horizontal: px(8) }} verticalAlignItems="center">
         {task.archived ? <Icon name="archive" color={C.faint} size={13} /> : <StatusGlyph status="done" size={14} />}
-        <AutoLayout direction="vertical" width="fill-parent" spacing={px(1)} onClick={() => setOpenId(open ? null : task.id)} tooltip="Open details">
+        <AutoLayout direction="vertical" width="fill-parent" spacing={px(1)} onClick={() => setOpenId(open ? null : task.id)} >
           <Label size={11} weight={500} color={C.muted} strike={!task.archived} width="fill-parent" truncate>
             {task.title}
           </Label>
@@ -1720,9 +1725,9 @@ function Widget() {
         ) : (
           <Avatar name={task.assignee} photo={photoOf(task.assignee)} size={16} />
         )}
-        <IconBtn icon="undo" tooltip="Reopen in To Do" onClick={() => reopen(task.id)} />
+        <IconBtn icon="undo" tooltip="Reopen" onClick={() => reopen(task.id)} />
         {compact ? null : task.archived ? (
-          <IconBtn icon="archive" tooltip="Restore from archive" color={C.accent} onClick={() => archive(task.id, false)} />
+          <IconBtn icon="archive" tooltip="Restore" color={C.accent} onClick={() => archive(task.id, false)} />
         ) : (
           <IconBtn icon="archive" tooltip="Archive" onClick={() => archive(task.id, true)} />
         )}
@@ -1730,7 +1735,7 @@ function Widget() {
           confirmDeleteId === task.id ? (
             <Btn small tone="danger" icon="trash" label="Confirm" onClick={() => remove(task.id)} />
           ) : (
-            <IconBtn icon="trash" tooltip="Delete permanently" onClick={() => setConfirmDeleteId(task.id)} />
+            <IconBtn icon="trash" tooltip="Delete" onClick={() => setConfirmDeleteId(task.id)} />
           )
         ) : null}
       </AutoLayout>
@@ -1840,7 +1845,7 @@ function Widget() {
           </AutoLayout>
           <Chip label={`Show archived (${archived.length})`} active={showArchived} onClick={() => setShowArchived(!showArchived)} />
           <AutoLayout width="fill-parent" height={px(1)} />
-          <Btn small label="Archive done > 14 days" icon="archive" onClick={archiveOld} tooltip="Move completed tasks older than 14 days to the archive" />
+          <Btn small label="Archive done > 14 days" icon="archive" onClick={archiveOld}  />
         </AutoLayout>
 
         <AutoLayout direction="vertical" width="fill-parent" spacing={0} fill={STATUS_TINT.done} cornerRadius={px(12)} overflow="hidden">
@@ -1912,7 +1917,7 @@ function Widget() {
             Flag any task with “Discuss in team sync”. Before the meeting, drop the agenda onto the canvas as stickies and work through it there.
           </Label>
           {agenda.length ? <Btn small tone="ghost" icon="x" label="Clear agenda" onClick={() => agenda.forEach((t) => patch(t.id, { discuss: false }))} /> : null}
-          <Btn label="Create agenda on canvas" icon="sticky" tone="primary" onClick={createAgendaOnCanvas} tooltip="Creates a dated section with one sticky per flagged task next to the board" />
+          <Btn label="Create agenda on canvas" icon="sticky" tone="primary" onClick={createAgendaOnCanvas}  />
         </AutoLayout>
         <AutoLayout direction="vertical" width="fill-parent" spacing={0} fill={C.accentSoft} cornerRadius={px(12)} overflow="hidden">
           <Rectangle width="fill-parent" height={px(4)} fill={C.accent} />
@@ -1954,7 +1959,7 @@ function Widget() {
             verticalAlignItems="center"
             onClick={() => setDiscuss(task.id, false)}
             hoverStyle={{ fill: C.accentSoft }}
-            tooltip="Discussed — remove from agenda"
+            tooltip="Discussed"
           />
           <AutoLayout direction="vertical" width="fill-parent" spacing={px(3)}>
             <AutoLayout width="fill-parent" onClick={() => setOpenId(open ? null : task.id)}>
@@ -2101,7 +2106,7 @@ function Widget() {
           <FilterGroup label="Quick">
             <Chip small label={`Overdue (${overdueCount})`} color={C.danger} soft={C.dangerSoft} active={filters.due === 'overdue'} onClick={() => toggleFilter('due', 'overdue')} />
             <Chip small label={`Unassigned (${unassignedCount})`} active={filters.assignee === '__none__'} onClick={() => toggleFilter('assignee', '__none__')} dashed />
-            <Chip small label={`Stale ${staleDays}d+ (${staleCount})`} color={C.warn} soft={C.warnSoft} active={filters.stale} onClick={() => setFilter('stale', !filters.stale)} tooltip={`In To Do for ${staleDays}+ days`} />
+            <Chip small label={`Stale ${staleDays}d+ (${staleCount})`} color={C.warn} soft={C.warnSoft} active={filters.stale} onClick={() => setFilter('stale', !filters.stale)}  />
           </FilterGroup>
           <FilterGroup label="Due">
             <Chip small label="Today" active={filters.due === 'today'} onClick={() => toggleFilter('due', 'today')} />
@@ -2239,19 +2244,19 @@ function Widget() {
           inputFrameProps={{ padding: px(0) }}
         />
         <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center">
-          <Pill text={owner ? 'My board' : 'Team board'} color={owner ? C.accent : C.muted} fill={owner ? C.accentSoft : C.surface} size={10} tooltip={owner ? `Shows only tasks assigned to ${owner}` : 'Shows every task in this file'} />
+          <Pill text={owner ? 'My board' : 'Team board'} color={owner ? C.accent : C.muted} fill={owner ? C.accentSoft : C.surface} size={10} />
           <Pill
             text={liveSync ? 'Live sync' : 'Manual sync'}
             color={liveSync ? C.success : C.muted}
             fill={liveSync ? C.successSoft : C.surface}
             size={10}
             onClick={() => setLive(!liveSync)}
-            tooltip={liveSync ? 'Other boards update instantly on every change (re-renders them each time). Click for manual.' : 'Boards update when you touch them or press Refresh. Click for live updates.'}
+            tooltip={liveSync ? 'Switch to manual sync' : 'Switch to live sync'}
           />
           <Pill text={`${active.length} active`} color={C.muted} fill={C.surface} size={10} />
-          {overdueCount ? <Pill text={`${overdueCount} overdue`} color={C.danger} fill={C.dangerSoft} size={10} onClick={() => setFilter('due', filters.due === 'overdue' ? null : 'overdue')} tooltip="Filter overdue" /> : null}
+          {overdueCount ? <Pill text={`${overdueCount} overdue`} color={C.danger} fill={C.dangerSoft} size={10} onClick={() => setFilter('due', filters.due === 'overdue' ? null : 'overdue')} tooltip="Filter" /> : null}
           {blockedCount ? <Pill text={`${blockedCount} blocked`} color={STATUS_COLOR.blocked} fill={STATUS_SOFT.blocked} size={10} /> : null}
-          {unassignedCount ? <Pill text={`${unassignedCount} unassigned`} color={C.muted} fill={C.surface} size={10} onClick={() => setFilter('assignee', filters.assignee === '__none__' ? null : '__none__')} tooltip="Filter unassigned" /> : null}
+          {unassignedCount ? <Pill text={`${unassignedCount} unassigned`} color={C.muted} fill={C.surface} size={10} onClick={() => setFilter('assignee', filters.assignee === '__none__' ? null : '__none__')} tooltip="Filter" /> : null}
         </AutoLayout>
         <AutoLayout width="fill-parent" height={px(1)} />
         <Btn
@@ -2260,7 +2265,7 @@ function Widget() {
           icon={owner ? 'users' : 'user'}
           label={owner ? 'Switch to team board' : 'Make this my board'}
           onClick={owner ? makeTeam : makeMine}
-          tooltip={owner ? 'Show every task in the file again' : 'Show only tasks assigned to you. Duplicate the widget first if the team still needs this one.'}
+          
         />
         <Btn
           label="Add task"
@@ -2271,7 +2276,7 @@ function Widget() {
             setQuickAddOpen(next)
             if (next && collapsed.todo) setCollapsed({ ...collapsed, todo: false })
           }}
-          tooltip="Opens a new task card at the top of To Do (or type directly into any column)"
+          
         />
       </AutoLayout>
 
@@ -2306,10 +2311,10 @@ function Widget() {
           icon="filter"
           tone={filtersOpen || activeFilterCount ? 'primary' : 'default'}
           onClick={() => setFiltersOpen(!filtersOpen)}
-          tooltip="Filter by label, person, priority, due date, status"
+          
         />
-        <Btn icon="refresh" onClick={refresh} tooltip={liveSync ? 'Pull changes made on other boards' : 'Pull changes made on other boards (manual sync is on)'} />
-        <Btn icon="download" onClick={() => exportCsv(all, boardTitle)} tooltip={owner ? 'Export my tasks as CSV' : 'Export all tasks as CSV'} />
+        <Btn icon="refresh" onClick={refresh} tooltip="Sync all boards" />
+        <Btn icon="download" onClick={() => exportCsv(all, boardTitle)} tooltip="Export CSV" />
       </AutoLayout>
 
       {quickAddOpen && view !== 'board' ? (
