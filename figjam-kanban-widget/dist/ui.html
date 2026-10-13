@@ -8,73 +8,121 @@
   body {
     margin: 0; padding: 14px 16px 16px;
     font: 12px/1.4 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    color: #1d1d22; background: #fff;
+    color: #111827; background: #fff;
   }
-  .task { font-weight: 600; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 10px; color: #1d1d22; }
-  .task span { color: #6a6a75; font-weight: 400; }
+  .hidden { display: none; }
+  .task { font-weight: 600; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 10px; }
+  .task span, .hint { color: #6b7280; font-weight: 400; }
+  .hint { margin: 0 0 10px; }
   .quick { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
   button {
-    font: inherit; font-size: 11px; border: 1px solid #e3e3e8; background: #f5f5f7; color: #1d1d22;
-    border-radius: 6px; padding: 5px 9px; cursor: pointer;
+    font: inherit; font-size: 11px; font-weight: 600; border: 1px solid #e5e7eb; background: #f3f4f6; color: #111827;
+    border-radius: 8px; padding: 6px 10px; cursor: pointer;
   }
-  button:hover { border-color: #cfcfd6; background: #ececf0; }
-  button.primary { background: #3b5bdb; border-color: #3b5bdb; color: #fff; }
-  button.primary:hover { background: #3450c2; }
-  button.ghost { background: transparent; border-color: transparent; color: #6a6a75; }
+  button:hover { border-color: #cbd0d8; background: #e9eaee; }
+  button.primary { background: #4f46e5; border-color: #4f46e5; color: #fff; }
+  button.primary:hover { background: #4338ca; }
+  button.ghost { background: transparent; border-color: transparent; color: #6b7280; }
   input[type=date] {
-    font: inherit; width: 100%; padding: 6px 8px; border: 1px solid #cfcfd6; border-radius: 6px;
-    margin-bottom: 12px; color: #1d1d22;
+    font: inherit; width: 100%; padding: 6px 8px; border: 1px solid #cbd0d8; border-radius: 8px;
+    margin-bottom: 12px; color: #111827;
   }
-  .row { display: flex; gap: 6px; justify-content: flex-end; }
+  textarea {
+    font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; width: 100%; height: 150px; resize: none;
+    border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; color: #374151; background: #f9fafb; margin-bottom: 10px;
+  }
+  .row { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
   .row .spacer { flex: 1; }
 </style>
 </head>
 <body>
-  <div class="task" id="task">Due date</div>
-  <div class="quick">
-    <button data-days="0">Today</button>
-    <button data-days="1">Tomorrow</button>
-    <button id="nextMon">Next Monday</button>
-    <button data-days="7">In a week</button>
+  <!-- Date picker mode -->
+  <div id="date-mode" class="hidden">
+    <div class="task" id="task">Due date</div>
+    <div class="quick">
+      <button data-days="0">Today</button>
+      <button data-days="1">Tomorrow</button>
+      <button id="nextMon">Next Monday</button>
+      <button data-days="7">In a week</button>
+    </div>
+    <input type="date" id="date" />
+    <div class="row">
+      <button class="ghost" id="clear">Clear date</button>
+      <span class="spacer"></span>
+      <button id="cancel">Cancel</button>
+      <button class="primary" id="set">Set date</button>
+    </div>
   </div>
-  <input type="date" id="date" />
-  <div class="row">
-    <button class="ghost" id="clear">Clear date</button>
-    <span class="spacer"></span>
-    <button id="cancel">Cancel</button>
-    <button class="primary" id="set">Set date</button>
+
+  <!-- CSV export mode -->
+  <div id="export-mode" class="hidden">
+    <div class="task" id="export-title">Export tasks</div>
+    <p class="hint">Opens in Excel, Numbers or Google Sheets. One row per task, including completed and archived ones.</p>
+    <textarea id="csv" readonly spellcheck="false"></textarea>
+    <div class="row">
+      <button class="ghost" id="copy">Copy to clipboard</button>
+      <span class="spacer"></span>
+      <button id="export-cancel">Close</button>
+      <button class="primary" id="download">Download .csv</button>
+    </div>
   </div>
+
 <script>
   const pad = (n) => (n < 10 ? '0' + n : '' + n)
   const iso = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
-  const dateEl = document.getElementById('date')
+  const $ = (id) => document.getElementById(id)
   const send = (msg) => parent.postMessage({ pluginMessage: msg }, '*')
+  const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+  let exportFilename = 'tasks.csv'
 
   window.onmessage = (e) => {
     const m = e.data && e.data.pluginMessage
-    if (!m || m.type !== 'init') return
-    document.getElementById('task').innerHTML =
-      (m.title ? escapeHtml(m.title) : 'New task') + ' <span>· due date</span>'
-    dateEl.value = m.value || m.today || ''
-    dateEl.focus()
+    if (!m) return
+    if (m.type === 'init') {
+      $('date-mode').classList.remove('hidden')
+      $('task').innerHTML = (m.title ? escapeHtml(m.title) : 'New task') + ' <span>· due date</span>'
+      $('date').value = m.value || m.today || ''
+      $('date').focus()
+    }
+    if (m.type === 'export') {
+      $('export-mode').classList.remove('hidden')
+      exportFilename = m.filename || 'tasks.csv'
+      $('export-title').innerHTML = escapeHtml(exportFilename) + ' <span>· ' + m.count + ' task' + (m.count === 1 ? '' : 's') + '</span>'
+      $('csv').value = m.csv
+    }
   }
-  function escapeHtml(s) { return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])) }
 
+  // --- date mode
   document.querySelectorAll('button[data-days]').forEach((b) => {
     b.onclick = () => {
       const d = new Date(); d.setDate(d.getDate() + parseInt(b.dataset.days, 10))
       send({ type: 'set', value: iso(d) })
     }
   })
-  document.getElementById('nextMon').onclick = () => {
+  $('nextMon').onclick = () => {
     const d = new Date(); const day = d.getDay()
     d.setDate(d.getDate() + (day === 0 ? 1 : 8 - day))
     send({ type: 'set', value: iso(d) })
   }
-  document.getElementById('set').onclick = () => send({ type: 'set', value: dateEl.value || null })
-  document.getElementById('clear').onclick = () => send({ type: 'set', value: null })
-  document.getElementById('cancel').onclick = () => send({ type: 'cancel' })
-  dateEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') send({ type: 'set', value: dateEl.value || null }) })
+  $('set').onclick = () => send({ type: 'set', value: $('date').value || null })
+  $('clear').onclick = () => send({ type: 'set', value: null })
+  $('cancel').onclick = () => send({ type: 'cancel' })
+  $('date').addEventListener('keydown', (e) => { if (e.key === 'Enter') send({ type: 'set', value: $('date').value || null }) })
+
+  // --- export mode
+  $('download').onclick = () => {
+    const blob = new Blob(['﻿' + $('csv').value], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = exportFilename
+    document.body.appendChild(a); a.click(); a.remove()
+    setTimeout(() => { URL.revokeObjectURL(url); send({ type: 'saved' }) }, 300)
+  }
+  $('copy').onclick = async () => {
+    try { await navigator.clipboard.writeText($('csv').value) } catch (_) { $('csv').select(); document.execCommand('copy') }
+    $('copy').textContent = 'Copied ✓'
+  }
+  $('export-cancel').onclick = () => send({ type: 'cancel' })
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') send({ type: 'cancel' }) })
 </script>
 </body>

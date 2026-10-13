@@ -137,6 +137,7 @@ export type IconName =
   | 'user'
   | 'tag'
   | 'list'
+  | 'download'
 
 const PATHS: Record<IconName, string> = {
   plus: '<path d="M12 5v14M5 12h14"/>',
@@ -157,6 +158,7 @@ const PATHS: Record<IconName, string> = {
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
   user: '<circle cx="12" cy="8" r="3.8"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>',
   tag: '<path d="M3 11V4h7l10 10-7 7z"/><circle cx="7.5" cy="8.5" r="1.2" fill="currentColor"/>',
+  download: '<path d="M12 4v11M7 10l5 5 5-5M4 19h16"/>',
   list: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/>',
 }
 
