@@ -362,7 +362,15 @@ function Widget() {
   const overdueCount = active.filter((t) => isOverdue(t.due)).length
   const unassignedCount = active.filter((t) => !t.assignee).length
   const staleCount = active.filter(isStale).length
-  const me = figma.currentUser?.name ?? ''
+  /**
+   * figma.currentUser may only be read inside event handlers (never during
+   * rendering), so the "Me" shortcut resolves the name on click.
+   */
+  const myName = (): string | null => {
+    const name = figma.currentUser?.name
+    if (!name) toast('Could not read your Figma name — type a name instead')
+    return name ?? null
+  }
 
   // ------------------------------------------------------------ property menu
   usePropertyMenu(
@@ -753,11 +761,16 @@ function Widget() {
             inputBehavior="truncate"
             inputFrameProps={{ padding: { vertical: 3, horizontal: 7 }, fill: C.bg, stroke: C.border, cornerRadius: 10 }}
           />
-          {me ? <Chip label="Me" icon="user" active={task.assignee === me} onClick={() => patch(task.id, { assignee: task.assignee === me ? '' : me })} /> : null}
-          {knownAssignees
-            .filter((a) => a !== me)
-            .slice(0, 3)
-            .map((a) => (
+          <Chip
+            label="Me"
+            icon="user"
+            tooltip="Assign to me"
+            onClick={() => {
+              const name = myName()
+              if (name) patch(task.id, { assignee: task.assignee === name ? '' : name })
+            }}
+          />
+          {knownAssignees.slice(0, 3).map((a) => (
               <Chip key={a} label={a} active={task.assignee === a} onClick={() => patch(task.id, { assignee: task.assignee === a ? '' : a })} />
             ))}
         </Row>
@@ -1138,7 +1151,15 @@ function Widget() {
               inputBehavior="truncate"
               inputFrameProps={{ padding: { vertical: 3, horizontal: 7 }, fill: C.bg, stroke: C.border, cornerRadius: 10 }}
             />
-            {me ? <Chip label="Me" icon="user" active={draft.assignee === me} onClick={() => setDraft({ ...draft, assignee: draft.assignee === me ? '' : me })} /> : null}
+            <Chip
+              label="Me"
+              icon="user"
+              tooltip="Assign to me"
+              onClick={() => {
+                const name = myName()
+                if (name) setDraft({ ...draft, assignee: draft.assignee === name ? '' : name })
+              }}
+            />
           </AutoLayout>
         </AutoLayout>
       </AutoLayout>
