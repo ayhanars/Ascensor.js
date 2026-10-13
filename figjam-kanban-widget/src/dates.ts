@@ -12,6 +12,12 @@ export function parseISO(iso: string): Date {
   return new Date(y, m - 1, d)
 }
 
+/** Whole-day index of an ISO date (no Date object needed for differences). */
+export function dayIndex(iso: string): number {
+  const [y, m, d] = iso.split('-').map((x) => parseInt(x, 10))
+  return Math.round(Date.UTC(y, m - 1, d) / 86400000)
+}
+
 export function todayISO(): string {
   return toISO(new Date())
 }

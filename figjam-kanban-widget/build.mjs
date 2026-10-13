@@ -7,6 +7,7 @@ const options = {
   bundle: true,
   outfile: 'dist/code.js',
   target: 'es2017',
+  minify: true,
   jsxFactory: 'figma.widget.h',
   jsxFragment: 'figma.widget.Fragment',
   logLevel: 'info',

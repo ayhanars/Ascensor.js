@@ -1,12 +1,12 @@
 import {
-  Draft,
+  ACTIVE_STATUSES,
   EMPTY_FILTERS,
   Filters,
   Person,
   PRIORITIES,
-  Scope,
   PRIORITY_LABEL,
   PRIORITY_RANK,
+  Scope,
   SortMode,
   STATUSES,
   STATUS_LABEL,
@@ -16,7 +16,7 @@ import {
   Task,
   View,
 } from './types'
-import { addDaysISO, ageInDays, daysFromToday, dueLabel, fromTimestamp, isOverdue, todayISO, weekdayDate } from './dates'
+import { addDaysISO, ageInDays, dayIndex, fromTimestamp, parseISO, todayISO, weekdayDate } from './dates'
 import {
   C,
   PRIORITY_COLOR,
@@ -36,42 +36,53 @@ const { widget } = figma
 const { AutoLayout, Text, Input, SVG, Image, Ellipse, Rectangle, useSyncedState, useSyncedMap, usePropertyMenu, useWidgetNodeId, useEffect } = widget
 
 // ---------------------------------------------------------------------------
-// Layout constants
+// Scale + small helpers
 // ---------------------------------------------------------------------------
 const FONT = 'Inter'
 
 /**
- * Global UI scale. Every dimension in the tree goes through px() so the whole
- * widget can be rendered Compact / Comfortable / Large from the property menu.
- * K is set at the top of each render (rendering is synchronous).
+ * Global UI scale. Every dimension goes through px() so the whole widget can be
+ * rendered Compact / Comfortable / Large from the property menu. K is set at
+ * the top of each render (rendering is synchronous).
  */
 let K = 1.35
 const px = (n: number) => Math.round(n * K)
 const SCALES: Record<string, number> = { compact: 1, comfortable: 1.35, large: 1.7 }
 
+/** Visible cards per column / group before a "Show more" toggle appears. */
+const CARD_CAP = 10
+
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 const toast = (msg: string) => figma.notify(msg, { timeout: 1400 })
 const shortName = (s: string, n = 14) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
 const subtasksOf = (t: Task): Subtask[] => t.subtasks ?? []
-const hexToRgb = (hex: string): RGB => ({ r: parseInt(hex.slice(1, 3), 16) / 255, g: parseInt(hex.slice(3, 5), 16) / 255, b: parseInt(hex.slice(5, 7), 16) / 255 })
 const labelsOf = (t: Task): string[] => t.labels ?? []
+const hexToRgb = (hex: string): RGB => ({ r: parseInt(hex.slice(1, 3), 16) / 255, g: parseInt(hex.slice(3, 5), 16) / 255, b: parseInt(hex.slice(5, 7), 16) / 255 })
 
 // ---------------------------------------------------------------------------
-// Primitive-based glyphs (no SVG → cheap to re-render)
+// Primitives. Design rule: every node is a real Figma sublayer, so a component
+// renders the fewest nodes that still look right. No SVG below the header, no
+// drop shadows anywhere, no clipping, hover only on real buttons.
 // ---------------------------------------------------------------------------
 function Icon({ name, color, size = 12 }: { name: IconName; color: string; size?: number }) {
   const sz = px(size)
   return <SVG src={icon(name, color, sz)} width={sz} height={sz} />
 }
 
-/** Status glyph drawn with frames/ellipse/text instead of SVG. */
-function StatusGlyph({ status, size = 12, color, muted }: { status: Status; size?: number; color?: string; muted?: boolean }) {
-  const c = color ?? (muted ? C.faint : STATUS_COLOR[status])
-  const sz = px(size)
+type Click = (() => void | Promise<void>) | undefined
+
+/**
+ * Status glyph drawn with frames; the frame itself can be the button, so a
+ * selector option costs 1–2 nodes instead of 3.
+ */
+function StatusGlyph(props: { status: Status; size?: number; color?: string; muted?: boolean; onClick?: Click; hoverFill?: string; fill?: string; tooltip?: string }) {
+  const { status } = props
+  const c = props.color ?? (props.muted ? C.faint : STATUS_COLOR[status])
+  const sz = px(props.size ?? 12)
   const r = sz / 2
   if (status === 'done') {
     return (
-      <AutoLayout width={sz} height={sz} cornerRadius={r} fill={c} horizontalAlignItems="center" verticalAlignItems="center">
+      <AutoLayout width={sz} height={sz} cornerRadius={r} fill={c} horizontalAlignItems="center" verticalAlignItems="center" onClick={props.onClick} tooltip={props.tooltip} hoverStyle={props.hoverFill ? { fill: props.hoverFill } : undefined}>
         <Text fontFamily={FONT} fontSize={Math.round(sz * 0.66)} fontWeight={700} fill="#FFFFFF" lineHeight={sz}>
           ✓
         </Text>
@@ -79,22 +90,34 @@ function StatusGlyph({ status, size = 12, color, muted }: { status: Status; size
     )
   }
   return (
-    <AutoLayout width={sz} height={sz} cornerRadius={r} stroke={c} strokeWidth={1.5} strokeAlign="inside" horizontalAlignItems="center" verticalAlignItems="center">
+    <AutoLayout
+      width={sz}
+      height={sz}
+      cornerRadius={r}
+      fill={props.fill}
+      stroke={c}
+      strokeWidth={1.5}
+      horizontalAlignItems="center"
+      verticalAlignItems="center"
+      onClick={props.onClick}
+      tooltip={props.tooltip}
+      hoverStyle={props.hoverFill ? { fill: props.hoverFill } : undefined}
+    >
       {status === 'inprogress' ? (
         <Ellipse width={sz - px(5)} height={sz - px(5)} fill={c} arcData={{ startingAngle: -Math.PI / 2, endingAngle: Math.PI / 2, innerRadius: 0 }} />
       ) : status === 'blocked' ? (
-        <Rectangle width={Math.round(size * 0.45)} height={px(1.5)} fill={c} />
+        <Rectangle width={Math.round(sz * 0.45)} height={px(1.5)} fill={c} />
       ) : null}
     </AutoLayout>
   )
 }
 
-/** Profile photo when Figma gave us one, initials otherwise, dashed "?" when unassigned. */
-function Avatar({ name, photo, size = 18 }: { name: string; photo?: string | null; size?: number }) {
+/** Profile photo when Figma gave us one, initials otherwise, "?" when unassigned. */
+function Avatar({ name, photo, size = 18, onClick, tooltip }: { name: string; photo?: string | null; size?: number; onClick?: Click; tooltip?: string }) {
   const sz = px(size)
   if (!name) {
     return (
-      <AutoLayout width={sz} height={sz} cornerRadius={sz / 2} stroke={C.borderStrong} strokeDashPattern={[2, 2]} horizontalAlignItems="center" verticalAlignItems="center">
+      <AutoLayout width={sz} height={sz} cornerRadius={sz / 2} fill={C.surface} stroke={C.borderStrong} horizontalAlignItems="center" verticalAlignItems="center" onClick={onClick} tooltip={tooltip}>
         <Text fontFamily={FONT} fontSize={Math.round(sz * 0.5)} fontWeight={600} fill={C.faint} lineHeight={sz}>
           ?
         </Text>
@@ -102,11 +125,11 @@ function Avatar({ name, photo, size = 18 }: { name: string; photo?: string | nul
     )
   }
   if (photo) {
-    return <Image src={photo} width={sz} height={sz} cornerRadius={sz / 2} />
+    return <Image src={photo} width={sz} height={sz} cornerRadius={sz / 2} onClick={onClick} tooltip={tooltip} />
   }
   const [bg, fg] = avatarColors(name)
   return (
-    <AutoLayout width={sz} height={sz} cornerRadius={sz / 2} fill={bg} horizontalAlignItems="center" verticalAlignItems="center">
+    <AutoLayout width={sz} height={sz} cornerRadius={sz / 2} fill={bg} horizontalAlignItems="center" verticalAlignItems="center" onClick={onClick} tooltip={tooltip}>
       <Text fontFamily={FONT} fontSize={Math.round(sz * 0.44)} fontWeight={700} fill={fg} lineHeight={sz} letterSpacing={0.2}>
         {initials(name)}
       </Text>
@@ -114,6 +137,7 @@ function Avatar({ name, photo, size = 18 }: { name: string; photo?: string | nul
   )
 }
 
+/** Text with the click/hover/tooltip pass-through, so a clickable label is one node. */
 function Label(props: {
   children: string
   size?: number
@@ -124,6 +148,9 @@ function Label(props: {
   strike?: boolean
   italic?: boolean
   align?: 'left' | 'center' | 'right'
+  onClick?: Click
+  hover?: string
+  tooltip?: string
 }) {
   const size = px(props.size ?? 11)
   return (
@@ -138,50 +165,48 @@ function Label(props: {
       italic={props.italic}
       horizontalAlignText={props.align ?? 'left'}
       lineHeight={Math.round(size * 1.35)}
+      onClick={props.onClick}
+      hoverStyle={props.hover ? { fill: props.hover } : undefined}
+      tooltip={props.tooltip}
     >
       {props.children}
     </Text>
   )
 }
 
-function Btn(props: {
-  label?: string
-  icon?: IconName
-  onClick: () => void | Promise<void>
-  tone?: 'default' | 'primary' | 'ghost' | 'danger'
-  tooltip?: string
-  small?: boolean
-}) {
+/** Button. Labelled buttons render no icon (keeps SVG parsing out of the common path). */
+function Btn(props: { label?: string; icon?: IconName; onClick: Click; tone?: 'default' | 'primary' | 'ghost' | 'danger'; tooltip?: string; small?: boolean }) {
   const tone = props.tone ?? 'default'
   const fill = tone === 'primary' ? C.accent : tone === 'ghost' ? undefined : tone === 'danger' ? C.dangerSoft : C.bg
   const color = tone === 'primary' ? '#FFFFFF' : tone === 'danger' ? C.danger : tone === 'ghost' ? C.muted : C.text
   const hover = tone === 'primary' ? C.accentHover : tone === 'danger' ? '#FECACA' : C.surfaceAlt
   const pad = props.small ? { vertical: px(3), horizontal: px(7) } : { vertical: px(6), horizontal: px(10) }
   return (
-    <AutoLayout
-      direction="horizontal"
-      spacing={px(5)}
-      padding={pad}
-      cornerRadius={px(8)}
-      fill={fill}
-      stroke={tone === 'default' ? C.border : undefined}
-      strokeWidth={1}
-      verticalAlignItems="center"
-      onClick={props.onClick}
-      hoverStyle={{ fill: hover }}
-      tooltip={props.tooltip}
-    >
-      {props.icon ? <Icon name={props.icon} color={color} size={props.small ? 11 : 12} /> : null}
+    <AutoLayout direction="horizontal" padding={pad} cornerRadius={px(8)} fill={fill} stroke={tone === 'default' ? C.border : undefined} strokeWidth={1} verticalAlignItems="center" onClick={props.onClick} hoverStyle={{ fill: hover }} tooltip={props.tooltip}>
       {props.label ? (
         <Label size={props.small ? 10 : 11} weight={600} color={color}>
           {props.label}
         </Label>
+      ) : props.icon ? (
+        <Icon name={props.icon} color={color} size={props.small ? 11 : 12} />
       ) : null}
     </AutoLayout>
   )
 }
 
-function IconBtn(props: { icon: IconName; onClick: () => void | Promise<void>; tooltip?: string; color?: string; size?: number }) {
+/** Square text-glyph button: "×", "−", "+", "›". One frame + one text, no SVG. */
+function GlyphBtn({ glyph, onClick, tooltip, size = 20, color }: { glyph: string; onClick: Click; tooltip?: string; size?: number; color?: string }) {
+  const s = px(size)
+  return (
+    <AutoLayout width={s} height={s} cornerRadius={px(6)} horizontalAlignItems="center" verticalAlignItems="center" onClick={onClick} hoverStyle={{ fill: C.surfaceAlt }} tooltip={tooltip}>
+      <Text fontFamily={FONT} fontSize={Math.round(s * 0.7)} fontWeight={600} fill={color ?? C.muted} lineHeight={s}>
+        {glyph}
+      </Text>
+    </AutoLayout>
+  )
+}
+
+function IconBtn(props: { icon: IconName; onClick: Click; tooltip?: string; color?: string; size?: number }) {
   const s = px(props.size ?? 20)
   return (
     <AutoLayout width={s} height={s} cornerRadius={px(6)} horizontalAlignItems="center" verticalAlignItems="center" onClick={props.onClick} hoverStyle={{ fill: C.surfaceAlt }} tooltip={props.tooltip}>
@@ -190,25 +215,13 @@ function IconBtn(props: { icon: IconName; onClick: () => void | Promise<void>; t
   )
 }
 
-/** Text toggle chip (filters, option rows). Optional leading glyph node. */
-function Chip(props: {
-  label: string
-  active?: boolean
-  onClick: () => void | Promise<void>
-  color?: string
-  soft?: string
-  tooltip?: string
-  dashed?: boolean
-  lead?: any
-  small?: boolean
-}) {
+/** Toggle chip (filters, option rows). */
+function Chip(props: { label: string; active?: boolean; onClick: Click; color?: string; soft?: string; tooltip?: string; dashed?: boolean; small?: boolean }) {
   const active = !!props.active
   const color = props.color ?? C.accent
   const soft = props.soft ?? C.accentSoft
   return (
     <AutoLayout
-      direction="horizontal"
-      spacing={px(4)}
       padding={props.small ? { vertical: px(2), horizontal: px(7) } : { vertical: px(3), horizontal: px(8) }}
       cornerRadius={px(999)}
       fill={active ? soft : C.bg}
@@ -220,7 +233,6 @@ function Chip(props: {
       hoverStyle={{ fill: active ? soft : C.surface, stroke: color }}
       tooltip={props.tooltip}
     >
-      {props.lead ?? null}
       <Label size={10} weight={600} color={active ? color : C.muted}>
         {props.label}
       </Label>
@@ -228,7 +240,8 @@ function Chip(props: {
   )
 }
 
-function Pill({ text, color, fill, size = 9, onClick, tooltip }: { text: string; color: string; fill: string; size?: number; onClick?: () => void; tooltip?: string }) {
+/** Filled count/status pill — header and column chrome only (cards use plain text). */
+function Pill({ text, color, fill, size = 9, onClick, tooltip }: { text: string; color: string; fill: string; size?: number; onClick?: Click; tooltip?: string }) {
   return (
     <AutoLayout padding={{ vertical: px(1), horizontal: px(6) }} cornerRadius={px(999)} fill={fill} verticalAlignItems="center" onClick={onClick} tooltip={tooltip}>
       <Label size={size} weight={700} color={color}>
@@ -238,7 +251,7 @@ function Pill({ text, color, fill, size = 9, onClick, tooltip }: { text: string;
   )
 }
 
-function LabelPill({ name, size = 9, onClick, active = true }: { name: string; size?: number; onClick?: () => void; active?: boolean }) {
+function LabelPill({ name, size = 9, onClick, active = true, quiet }: { name: string; size?: number; onClick?: Click; active?: boolean; quiet?: boolean }) {
   const [bg, fg] = labelColors(name)
   return (
     <AutoLayout
@@ -246,11 +259,10 @@ function LabelPill({ name, size = 9, onClick, active = true }: { name: string; s
       cornerRadius={px(4)}
       fill={active ? bg : C.bg}
       stroke={active ? undefined : C.border}
-      strokeDashPattern={active ? undefined : [3, 2]}
       verticalAlignItems="center"
       onClick={onClick}
-      hoverStyle={onClick ? { fill: bg } : undefined}
-      tooltip={onClick ? (active ? `Remove label “${name}”` : `Add label “${name}”`) : `Label: ${name}`}
+      hoverStyle={onClick && !quiet ? { fill: bg, stroke: fg } : undefined}
+      tooltip={quiet ? undefined : onClick ? (active ? `Remove “${name}”` : `Add “${name}”`) : undefined}
     >
       <Label size={size} weight={700} color={active ? fg : C.muted}>
         {name}
@@ -260,15 +272,15 @@ function LabelPill({ name, size = 9, onClick, active = true }: { name: string; s
 }
 
 function Divider() {
-  return <Rectangle width="fill-parent" height={px(1)} fill={C.border} />
+  return <Rectangle width="fill-parent" height={1} fill={C.border} />
 }
 
-function Progress({ done, total, width: w }: { done: number; total: number; width: number | 'fill-parent' }) {
+function Progress({ done, total, width, onClick, tooltip }: { done: number; total: number; width: number; onClick?: Click; tooltip?: string }) {
   const pct = total ? done / total : 0
-  const width = typeof w === 'number' ? px(w) : w
+  const w = px(width)
   return (
-    <AutoLayout width={width} height={px(4)} cornerRadius={px(2)} fill={C.surfaceAlt}>
-      {pct > 0 ? <Rectangle width={typeof width === 'number' ? Math.max(4, Math.round(width * pct)) : 'fill-parent'} height={px(4)} cornerRadius={px(2)} fill={pct >= 1 ? C.success : C.accent} /> : null}
+    <AutoLayout width={w} height={px(4)} cornerRadius={px(2)} fill={C.surfaceAlt} onClick={onClick} tooltip={tooltip}>
+      {pct > 0 ? <Rectangle width={Math.max(px(4), Math.round(w * pct))} height={px(4)} cornerRadius={px(2)} fill={pct >= 1 ? C.success : C.accent} /> : null}
     </AutoLayout>
   )
 }
@@ -291,21 +303,20 @@ function pickDate(title: string, current: string | null, onPick: (iso: string | 
 // ---------------------------------------------------------------------------
 // Shared store: document-level plugin data, visible to every board in the file
 // ---------------------------------------------------------------------------
-// Figma requires an alphanumeric namespace for shared plugin data (a hyphen here silently broke every write).
+// Figma requires an alphanumeric namespace for shared plugin data.
 const NS = 'kanbanlite'
 /** Every useSyncedState key this widget uses — preserved when pushing state into another instance. */
 const STATE_KEYS = [
   'view',
   'collapsed2',
+  'showAll',
   'openId',
+  'freshId',
   'confirmDeleteId',
   'filters',
   'filtersOpen',
   'search',
   'sort',
-  'quickAddOpen',
-  'draft',
-  'celebrating',
   'showArchived',
   'doneSearch',
   'staleDays',
@@ -343,6 +354,18 @@ const storeWrite = (key: string, value: unknown | null) => {
   }
 }
 
+/**
+ * Per-interaction commit scratch. The sandbox lives for exactly one interaction,
+ * so module variables are a safe place to collect "what changed" and flush it
+ * once at the end of a handler (one version bump, one push) instead of N times.
+ */
+let dirty = false
+let touched: Set<string> | null = new Set<string>()
+const markTouched = (...names: Array<string | undefined | null>) => {
+  if (!touched) return
+  for (const n of names) if (n) touched.add(n)
+}
+
 // ---------------------------------------------------------------------------
 // CSV export – builds the file in the sandbox, hands it to the iframe to save
 // ---------------------------------------------------------------------------
@@ -372,7 +395,9 @@ function tasksToCsv(list: Task[]): string {
       isoDateTime(t.updatedAt),
       isoDateTime(t.completedAt),
       t.archived ? 'yes' : 'no',
-    ].map(csvCell).join(',')
+    ]
+      .map(csvCell)
+      .join(',')
   })
   return [header.join(','), ...rows].join('\r\n')
 }
@@ -400,15 +425,15 @@ function Widget() {
   const people = useSyncedMap<Person>('people')
   const [view, setView] = useSyncedState<View>('view', 'board')
   const [collapsed, setCollapsed] = useSyncedState<Record<string, boolean>>('collapsed2', {})
+  const [showAll, setShowAll] = useSyncedState<Record<string, boolean>>('showAll', {})
   const [openId, setOpenId] = useSyncedState<string | null>('openId', null)
+  /** A task created with "Add task" is pinned to the top of its column until it is closed. */
+  const [freshId, setFreshId] = useSyncedState<string | null>('freshId', null)
   const [confirmDeleteId, setConfirmDeleteId] = useSyncedState<string | null>('confirmDeleteId', null)
   const [filters, setFilters] = useSyncedState<Filters>('filters', EMPTY_FILTERS)
   const [filtersOpen, setFiltersOpen] = useSyncedState<boolean>('filtersOpen', false)
   const [search, setSearch] = useSyncedState<string>('search', '')
   const [sort, setSort] = useSyncedState<SortMode>('sort', 'due')
-  const [quickAddOpen, setQuickAddOpen] = useSyncedState<boolean>('quickAddOpen', false)
-  const [draft, setDraft] = useSyncedState<Draft>('draft', { status: 'todo', priority: null, due: null, assignee: '', label: null })
-  const [celebrating, setCelebrating] = useSyncedState<string | null>('celebrating', null)
   const [showArchived, setShowArchived] = useSyncedState<boolean>('showArchived', false)
   const [doneSearch, setDoneSearch] = useSyncedState<string>('doneSearch', '')
   const [staleDays, setStaleDays] = useSyncedState<number>('staleDays', 7)
@@ -419,7 +444,7 @@ function Widget() {
   const [storeVersion] = useSyncedState<number>('storeVersion', 0)
   /** The store version this instance has already merged; renders skip the merge while it matches. */
   const [lastSyncedVersion, setLastSyncedVersion] = useSyncedState<number>('lastSyncedVersion', -1)
-  /** Mirror of the file-wide 'live' flag: push changes into other boards immediately (costs a re-render of each). */
+  /** Mirror of the file-wide 'live' flag: push changes into other boards immediately. */
   const [liveSync, setLiveSync] = useSyncedState<boolean>('liveSync', false)
   const widgetId = useWidgetNodeId()
   K = SCALES[uiSize] ?? 1.35
@@ -431,9 +456,33 @@ function Widget() {
   const COLLAPSED_W = px(40)
   const CARD_W = COL_W - px(20)
 
+  // ------------------------------------------------------------ per-render
   const today = todayISO()
   const tomorrow = addDaysISO(today, 1)
   const nextWeek = addDaysISO(today, 7)
+  const todayIdx = dayIndex(today)
+  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  /** One parse per distinct date per render instead of several per card. */
+  const dueMemo = new Map<string, { diff: number; label: string; weekday: string }>()
+  const dueInfo = (iso: string) => {
+    let v = dueMemo.get(iso)
+    if (!v) {
+      const diff = dayIndex(iso) - todayIdx
+      const d = parseISO(iso)
+      const short = `${MONTHS[d.getMonth()]} ${d.getDate()}`
+      const label = diff === 0 ? 'Today' : diff === 1 ? 'Tomorrow' : diff === -1 ? 'Yesterday' : diff > 1 && diff < 7 ? `${DAYS[d.getDay()]} ${d.getDate()}` : short
+      v = { diff, label, weekday: `${DAYS[d.getDay()]}, ${short}` }
+      dueMemo.set(iso, v)
+    }
+    return v
+  }
+  const isLate = (t: Task) => !!t.due && t.status !== 'done' && dueInfo(t.due).diff < 0
+
+  const photoByName: Record<string, string | null> = {}
+  for (const p of people.values()) photoByName[p.name] = p.photoUrl
+  const photoOf = (name: string): string | null => (name ? photoByName[name] ?? null : null)
+
   const everything = tasks.values()
   /** Personal boards only show tasks assigned to their owner; the store still holds everything. */
   const all = owner ? everything.filter((t) => t.assignee === owner) : everything
@@ -442,121 +491,7 @@ function Widget() {
   const done = live.filter((t) => t.status === 'done')
   const archived = all.filter((t) => t.archived)
 
-  // ------------------------------------------------------------------ people
-  /**
-   * Figma only lets us read currentUser / activeUsers inside event handlers,
-   * so every mutation records who is around. That gives us profile photos for
-   * anyone who has touched the board or been in the file while someone did.
-   */
-  const syncPeople = () => {
-    const seen: Array<User | null> = [figma.currentUser, ...figma.activeUsers]
-    const now = Date.now()
-    for (const u of seen) {
-      if (!u || !u.name) continue
-      const prev = people.get(u.name)
-      if (!prev || prev.photoUrl !== (u.photoUrl ?? null) || now - prev.seenAt > 3600000) {
-        const person: Person = { name: u.name, photoUrl: u.photoUrl ?? null, seenAt: now }
-        people.set(u.name, person)
-        storeWrite('person:' + u.name, person)
-        bumpStoreVersion()
-      }
-    }
-  }
-  const photoOf = (name: string): string | null => (name ? people.get(name)?.photoUrl ?? null : null)
-  /** Turn this instance into the current user's personal board. */
-  const makeMine = () => {
-    const u = figma.currentUser
-    if (!u || !u.name) {
-      toast('Could not read your Figma name')
-      return
-    }
-    syncPeople()
-    setScope({ kind: 'personal', name: u.name, photoUrl: u.photoUrl ?? null })
-    if (boardTitle === 'Team tasks') setBoardTitle(`${u.name.split(/[\s|]+/)[0]}’s tasks`)
-    if (view === 'people') setView('board')
-    toast(`This is now ${u.name}'s board — only tasks assigned to you`)
-  }
-  const makeTeam = () => {
-    setScope({ kind: 'team' })
-    if (/’s tasks$/.test(boardTitle)) setBoardTitle('Team tasks')
-    toast('This is now the team board — every task in the file')
-  }
-
-  /** File-wide switch: live push between boards (every click re-renders all boards) vs. manual/on-touch merge. */
-  const setLive = (on: boolean) => {
-    storeWrite('live', on ? '1' : null)
-    setLiveSync(on)
-    const v = bumpStoreVersion()
-    try {
-      if (figma.widgetId) {
-        for (const n of figma.currentPage.findWidgetNodesByWidgetId(figma.widgetId)) {
-          if (n.id === widgetId) continue
-          const prev = (n.widgetSyncedState || {}) as Record<string, unknown>
-          const next: Record<string, unknown> = {}
-          for (const k of STATE_KEYS) if (k in prev) next[k] = prev[k]
-          next.liveSync = on
-          next.lastSyncedVersion = v
-          n.setWidgetSyncedState(next)
-        }
-      }
-    } catch (_) {}
-    toast(on ? 'Live sync on — other boards update instantly (heavier)' : 'Manual sync — boards update when touched or on Refresh (lighter)')
-  }
-
-  /** Refresh: merge this board with the store, then push the result into every other board on the page. */
-  const refresh = () => {
-    const n = syncWithStore()
-    try {
-      setLastSyncedVersion(readStoreVersion())
-    } catch (_) {}
-    const pushed = notifyOtherBoards(true) ?? 0
-    const pulled = n ? `pulled ${n} update${n === 1 ? '' : 's'}` : 'nothing new here'
-    toast(pushed ? `Synced: ${pulled}, updated ${pushed} other board${pushed === 1 ? '' : 's'}` : `Synced: ${pulled}`)
-  }
-
-  /**
-   * Push the merged store into every other board on this page. Setting another
-   * widget instance's synced state re-renders it immediately, so the team board
-   * updates the moment a personal board writes (and vice versa). The per-render
-   * store merge remains as the fallback for boards that were not reachable.
-   */
-  const notifyOtherBoards = (force = false) => {
-    if (!liveSync && !force) return
-    try {
-      if (!figma.widgetId) return
-      const others = figma.currentPage.findWidgetNodesByWidgetId(figma.widgetId).filter((n) => n.id !== widgetId)
-      if (!others.length) return
-      const taskMap: Record<string, Task> = {}
-      const personMap: Record<string, Person> = {}
-      for (const t of tasks.values()) taskMap[t.id] = t
-      for (const p of people.values()) personMap[p.name] = p
-      const version = readStoreVersion()
-      for (const n of others) {
-        const prev = (n.widgetSyncedState || {}) as Record<string, unknown>
-        const next: Record<string, unknown> = {}
-        for (const k of STATE_KEYS) if (k in prev) next[k] = prev[k]
-        next.storeVersion = version
-        next.lastSyncedVersion = version
-        n.setWidgetSyncedState(next, { tasks: taskMap, people: personMap })
-      }
-      return others.length
-    } catch (_) {
-      // best effort: the other boards will still merge from the store on their next render
-    }
-    return 0
-  }
-
-  const findTeammates = () => {
-    const before = people.size
-    syncPeople()
-    const here = figma.activeUsers.filter((u) => u.name).length
-    const added = people.size - before
-    toast(`${here} ${here === 1 ? 'person is' : 'people are'} in this file right now${added ? ` · ${added} new` : ''}`)
-    notifyOtherBoards()
-  }
-
-  // ------------------------------------------------------------- mutations
-  /** Every write goes to this instance's cache AND the file-wide store. */
+  // ------------------------------------------------------------------ store
   /** Stamp the store with a new version and remember it so our own next render skips the merge. */
   const bumpStoreVersion = (): number => {
     const v = Date.now()
@@ -569,30 +504,75 @@ function Widget() {
     return v
   }
   const writeTask = (t: Task) => {
+    const before = tasks.get(t.id)
     tasks.set(t.id, t)
     storeWrite('task:' + t.id, t)
-    bumpStoreVersion()
+    markTouched(before?.assignee, t.assignee)
+    dirty = true
   }
   const deleteTask = (id: string) => {
     tasks.delete(id)
     storeWrite('task:' + id, null)
     storeWrite('deleted:' + id, { at: Date.now() })
+    touched = null // deletes are pushed to every board
+    dirty = true
+  }
+
+  /**
+   * Push the merged cache into every other board on this page (live mode, or
+   * forced by Refresh). Setting another instance's synced state re-renders it,
+   * so this is skipped for personal boards that cannot see the change.
+   */
+  const notifyOtherBoards = (force = false): number => {
+    if (!liveSync && !force) return 0
+    try {
+      if (!figma.widgetId) return 0
+      const others = figma.currentPage.findWidgetNodesByWidgetId(figma.widgetId).filter((n) => n.id !== widgetId)
+      if (!others.length) return 0
+      const taskMap: Record<string, Task> = {}
+      const personMap: Record<string, Person> = {}
+      for (const t of tasks.values()) taskMap[t.id] = t
+      for (const p of people.values()) personMap[p.name] = p
+      const version = readStoreVersion()
+      let pushed = 0
+      for (const n of others) {
+        const prev = (n.widgetSyncedState || {}) as Record<string, unknown>
+        const sc = prev.scope as Scope | undefined
+        if (!force && touched && sc && sc.kind === 'personal' && !touched.has(sc.name)) continue
+        const next: Record<string, unknown> = {}
+        for (const k of STATE_KEYS) if (k in prev) next[k] = prev[k]
+        next.storeVersion = version
+        next.lastSyncedVersion = version
+        n.setWidgetSyncedState(next, { tasks: taskMap, people: personMap })
+        pushed++
+      }
+      return pushed
+    } catch (_) {
+      return 0 // best effort: the other boards still merge from the store on their next render
+    }
+  }
+
+  /** Flush this handler's writes: one version bump and (in live mode) one push. */
+  const commit = () => {
+    if (!dirty) return
+    dirty = false
     bumpStoreVersion()
+    notifyOtherBoards()
+    touched = new Set<string>()
   }
 
   /**
    * Two-way merge between this instance's cache and the file store.
    * Newer updatedAt wins per task; tombstones delete; people merge by seenAt.
-   * Runs after every render (useEffect) and on the Refresh button.
    */
-  const syncWithStore = (): number => {
+  const syncWithStore = (): { changes: number; wrote: boolean } => {
     let changes = 0
     let wrote = false
     let keys: string[] = []
     try {
       keys = figma.root.getSharedPluginDataKeys(NS)
     } catch (_) {
-      return 0
+      return { changes: 0, wrote: false }
     }
     const storeTasks = new Map<string, Task>()
     const tomb = new Set<string>()
@@ -645,8 +625,7 @@ function Widget() {
         wrote = true
       }
     }
-    if (wrote) bumpStoreVersion()
-    return changes
+    return { changes, wrote }
   }
   useEffect(() => {
     // One cheap read per render; the full merge only runs when another board has written.
@@ -657,10 +636,101 @@ function Widget() {
       return
     }
     if (v === lastSyncedVersion) return
-    syncWithStore()
-    setLastSyncedVersion(v)
+    const r = syncWithStore()
+    if (r.wrote) bumpStoreVersion()
+    else setLastSyncedVersion(v)
   })
 
+  // ------------------------------------------------------------------ people
+  /** Reads currentUser/activeUsers (handler-only APIs) and records new people or photo changes. */
+  const syncPeople = () => {
+    const seen: Array<User | null> = [figma.currentUser, ...figma.activeUsers]
+    const now = Date.now()
+    for (const u of seen) {
+      if (!u || !u.name) continue
+      const prev = people.get(u.name)
+      const photo = u.photoUrl ?? null
+      if (!prev || prev.photoUrl !== photo) {
+        const person: Person = { name: u.name, photoUrl: photo, seenAt: now }
+        people.set(u.name, person)
+        storeWrite('person:' + u.name, person)
+        dirty = true
+      }
+    }
+  }
+  const myName = (): string | null => {
+    syncPeople()
+    const name = figma.currentUser?.name
+    if (!name) toast('Could not read your Figma name — type a name instead')
+    return name ?? null
+  }
+  const findTeammates = () => {
+    const before = people.size
+    syncPeople()
+    const here = figma.activeUsers.filter((u) => u.name).length
+    const added = people.size - before
+    toast(`${here} ${here === 1 ? 'person is' : 'people are'} in this file right now${added ? ` · ${added} new` : ''}`)
+    touched = null
+    commit()
+  }
+  /** Turn this instance into the current user's personal board. */
+  const makeMine = () => {
+    const u = figma.currentUser
+    if (!u || !u.name) {
+      toast('Could not read your Figma name')
+      return
+    }
+    syncPeople()
+    setScope({ kind: 'personal', name: u.name, photoUrl: u.photoUrl ?? null })
+    if (boardTitle === 'Team tasks') setBoardTitle(`${u.name.split(/[\s|]+/)[0]}’s tasks`)
+    if (view === 'people') setView('board')
+    toast(`This is now ${u.name}'s board — only tasks assigned to you`)
+    commit()
+  }
+  const makeTeam = () => {
+    setScope({ kind: 'team' })
+    if (/’s tasks$/.test(boardTitle)) setBoardTitle('Team tasks')
+    toast('This is now the team board — every task in the file')
+  }
+
+  /** File-wide switch: live push between boards vs. manual/on-touch merge. */
+  const setLive = (on: boolean) => {
+    storeWrite('live', on ? '1' : null)
+    setLiveSync(on)
+    const v = bumpStoreVersion()
+    try {
+      if (figma.widgetId) {
+        for (const n of figma.currentPage.findWidgetNodesByWidgetId(figma.widgetId)) {
+          if (n.id === widgetId) continue
+          const prev = (n.widgetSyncedState || {}) as Record<string, unknown>
+          const next: Record<string, unknown> = {}
+          for (const k of STATE_KEYS) if (k in prev) next[k] = prev[k]
+          next.liveSync = on
+          next.lastSyncedVersion = v
+          n.setWidgetSyncedState(next)
+        }
+      }
+    } catch (_) {}
+    toast(on ? 'Live sync on — other boards update instantly (heavier)' : 'Manual sync — boards update when touched or on Refresh (lighter)')
+  }
+
+  /** Refresh: merge this board with the store, then push the result into every other board on the page. */
+  const refresh = () => {
+    const r = syncWithStore()
+    if (r.wrote) bumpStoreVersion()
+    else {
+      try {
+        setLastSyncedVersion(readStoreVersion())
+      } catch (_) {}
+    }
+    const pushed = notifyOtherBoards(true)
+    const pulled = r.changes ? `pulled ${r.changes} update${r.changes === 1 ? '' : 's'}` : 'nothing new here'
+    toast(pushed ? `Synced: ${pulled}, updated ${pushed} other board${pushed === 1 ? '' : 's'}` : `Synced: ${pulled}`)
+    dirty = false
+    touched = new Set<string>()
+  }
+
+  // ------------------------------------------------------------- mutations
   const patch = (id: string, p: Partial<Task>) => {
     const t = tasks.get(id)
     if (!t) return
@@ -668,13 +738,19 @@ function Widget() {
     if (owner && 'assignee' in p && t.assignee === owner && p.assignee !== owner) {
       toast(p.assignee ? `Moved to ${p.assignee}'s board` : 'Unassigned — now only on the team board')
     }
-    syncPeople()
-    notifyOtherBoards()
+    commit()
+  }
+  const patchMany = (ids: string[], p: Partial<Task>) => {
+    for (const id of ids) {
+      const t = tasks.get(id)
+      if (t) writeTask({ ...t, ...p, updatedAt: Date.now() })
+    }
+    commit()
   }
 
-  const createTask = (title: string, extra: Partial<Task> = {}) => {
+  const createTask = (title: string, extra: Partial<Task> = {}, allowEmpty = false): string | null => {
     const clean = title.trim()
-    if (!clean) return
+    if (!clean && !allowEmpty) return null
     const now = Date.now()
     const t: Task = {
       id: uid(),
@@ -696,55 +772,84 @@ function Widget() {
     if (t.status === 'done') t.completedAt = now
     writeTask(t)
     syncPeople()
-    toast(`Added “${shortName(clean, 34)}”`)
-    notifyOtherBoards()
+    commit()
+    return t.id
   }
 
-  /** Completing a task plays a brief check state before the card moves. */
+  /** "Add task": a blank card at the top of To Do, already open for editing. */
+  const isBlank = (t: Task) => !t.title.trim() && !t.description && !t.due && !t.priority && !labelsOf(t).length && !subtasksOf(t).length && !t.discuss
+  const discardIfBlank = (id: string | null) => {
+    if (!id) return
+    const t = tasks.get(id)
+    if (t && isBlank(t)) deleteTask(id)
+    if (freshId === id) setFreshId(null)
+  }
+  const openCard = (id: string) => {
+    if (freshId && freshId !== id) discardIfBlank(freshId)
+    setOpenId(id)
+    syncPeople() // deliberate moment to notice who is in the file (photos for the Owner row)
+    commit()
+  }
+  const closeCard = () => {
+    if (openId && openId === freshId) discardIfBlank(openId)
+    setOpenId(null)
+    commit()
+  }
+  const addTask = () => {
+    if (freshId && freshId !== openId) discardIfBlank(freshId)
+    const id = createTask('', { status: 'todo' }, true)
+    if (!id) return
+    setFreshId(id)
+    setOpenId(id)
+    if (collapsed.todo) setCollapsed({ ...collapsed, todo: false })
+    if (view === 'done' || view === 'sync') setView('board')
+  }
+
   const complete = (id: string) => {
     const t = tasks.get(id)
     if (!t || t.status === 'done') return
-    setCelebrating(id)
-    return new Promise<void>((resolve) => {
-      setTimeout(() => {
-        patch(id, { status: 'done', completedAt: Date.now() })
-        setCelebrating(null)
-        if (openId === id) setOpenId(null)
-        toast('✓ Completed — find it in Done')
-        resolve()
-      }, 600)
-    })
+    patch(id, { status: 'done', completedAt: Date.now() })
+    if (openId === id) setOpenId(null)
+    toast('✓ Completed — find it in Done')
   }
-
   const setStatus = (id: string, status: Status) => {
     const t = tasks.get(id)
     if (!t || t.status === status) return
     if (status === 'done') return complete(id)
     patch(id, { status, completedAt: null })
-    toast(`Moved to ${STATUS_LABEL[status]}`)
   }
-
-  const reopen = (id: string) => {
-    patch(id, { status: 'todo', completedAt: null, archived: false })
-    toast('Reopened in To Do')
-  }
-
+  const reopen = (id: string) => patch(id, { status: 'todo', completedAt: null, archived: false })
   const archive = (id: string, flag: boolean) => {
     patch(id, { archived: flag })
     toast(flag ? 'Archived' : 'Restored')
   }
-
   const remove = (id: string) => {
     deleteTask(id)
     setConfirmDeleteId(null)
     if (openId === id) setOpenId(null)
+    if (freshId === id) setFreshId(null)
     toast('Task deleted')
-    notifyOtherBoards()
+    commit()
   }
-
-  const setDiscuss = (id: string, flag: boolean) => {
-    patch(id, { discuss: flag })
-    toast(flag ? 'Added to the team sync agenda' : 'Removed from the agenda')
+  const setDue = (id: string, due: string | null) => patch(id, { due })
+  const setDiscuss = (id: string, flag: boolean) => patch(id, { discuss: flag })
+  const toggleLabel = (id: string, label: string) => {
+    const t = tasks.get(id)
+    if (!t) return
+    const cur = labelsOf(t)
+    patch(id, { labels: cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label] })
+  }
+  const addSubtask = (id: string, title: string) => {
+    const clean = title.trim()
+    const t = tasks.get(id)
+    if (!t || !clean) return
+    patch(id, { subtasks: [...subtasksOf(t), { id: uid(), title: clean, done: false }] })
+  }
+  const patchSubtask = (id: string, sid: string, p: Partial<Subtask> | null) => {
+    const t = tasks.get(id)
+    if (!t) return
+    const next = p === null ? subtasksOf(t).filter((s) => s.id !== sid) : subtasksOf(t).map((s) => (s.id === sid ? { ...s, ...p } : s))
+    patch(id, { subtasks: next })
   }
 
   /**
@@ -769,8 +874,8 @@ function Widget() {
     let h = 0
     flagged.forEach((t, i) => {
       const sticky = figma.createSticky()
-      const lines = [t.title]
-      const meta = [t.assignee ? `@${t.assignee}` : 'Unassigned', STATUS_LABEL[t.status], t.due ? `due ${dueLabel(t.due)}` : null].filter(Boolean).join(' · ')
+      const lines = [t.title || 'Untitled']
+      const meta = [t.assignee ? `@${t.assignee}` : 'Unassigned', STATUS_LABEL[t.status], t.due ? `due ${dueInfo(t.due).label}` : null].filter(Boolean).join(' · ')
       lines.push('', meta)
       if (t.discussNote) lines.push('', t.discussNote)
       sticky.text.characters = lines.join('\n')
@@ -794,57 +899,17 @@ function Widget() {
     toast(`Created an agenda with ${flagged.length} stick${flagged.length === 1 ? 'y' : 'ies'} next to the board`)
   }
 
-  const setDue = (id: string, due: string | null) => {
-    patch(id, { due })
-    toast(due ? `Due ${dueLabel(due)}` : 'Due date cleared')
-  }
-
-  const toggleLabel = (id: string, label: string) => {
-    const t = tasks.get(id)
-    if (!t) return
-    const cur = labelsOf(t)
-    patch(id, { labels: cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label] })
-  }
-
-  const addSubtask = (id: string, title: string) => {
-    const clean = title.trim()
-    const t = tasks.get(id)
-    if (!t || !clean) return
-    patch(id, { subtasks: [...subtasksOf(t), { id: uid(), title: clean, done: false }] })
-  }
-
-  const patchSubtask = (id: string, sid: string, p: Partial<Subtask> | null) => {
-    const t = tasks.get(id)
-    if (!t) return
-    const next = p === null ? subtasksOf(t).filter((s) => s.id !== sid) : subtasksOf(t).map((s) => (s.id === sid ? { ...s, ...p } : s))
-    patch(id, { subtasks: next })
-    if (p && p.done && next.length && next.every((s) => s.done)) toast('All subtasks done 🎉')
-  }
-
-  /** figma.currentUser may only be read inside event handlers, never while rendering. */
-  const myName = (): string | null => {
-    syncPeople()
-    const name = figma.currentUser?.name
-    if (!name) toast('Could not read your Figma name — type a name instead')
-    return name ?? null
-  }
-
-  const setFilter = <K extends keyof Filters>(key: K, value: Filters[K]) => setFilters({ ...filters, [key]: value })
-  const toggleFilter = <K extends keyof Filters>(key: K, value: Filters[K]) =>
-    setFilter(key, (filters[key] === value ? (key === 'stale' ? false : null) : value) as Filters[K])
-
-  const activeFilterCount =
-    (filters.assignee ? 1 : 0) + (filters.priority ? 1 : 0) + (filters.due ? 1 : 0) + (filters.status ? 1 : 0) + (filters.stale ? 1 : 0) + (filters.label ? 1 : 0)
+  // ---------------------------------------------------------------- filters
+  const setFilter = <Key extends keyof Filters>(key: Key, value: Filters[Key]) => setFilters({ ...filters, [key]: value })
+  const toggleFilter = <Key extends keyof Filters>(key: Key, value: Filters[Key]) => setFilter(key, (filters[key] === value ? (key === 'stale' ? false : null) : value) as Filters[Key])
+  const activeFilterCount = (filters.assignee ? 1 : 0) + (filters.priority ? 1 : 0) + (filters.due ? 1 : 0) + (filters.status ? 1 : 0) + (filters.stale ? 1 : 0) + (filters.label ? 1 : 0)
   const anyFilter = activeFilterCount > 0 || search.trim().length > 0
-
   const clearFilters = () => {
     setFilters(EMPTY_FILTERS)
     setSearch('')
   }
-
   const isStale = (t: Task) => t.status === 'todo' && ageInDays(t.createdAt) >= staleDays
 
-  // ---------------------------------------------------------------- filtering
   const q = search.trim().toLowerCase()
   const matches = (t: Task): boolean => {
     if (q) {
@@ -860,10 +925,10 @@ function Widget() {
     if (filters.due) {
       if (filters.due === 'none' && t.due) return false
       if (filters.due !== 'none' && !t.due) return false
-      if (filters.due === 'overdue' && !(isOverdue(t.due) && t.status !== 'done')) return false
+      if (filters.due === 'overdue' && !isLate(t)) return false
       if (filters.due === 'today' && t.due !== today) return false
       if (filters.due === 'week' && t.due) {
-        const d = daysFromToday(t.due)
+        const d = dueInfo(t.due).diff
         if (d < 0 || d > 6) return false
       }
     }
@@ -883,13 +948,41 @@ function Widget() {
     if (pr !== 0) return pr
     return a.createdAt - b.createdAt
   }
+  /** The card created with "Add task" stays on top of its column while it is fresh. */
+  const sortTasks = (list: Task[]) => {
+    const sorted = list.slice().sort(compare)
+    if (!freshId) return sorted
+    const i = sorted.findIndex((t) => t.id === freshId)
+    if (i > 0) {
+      const [f] = sorted.splice(i, 1)
+      sorted.unshift(f)
+    }
+    return sorted
+  }
 
-  const knownAssignees = Array.from(new Set([...live.map((t) => t.assignee).filter((a) => a), ...people.keys()])).sort()
+  const knownAssignees = Array.from(new Set([...live.map((t) => t.assignee).filter((a) => a), ...Object.keys(photoByName)])).sort()
   const knownLabels: string[] = Array.from(new Set(live.reduce<string[]>((acc, t) => acc.concat(labelsOf(t)), []))).sort()
-  const overdueCount = active.filter((t) => isOverdue(t.due)).length
+  const overdueCount = active.filter(isLate).length
   const blockedCount = active.filter((t) => t.status === 'blocked').length
   const unassignedCount = active.filter((t) => !t.assignee).length
   const staleCount = active.filter(isStale).length
+  const agendaCount = live.filter((t) => t.discuss).length
+
+  /** Prefix-match typed text against known names so "jon" → "Jon Park". */
+  const resolveAgainst = (typed: string, known: string[]): string => {
+    const v = typed.trim()
+    if (!v) return ''
+    const lower = v.toLowerCase()
+    const exact = known.find((k) => k.toLowerCase() === lower)
+    if (exact) return exact
+    const prefix = known.filter((k) => k.toLowerCase().startsWith(lower))
+    if (prefix.length === 1) return prefix[0]
+    const word = known.filter((k) => k.toLowerCase().split(/\s+/).some((w) => w.startsWith(lower)))
+    if (word.length === 1) return word[0]
+    return v
+  }
+  const resolvePerson = (typed: string) => resolveAgainst(typed, knownAssignees)
+  const resolveLabel = (typed: string) => resolveAgainst(typed, knownLabels)
 
   // ------------------------------------------------------------ property menu
   usePropertyMenu(
@@ -1007,15 +1100,9 @@ function Widget() {
   )
 
   const archiveOld = () => {
-    let n = 0
-    for (const t of done) {
-      if (t.completedAt && ageInDays(t.completedAt) >= 14) {
-        writeTask({ ...t, archived: true, updatedAt: Date.now() })
-        n++
-      }
-    }
-    toast(n ? `Archived ${n} completed task${n === 1 ? '' : 's'}` : 'Nothing older than 14 days to archive')
-    if (n) notifyOtherBoards()
+    const old = done.filter((t) => t.completedAt && ageInDays(t.completedAt) >= 14).map((t) => t.id)
+    if (old.length) patchMany(old, { archived: true })
+    toast(old.length ? `Archived ${old.length} completed task${old.length === 1 ? '' : 's'}` : 'Nothing older than 14 days to archive')
   }
 
   const addSamples = () => {
@@ -1033,7 +1120,7 @@ function Widget() {
     ]
     samples.forEach((s, i) => {
       const now = Date.now() - (samples.length - i) * 1000
-      const t: Task = {
+      writeTask({
         id: uid() + i,
         title: s.title,
         description: s.description ?? '',
@@ -1047,43 +1134,40 @@ function Widget() {
         updatedAt: now,
         completedAt: s.status === 'done' ? now - 2 * 86400000 : null,
         archived: false,
-      }
-      writeTask(t)
+      })
     })
-    syncPeople()
+    touched = null
+    commit()
     toast('Added 8 sample tasks')
-    notifyOtherBoards()
   }
 
-  /** Prefix-match typed text against known names so "jon" → "Jon Park". */
-  const resolveAgainst = (typed: string, known: string[]): string => {
-    const v = typed.trim()
-    if (!v) return ''
-    const lower = v.toLowerCase()
-    const exact = known.find((k) => k.toLowerCase() === lower)
-    if (exact) return exact
-    const prefix = known.filter((k) => k.toLowerCase().startsWith(lower))
-    if (prefix.length === 1) return prefix[0]
-    const word = known.filter((k) => k.toLowerCase().split(/\s+/).some((w) => w.startsWith(lower)))
-    if (word.length === 1) return word[0]
-    return v
-  }
-  const resolvePerson = (typed: string) => resolveAgainst(typed, knownAssignees)
-  const resolveLabel = (typed: string) => resolveAgainst(typed, knownLabels)
-
-  function PersonChip({ name, onClick, active }: { name: string; onClick: () => void; active?: boolean }) {
+  // -------------------------------------------------------- shared controls
+  /**
+   * The one status control. Three option glyphs (To Do / In Progress / Blocked)
+   * — "Done" is the check circle in row 1 — plus the current status as text
+   * where there is no column to tell it (Week, People, Done view, agenda).
+   */
+  function StatusControl({ task, showLabel }: { task: Task; showLabel?: boolean }) {
     return (
-      <AutoLayout
-        direction="horizontal"
-        spacing={px(5)}
-        padding={{ top: px(2), bottom: px(2), left: px(2), right: px(8) }}
-        cornerRadius={px(999)}
-        fill={active ? C.accentSoft : C.bg}
-        stroke={active ? C.accent : C.border}
-        verticalAlignItems="center"
-        onClick={onClick}
-        hoverStyle={{ fill: C.accentSoft, stroke: C.accent }}
-      >
+      <AutoLayout direction="horizontal" spacing={px(3)} padding={px(2)} cornerRadius={px(999)} fill={C.surface} verticalAlignItems="center">
+        {ACTIVE_STATUSES.map((s) => {
+          const current = task.status === s
+          return <StatusGlyph key={s} status={s} size={16} muted={!current} fill={current ? C.bg : undefined} hoverFill={current ? undefined : STATUS_SOFT[s]} onClick={() => setStatus(task.id, s)} />
+        })}
+        {showLabel ? (
+          <AutoLayout padding={{ left: px(2), right: px(5) }}>
+            <Label size={10} weight={700} color={STATUS_COLOR[task.status]}>
+              {STATUS_LABEL[task.status]}
+            </Label>
+          </AutoLayout>
+        ) : null}
+      </AutoLayout>
+    )
+  }
+
+  function PersonChip({ name, onClick, active }: { name: string; onClick: Click; active?: boolean }) {
+    return (
+      <AutoLayout direction="horizontal" spacing={px(5)} padding={{ top: px(2), bottom: px(2), left: px(2), right: px(8) }} cornerRadius={px(999)} fill={active ? C.accentSoft : C.bg} stroke={active ? C.accent : C.border} verticalAlignItems="center" onClick={onClick} hoverStyle={{ fill: C.accentSoft, stroke: C.accent }}>
         <Avatar name={name} photo={photoOf(name)} size={16} />
         <Label size={10} weight={600} color={active ? C.accent : C.text}>
           {shortName(name, 18)}
@@ -1095,203 +1179,123 @@ function Widget() {
   // ------------------------------------------------------------------- card
   function Card({ task, width, showStatus }: { task: Task; width: number | 'fill-parent'; showStatus?: boolean }) {
     const open = openId === task.id
-    const isCelebrating = celebrating === task.id
-    const overdue = isOverdue(task.due) && task.status !== 'done'
+    const late = isLate(task)
     const stale = isStale(task)
-    const isDone = task.status === 'done' || isCelebrating
-    const stripe = isCelebrating ? C.success : task.status === 'blocked' ? STATUS_COLOR.blocked : overdue ? C.danger : null
+    const isDone = task.status === 'done'
     const subs = subtasksOf(task)
     const subsDone = subs.filter((s) => s.done).length
     const labels = labelsOf(task)
+    const due = task.due ? dueInfo(task.due) : null
+    const openMe = () => openCard(task.id)
 
     return (
       <AutoLayout
         key={task.id}
-        direction="horizontal"
+        direction="vertical"
         width={width}
-        fill={isCelebrating ? C.successSoft : C.bg}
+        spacing={px(5)}
+        padding={{ vertical: px(7), horizontal: px(9) }}
+        fill={C.bg}
         cornerRadius={px(8)}
-        stroke={open ? C.accent : isCelebrating ? C.success : C.border}
+        stroke={open ? C.accent : task.status === 'blocked' ? STATUS_COLOR.blocked : late ? C.danger : C.border}
         strokeWidth={open ? 2 : 1}
-        hoverStyle={open ? undefined : { stroke: C.borderStrong }}
-        overflow="hidden"
-        effect={open ? { type: 'drop-shadow', color: { r: 0.31, g: 0.27, b: 0.9, a: 0.18 }, offset: { x: 0, y: 4 }, blur: 14 } : undefined}
       >
-        {stripe ? <Rectangle width={px(3)} height="fill-parent" fill={stripe} /> : null}
-        <AutoLayout direction="vertical" width="fill-parent" spacing={px(5)} padding={{ vertical: px(7), horizontal: px(9) }}>
-          {/* Row 1: check, title, priority */}
-          <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="start">
-            <AutoLayout
-              width={px(16)}
-              height={px(16)}
-              cornerRadius={px(8)}
-              fill={isDone ? C.success : undefined}
-              stroke={isDone ? undefined : C.borderStrong}
-              strokeWidth={1.5}
-              strokeAlign="inside"
-              horizontalAlignItems="center"
-              verticalAlignItems="center"
-              onClick={() => complete(task.id)}
-              hoverStyle={{ fill: isDone ? C.success : C.successSoft, stroke: C.success }}
-            >
-              {isDone ? (
-                <Text fontFamily={FONT} fontSize={px(10)} fontWeight={700} fill="#FFFFFF" lineHeight={px(16)}>
-                  ✓
-                </Text>
-              ) : null}
-            </AutoLayout>
-            {open ? (
-              <Input
-                value={task.title}
-                placeholder="Task title"
-                onTextEditEnd={(e) => {
-                  const v = e.characters.trim()
-                  if (v && v !== task.title) patch(task.id, { title: v })
-                }}
-                fontFamily={FONT}
-                fontSize={px(13)}
-                fontWeight={700}
-                fill={C.text}
-                width="fill-parent"
-                inputBehavior="wrap"
-                inputFrameProps={{ padding: 0 }}
-              />
-            ) : (
-              <AutoLayout width="fill-parent" onClick={() => setOpenId(task.id)}>
-                <Label size={12} weight={600} width="fill-parent" truncate={2} strike={isDone} color={isDone ? C.muted : C.text}>
-                  {task.title || 'Untitled'}
-                </Label>
-              </AutoLayout>
-            )}
-            {open ? <IconBtn icon="chevronUp" size={18} tooltip="Collapse" onClick={() => setOpenId(null)} /> : null}
-            {task.priority ? (
-              <Pill text={PRIORITY_GLYPH[task.priority]} color={PRIORITY_COLOR[task.priority]} fill={PRIORITY_SOFT[task.priority]} tooltip={`${PRIORITY_LABEL[task.priority]} priority`} onClick={() => setOpenId(open ? null : task.id)} />
+        {/* Row 1: done circle, title, priority, close */}
+        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="start">
+          <AutoLayout width={px(16)} height={px(16)} cornerRadius={px(8)} fill={isDone ? C.success : undefined} stroke={isDone ? undefined : C.borderStrong} strokeWidth={1.5} horizontalAlignItems="center" verticalAlignItems="center" onClick={() => complete(task.id)} hoverStyle={{ fill: isDone ? C.success : C.successSoft, stroke: C.success }}>
+            {isDone ? (
+              <Text fontFamily={FONT} fontSize={px(10)} fontWeight={700} fill="#FFFFFF" lineHeight={px(16)}>
+                ✓
+              </Text>
             ) : null}
           </AutoLayout>
-
-          {/* Labels */}
-          {labels.length ? (
-            <AutoLayout direction="horizontal" spacing={px(4)} wrap width="fill-parent">
-              {labels.slice(0, 3).map((l) => (
-                <LabelPill key={l} name={l} onClick={() => setFilter('label', filters.label === l ? null : l)} />
-              ))}
-              {labels.length > 3 ? (
-                <Label size={9} color={C.faint}>
-                  {`+${labels.length - 3}`}
-                </Label>
-              ) : null}
-            </AutoLayout>
-          ) : null}
-
-          {/* Row 2: avatar, due, subtasks, stale, (status pill), selector */}
-          <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center" wrap>
-            <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center" onClick={() => setOpenId(task.id)} tooltip={task.assignee || 'Unassigned'}>
-              <Avatar name={task.assignee} photo={photoOf(task.assignee)} />
-              {task.assignee ? null : (
-                <Label size={10} weight={500} color={C.faint} italic>
-                  Unassigned
-                </Label>
-              )}
-            </AutoLayout>
-
-            {task.due ? (
-              <AutoLayout
-                padding={{ vertical: px(1), horizontal: px(6) }}
-                cornerRadius={px(999)}
-                fill={overdue ? C.dangerSoft : task.due === today ? C.accentSoft : C.surface}
-                onClick={() => setOpenId(task.id)}
-                hoverStyle={{ fill: overdue ? '#FECACA' : C.surfaceAlt }}
-                tooltip={weekdayDate(task.due)}
-              >
-                <Label size={10} weight={overdue || task.due === today ? 700 : 500} color={overdue ? C.danger : task.due === today ? C.accentText : C.muted}>
-                  {overdue ? `Overdue · ${dueLabel(task.due)}` : dueLabel(task.due)}
-                </Label>
-              </AutoLayout>
-            ) : (
-              <AutoLayout padding={{ vertical: px(1), horizontal: px(6) }} cornerRadius={px(999)} onClick={() => setDue(task.id, today)} hoverStyle={{ fill: C.surface }} tooltip="Set due today">
-                <Label size={10} weight={500} color={C.faint}>
-                  + date
-                </Label>
-              </AutoLayout>
-            )}
-
-            {subs.length ? (
-              <AutoLayout
-                direction="horizontal"
-                spacing={px(4)}
-                padding={{ vertical: px(1), horizontal: px(6) }}
-                cornerRadius={px(999)}
-                fill={subsDone === subs.length ? C.successSoft : C.surface}
-                verticalAlignItems="center"
-                onClick={() => setOpenId(task.id)}
-                tooltip={`${subsDone} of ${subs.length} subtasks done`}
-              >
-                <Progress done={subsDone} total={subs.length} width={px(22)} />
-                <Label size={10} weight={600} color={subsDone === subs.length ? C.success : C.muted}>
-                  {`${subsDone}/${subs.length}`}
-                </Label>
-              </AutoLayout>
-            ) : null}
-
-            {stale && !isDone ? (
-              <Pill text={`${ageInDays(task.createdAt)}d old`} color={C.warn} fill={C.warnSoft} size={10} tooltip={`${ageInDays(task.createdAt)} days in To Do`} />
-            ) : null}
-
-            {task.discuss ? (
-              <AutoLayout direction="horizontal" spacing={px(3)} padding={{ vertical: px(1), horizontal: px(6) }} cornerRadius={px(999)} fill={C.accentSoft} verticalAlignItems="center" onClick={() => setView('sync')} tooltip="Open agenda">
-                <Icon name="chat" color={C.accentText} size={10} />
-                <Label size={10} weight={700} color={C.accentText}>
-                  Sync
-                </Label>
-              </AutoLayout>
-            ) : null}
-
-            {showStatus ? (
-              <AutoLayout direction="horizontal" spacing={px(4)} padding={{ vertical: px(1), horizontal: px(6) }} cornerRadius={px(999)} fill={STATUS_SOFT[task.status]} verticalAlignItems="center">
-                <StatusGlyph status={task.status} size={10} />
-                <Label size={10} weight={700} color={STATUS_COLOR[task.status]}>
-                  {STATUS_LABEL[task.status]}
-                </Label>
-              </AutoLayout>
-            ) : null}
-
-            {/* one-step status selector */}
-            <AutoLayout direction="horizontal" spacing={px(1)} cornerRadius={px(6)} fill={C.surface} padding={px(1)}>
-              {STATUSES.map((s) => {
-                const current = task.status === s && !isCelebrating
-                return (
-                  <AutoLayout
-                    key={s}
-                    width={px(22)}
-                    height={px(18)}
-                    cornerRadius={px(5)}
-                    fill={current ? C.bg : undefined}
-                    stroke={current ? C.border : undefined}
-                    horizontalAlignItems="center"
-                    verticalAlignItems="center"
-                    onClick={() => setStatus(task.id, s)}
-                    hoverStyle={{ fill: current ? C.bg : STATUS_SOFT[s] }}
-                  >
-                    <StatusGlyph status={s} size={11} muted={!current} />
-                  </AutoLayout>
-                )
-              })}
-            </AutoLayout>
-          </AutoLayout>
-
-          {isCelebrating ? (
-            <Label size={10} weight={700} color={C.success}>
-              ✓ Done! Moving to Completed…
+          {open ? (
+            <Input
+              value={task.title}
+              placeholder="Task title"
+              onTextEditEnd={(e) => {
+                const v = e.characters.trim()
+                if (v !== task.title) patch(task.id, { title: v })
+              }}
+              fontFamily={FONT}
+              fontSize={px(13)}
+              fontWeight={700}
+              fill={C.text}
+              placeholderProps={{ fill: C.faint, fontWeight: 400 }}
+              width="fill-parent"
+              inputBehavior="wrap"
+              inputFrameProps={{ padding: 0 }}
+            />
+          ) : (
+            <Label size={12} weight={600} width="fill-parent" truncate={2} strike={isDone} color={isDone ? C.muted : task.title ? C.text : C.faint} italic={!task.title} onClick={openMe}>
+              {task.title || 'Untitled'}
+            </Label>
+          )}
+          {task.priority ? (
+            <Label size={10} weight={700} color={PRIORITY_COLOR[task.priority]} onClick={open ? closeCard : openMe}>
+              {PRIORITY_GLYPH[task.priority]}
             </Label>
           ) : null}
-          {open ? <Editor task={task} /> : null}
+          {open ? <GlyphBtn glyph="×" size={18} tooltip="Close" onClick={closeCard} /> : null}
         </AutoLayout>
+
+        {/* Labels (closed cards; the editor lists them when open) */}
+        {!open && labels.length ? (
+          <AutoLayout direction="horizontal" spacing={px(4)} wrap width="fill-parent">
+            {labels.slice(0, 3).map((l) => (
+              <LabelPill key={l} name={l} quiet onClick={() => setFilter('label', filters.label === l ? null : l)} />
+            ))}
+            {labels.length > 3 ? (
+              <Label size={9} color={C.faint}>
+                {`+${labels.length - 3}`}
+              </Label>
+            ) : null}
+          </AutoLayout>
+        ) : null}
+
+        {/* Row 2: owner, due, subtasks, stale, sync, status — the single control row, also when open */}
+        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center" wrap>
+          <Avatar name={task.assignee} photo={photoOf(task.assignee)} onClick={openMe} tooltip={task.assignee || undefined} />
+          {task.assignee ? null : (
+            <Label size={10} weight={500} color={C.faint} italic onClick={openMe}>
+              Unassigned
+            </Label>
+          )}
+          {due ? (
+            <Label size={10} weight={late || due.diff === 0 ? 700 : 500} color={late ? C.danger : due.diff === 0 ? C.accentText : C.muted} onClick={openMe} tooltip={due.weekday}>
+              {late ? `Overdue · ${due.label}` : due.label}
+            </Label>
+          ) : (
+            <Label size={10} weight={500} color={C.faint} onClick={() => setDue(task.id, today)} hover={C.accentText} tooltip="Set due today">
+              + date
+            </Label>
+          )}
+          {subs.length ? <Progress done={subsDone} total={subs.length} width={22} onClick={openMe} /> : null}
+          {subs.length ? (
+            <Label size={10} weight={600} color={subsDone === subs.length ? C.success : C.muted} onClick={openMe}>
+              {`${subsDone}/${subs.length}`}
+            </Label>
+          ) : null}
+          {stale && !isDone ? (
+            <Label size={10} weight={700} color={C.warn} tooltip={`${ageInDays(task.createdAt)} days in To Do`}>
+              {`${ageInDays(task.createdAt)}d old`}
+            </Label>
+          ) : null}
+          {task.discuss ? (
+            <Label size={10} weight={700} color={C.accentText} onClick={() => setView('sync')} tooltip="Open agenda">
+              Sync
+            </Label>
+          ) : null}
+          <StatusControl task={task} showLabel={showStatus} />
+        </AutoLayout>
+
+        {open ? <Editor task={task} /> : null}
       </AutoLayout>
     )
   }
 
-  // -------------------------------------------------------- inspector panel
-  function PropRow({ label, children, stack }: { label: string; children?: any; top?: boolean; stack?: boolean }) {
+  // ----------------------------------------------------------------- editor
+  function PropRow({ label, children, stack }: { label: string; children?: any; stack?: boolean }) {
     return (
       <AutoLayout direction="vertical" width="fill-parent" spacing={px(4)}>
         <Label size={9} weight={700} color={C.faint}>
@@ -1310,17 +1314,17 @@ function Widget() {
     )
   }
 
-  function Editor({ task }: { task: Task }) {
+  /** Expanded task body. The host decides whether it already shows a status control. */
+  function Editor({ task, showStatus, inset }: { task: Task; showStatus?: boolean; inset?: boolean }) {
     const confirming = confirmDeleteId === task.id
     const customDue = !!task.due && task.due !== today && task.due !== tomorrow && task.due !== nextWeek
-    const overdue = isOverdue(task.due) && task.status !== 'done'
     const subs = subtasksOf(task)
     const subsDone = subs.filter((s) => s.done).length
     const labels = labelsOf(task)
     const peopleRow = knownAssignees.filter((a) => a !== task.assignee)
 
     return (
-      <AutoLayout direction="vertical" width="fill-parent" spacing={px(10)} padding={{ top: px(4) }}>
+      <AutoLayout direction="vertical" width="fill-parent" spacing={px(10)} padding={inset ? { top: px(4), bottom: px(8), left: px(10), right: px(10) } : { top: px(4) }}>
         <Divider />
         <Input
           value={task.description || null}
@@ -1337,58 +1341,18 @@ function Widget() {
           inputFrameProps={{ padding: { vertical: px(6), horizontal: px(8) }, fill: C.surface, cornerRadius: px(8) }}
         />
 
-        <Divider />
+        {showStatus ? (
+          <PropRow label="Status">
+            <StatusControl task={task} showLabel />
+          </PropRow>
+        ) : null}
 
-        <PropRow label="Status">
-          <AutoLayout direction="horizontal" spacing={px(1)} cornerRadius={px(8)} fill={C.surface} padding={px(2)}>
-            {STATUSES.map((s) => {
-              const current = task.status === s
-              return (
-                <AutoLayout
-                  key={s}
-                  direction="horizontal"
-                  spacing={px(4)}
-                  padding={{ vertical: px(3), horizontal: current ? 8 : 6 }}
-                  cornerRadius={px(6)}
-                  fill={current ? C.bg : undefined}
-                  stroke={current ? C.border : undefined}
-                  verticalAlignItems="center"
-                  onClick={() => setStatus(task.id, s)}
-                  hoverStyle={{ fill: current ? C.bg : STATUS_SOFT[s] }}
-                  tooltip={current ? `${STATUS_LABEL[s]} (current)` : `Move to ${STATUS_LABEL[s]}`}
-                >
-                  <StatusGlyph status={s} size={11} muted={!current} />
-                  {current ? (
-                    <Label size={10} weight={700} color={STATUS_COLOR[s]}>
-                      {STATUS_LABEL[s]}
-                    </Label>
-                  ) : null}
-                </AutoLayout>
-              )
-            })}
-          </AutoLayout>
-        </PropRow>
-
-        <PropRow label="Due" stack>
-          <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
-            <Icon name="calendar" color={task.due ? (overdue ? C.danger : C.accentText) : C.faint} size={12} />
-            {task.due ? (
-              <Label size={11} weight={700} color={overdue ? C.danger : C.text} width="fill-parent" truncate>
-                {overdue ? `Overdue · was due ${weekdayDate(task.due)}` : `Due ${weekdayDate(task.due)}`}
-              </Label>
-            ) : (
-              <Label size={11} color={C.faint} italic width="fill-parent">
-                No due date
-              </Label>
-            )}
-            {task.due ? <Btn small tone="ghost" icon="x" label="Clear" onClick={() => setDue(task.id, null)} /> : null}
-          </AutoLayout>
-          <AutoLayout direction="horizontal" spacing={px(4)} wrap width="fill-parent">
-            <Chip small label="Today" active={task.due === today} onClick={() => setDue(task.id, today)} />
-            <Chip small label="Tomorrow" active={task.due === tomorrow} onClick={() => setDue(task.id, tomorrow)} />
-            <Chip small label="Next week" active={task.due === nextWeek} onClick={() => setDue(task.id, nextWeek)} />
-            <Chip small label={customDue ? weekdayDate(task.due as string) : 'Pick date…'} active={customDue} onClick={() => pickDate(task.title, task.due, (iso) => setDue(task.id, iso))} />
-          </AutoLayout>
+        <PropRow label="Due">
+          <Chip small label="Today" active={task.due === today} onClick={() => setDue(task.id, today)} />
+          <Chip small label="Tomorrow" active={task.due === tomorrow} onClick={() => setDue(task.id, tomorrow)} />
+          <Chip small label="Next week" active={task.due === nextWeek} onClick={() => setDue(task.id, nextWeek)} />
+          <Chip small label={customDue ? weekdayDate(task.due as string) : 'Pick date…'} active={customDue} onClick={() => pickDate(task.title, task.due, (iso) => setDue(task.id, iso))} />
+          {task.due ? <Chip small label="Clear" onClick={() => setDue(task.id, null)} /> : null}
         </PropRow>
 
         <PropRow label="Owner" stack>
@@ -1463,15 +1427,13 @@ function Widget() {
         </PropRow>
 
         <PropRow label="Team sync" stack>
-          <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
-            <Chip
-              small
-              label={task.discuss ? 'On the agenda' : 'Discuss in team sync'}
-              lead={<Icon name="chat" color={task.discuss ? C.accent : C.muted} size={11} />}
-              active={!!task.discuss}
-              onClick={() => setDiscuss(task.id, !task.discuss)}
-            />
-            {task.discuss ? <Btn small tone="ghost" icon="chat" label="Open agenda" onClick={() => setView('sync')} /> : null}
+          <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} verticalAlignItems="center">
+            <Chip small label={task.discuss ? 'On the agenda' : 'Discuss in team sync'} active={!!task.discuss} onClick={() => setDiscuss(task.id, !task.discuss)} />
+            {task.discuss ? (
+              <Label size={10} weight={600} color={C.accent} onClick={() => setView('sync')} hover={C.accentHover}>
+                Open agenda ›
+              </Label>
+            ) : null}
           </AutoLayout>
           {task.discuss ? (
             <Input
@@ -1496,33 +1458,14 @@ function Widget() {
         {/* subtasks */}
         <AutoLayout direction="vertical" width="fill-parent" spacing={px(4)}>
           <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
-            <Label size={10} weight={600} color={C.muted}>
-              Subtasks
+            <Label size={10} weight={600} color={subs.length && subsDone === subs.length ? C.success : C.muted} width="fill-parent">
+              {subs.length ? `Subtasks · ${subsDone}/${subs.length}` : 'Subtasks'}
             </Label>
-            {subs.length ? (
-              <Label size={10} weight={700} color={subsDone === subs.length ? C.success : C.text}>
-                {`${subsDone}/${subs.length}`}
-              </Label>
-            ) : null}
-            <AutoLayout width="fill-parent" height={px(1)} />
-            {subs.length ? <Progress done={subsDone} total={subs.length} width={px(90)} /> : null}
+            {subs.length ? <Progress done={subsDone} total={subs.length} width={90} /> : null}
           </AutoLayout>
           {subs.map((s) => (
-            <AutoLayout key={s.id} direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center" padding={{ vertical: px(2) }} hoverStyle={{ fill: C.canvas }} cornerRadius={px(4)}>
-              <AutoLayout
-                width={px(14)}
-                height={px(14)}
-                cornerRadius={px(4)}
-                fill={s.done ? C.success : undefined}
-                stroke={s.done ? undefined : C.borderStrong}
-                strokeWidth={1.5}
-                strokeAlign="inside"
-                horizontalAlignItems="center"
-                verticalAlignItems="center"
-                onClick={() => patchSubtask(task.id, s.id, { done: !s.done })}
-                hoverStyle={{ fill: s.done ? C.success : C.successSoft, stroke: C.success }}
-                tooltip={s.done ? 'Mark not done' : 'Mark done'}
-              >
+            <AutoLayout key={s.id} direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center" padding={{ vertical: px(2) }}>
+              <AutoLayout width={px(14)} height={px(14)} cornerRadius={px(4)} fill={s.done ? C.success : undefined} stroke={s.done ? undefined : C.borderStrong} strokeWidth={1.5} horizontalAlignItems="center" verticalAlignItems="center" onClick={() => patchSubtask(task.id, s.id, { done: !s.done })} hoverStyle={{ fill: s.done ? C.success : C.successSoft, stroke: C.success }} tooltip={s.done ? 'Mark not done' : 'Mark done'}>
                 {s.done ? (
                   <Text fontFamily={FONT} fontSize={px(9)} fontWeight={700} fill="#FFFFFF" lineHeight={px(14)}>
                     ✓
@@ -1543,9 +1486,11 @@ function Widget() {
                 textDecoration={s.done ? 'strikethrough' : 'none'}
                 width="fill-parent"
                 inputBehavior="truncate"
-                inputFrameProps={{ padding: px(0) }}
+                inputFrameProps={{ padding: 0 }}
               />
-              <IconBtn icon="x" size={16} tooltip="Remove subtask" onClick={() => patchSubtask(task.id, s.id, null)} />
+              <Label size={13} color={C.faint} onClick={() => patchSubtask(task.id, s.id, null)} hover={C.danger} tooltip="Remove">
+                ×
+              </Label>
             </AutoLayout>
           ))}
           <Input
@@ -1565,119 +1510,102 @@ function Widget() {
 
         <Divider />
 
-        <AutoLayout direction="horizontal" width="fill-parent" verticalAlignItems="center" spacing={px(4)}>
+        <AutoLayout direction="horizontal" width="fill-parent" verticalAlignItems="center" spacing={px(6)}>
           <Label size={9} color={C.faint} width="fill-parent" truncate>
             {`Created ${fromTimestamp(task.createdAt)}${task.completedAt ? ` · Done ${fromTimestamp(task.completedAt)}` : ''}`}
           </Label>
-          <Btn small tone="ghost" icon="archive" tooltip="Archive" onClick={() => archive(task.id, true)} />
-          {confirming ? (
-            <Btn small tone="danger" icon="trash" label="Confirm delete" onClick={() => remove(task.id)} />
-          ) : (
-            <Btn small tone="ghost" icon="trash" tooltip="Delete" onClick={() => setConfirmDeleteId(task.id)} />
-          )}
-          <Btn small tone="ghost" icon="chevronUp" tooltip="Collapse" onClick={() => setOpenId(null)} />
+          <Btn small tone="ghost" label="Archive" onClick={() => archive(task.id, true)} />
+          {confirming ? <Btn small tone="danger" label="Confirm delete" onClick={() => remove(task.id)} /> : <Btn small tone="ghost" label="Delete" onClick={() => setConfirmDeleteId(task.id)} />}
+          <Btn small tone="ghost" label="Close" onClick={closeCard} />
         </AutoLayout>
       </AutoLayout>
     )
   }
 
   // ----------------------------------------------------------------- column
+  function ShowMore({ keyName, total }: { keyName: string; total: number }) {
+    const expanded = !!showAll[keyName]
+    if (total <= CARD_CAP) return null
+    return <Btn small tone="ghost" label={expanded ? 'Show less' : `Show ${total - CARD_CAP} more`} onClick={() => setShowAll({ ...showAll, [keyName]: !expanded })} />
+  }
+  const capped = (list: Task[], keyName: string) => (showAll[keyName] || list.length <= CARD_CAP ? list : list.slice(0, CARD_CAP))
+
   function Column({ status }: { status: Status }) {
     const isCollapsed = !!collapsed[status]
     const items = live.filter((t) => t.status === status)
     // Done column: most recently completed first; other columns use the chosen sort.
-    const visible = items.filter(matches).sort(status === 'done' ? (a, b) => (b.completedAt ?? b.updatedAt) - (a.completedAt ?? a.updatedAt) : compare)
+    const visible = status === 'done' ? items.filter(matches).sort((a, b) => (b.completedAt ?? b.updatedAt) - (a.completedAt ?? a.updatedAt)) : sortTasks(items.filter(matches))
     const color = STATUS_COLOR[status]
     const hiddenByFilter = items.length - visible.length
 
     if (isCollapsed) {
       return (
-        <AutoLayout
-          key={status}
-          direction="vertical"
-          width={COLLAPSED_W}
-          spacing={px(8)}
-          padding={{ vertical: px(10), horizontal: px(4) }}
-          fill={STATUS_TINT[status]}
-          cornerRadius={px(12)}
-          horizontalAlignItems="center"
-          onClick={() => setCollapsed({ ...collapsed, [status]: false })}
-          hoverStyle={{ fill: STATUS_SOFT[status] }}
-          tooltip={`Expand ${STATUS_LABEL[status]}`}
-        >
+        <AutoLayout key={status} direction="vertical" width={COLLAPSED_W} spacing={px(8)} padding={{ vertical: px(10), horizontal: px(4) }} fill={STATUS_TINT[status]} cornerRadius={px(12)} horizontalAlignItems="center" onClick={() => setCollapsed({ ...collapsed, [status]: false })} hoverStyle={{ fill: STATUS_SOFT[status] }} tooltip={`Expand ${STATUS_LABEL[status]}`}>
           <Rectangle width={px(20)} height={px(3)} cornerRadius={px(2)} fill={color} />
           <StatusGlyph status={status} size={14} />
           <Pill text={String(items.length)} color={color} fill={C.bg} size={10} />
-          <AutoLayout direction="vertical" spacing={px(-1)} horizontalAlignItems="center" padding={{ top: px(2) }}>
-            {STATUS_SHORT[status].split('').map((ch, i) => (
-              <Label key={i} size={9} weight={700} color={color}>
-                {ch}
-              </Label>
-            ))}
-          </AutoLayout>
+          <Label size={9} weight={700} color={color} align="center">
+            {STATUS_SHORT[status].split('').join('\n')}
+          </Label>
         </AutoLayout>
       )
     }
 
+    const shown = capped(visible, status)
     return (
       <AutoLayout key={status} direction="vertical" width={COL_W} spacing={0} fill={STATUS_TINT[status]} cornerRadius={px(12)} overflow="hidden">
         <Rectangle width="fill-parent" height={px(4)} fill={color} />
-        <AutoLayout direction="vertical" width="fill-parent" spacing={px(8)} padding={{ top: px(8), bottom: px(10), left: px(10), right: px(10) }}>
-        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
-          <StatusGlyph status={status} size={13} />
-          <Label size={12} weight={700} color={C.text}>
-            {STATUS_LABEL[status]}
-          </Label>
-          <Pill text={String(visible.length)} color={color} fill={C.bg} size={10} />
-          {hiddenByFilter > 0 ? (
-            <Label size={9} color={C.faint}>
-              {`+${hiddenByFilter} filtered`}
+        <AutoLayout direction="vertical" width="fill-parent" spacing={px(6)} padding={{ top: px(8), bottom: px(10), left: px(10), right: px(10) }}>
+          <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
+            <StatusGlyph status={status} size={13} />
+            <Label size={12} weight={700} color={C.text}>
+              {STATUS_LABEL[status]}
             </Label>
-          ) : null}
-          <AutoLayout width="fill-parent" height={px(1)} />
-          <IconBtn icon="chevronDown" tooltip="Collapse" onClick={() => setCollapsed({ ...collapsed, [status]: true })} />
-        </AutoLayout>
-
-        {status === 'done' ? (
-          <AutoLayout direction="vertical" width="fill-parent" spacing={px(4)}>
-            {visible.slice(0, 5).map((t) => (
-              <DoneRow key={t.id} task={t} compact />
-            ))}
-            {visible.length === 0 ? (
-              <Label size={10} color={C.faint} italic>
-                Completed tasks land here.
-              </Label>
-            ) : null}
-            <Btn label={visible.length > 5 ? `${visible.length - 5} more in Done view` : 'Open Done view'} icon="chevronRight" tone="ghost" small onClick={() => setView('done')} />
+            <Pill text={String(visible.length)} color={color} fill={C.bg} size={10} />
+            <Label size={9} color={C.faint} width="fill-parent">
+              {hiddenByFilter > 0 ? `+${hiddenByFilter} filtered` : ''}
+            </Label>
+            <GlyphBtn glyph="−" tooltip="Collapse" onClick={() => setCollapsed({ ...collapsed, [status]: true })} />
           </AutoLayout>
-        ) : (
-          <AutoLayout direction="vertical" width="fill-parent" spacing={px(6)}>
-            {status === 'todo' && quickAddOpen ? <Composer /> : null}
-            {visible.map((t) => (
-              <Card key={t.id} task={t} width="fill-parent" />
-            ))}
-            {visible.length === 0 && !(status === 'todo' && quickAddOpen) ? (
-              <AutoLayout width="fill-parent" padding={{ vertical: px(4), horizontal: px(4) }}>
+
+          {status === 'done' ? (
+            <AutoLayout direction="vertical" width="fill-parent" spacing={px(4)}>
+              {visible.slice(0, 5).map((t) => (
+                <DoneRow key={t.id} task={t} compact />
+              ))}
+              {visible.length === 0 ? (
                 <Label size={10} color={C.faint} italic>
+                  Completed tasks land here.
+                </Label>
+              ) : null}
+              <Btn label={visible.length > 5 ? `${visible.length - 5} more in Done view ›` : 'Open Done view ›'} tone="ghost" small onClick={() => setView('done')} />
+            </AutoLayout>
+          ) : (
+            <AutoLayout direction="vertical" width="fill-parent" spacing={px(6)}>
+              {shown.map((t) => (
+                <Card key={t.id} task={t} width="fill-parent" />
+              ))}
+              <ShowMore keyName={status} total={visible.length} />
+              {visible.length === 0 ? (
+                <Label size={10} color={C.faint} italic width="fill-parent">
                   {items.length > 0 ? 'No matches for current filters.' : status === 'todo' && live.length === 0 ? 'Type below to add your first task.' : 'Nothing here.'}
                 </Label>
-              </AutoLayout>
-            ) : null}
-            <Input
-              value={null}
-              placeholder="+ New task"
-              onTextEditEnd={(e) => createTask(e.characters, { status })}
-              fontFamily={FONT}
-              fontSize={px(11)}
-              fontWeight={500}
-              fill={C.text}
-              placeholderProps={{ fill: C.muted, fontWeight: 600 }}
-              width="fill-parent"
-              inputBehavior="wrap"
-              inputFrameProps={{ padding: { vertical: px(6), horizontal: px(8) }, cornerRadius: px(8), hoverStyle: { fill: C.bg } }}
-            />
-          </AutoLayout>
-        )}
+              ) : null}
+              <Input
+                value={null}
+                placeholder="+ New task"
+                onTextEditEnd={(e) => createTask(e.characters, { status })}
+                fontFamily={FONT}
+                fontSize={px(11)}
+                fontWeight={500}
+                fill={C.text}
+                placeholderProps={{ fill: C.muted, fontWeight: 600 }}
+                width="fill-parent"
+                inputBehavior="wrap"
+                inputFrameProps={{ padding: { vertical: px(6), horizontal: px(8) }, cornerRadius: px(8), hoverStyle: { fill: C.bg } }}
+              />
+            </AutoLayout>
+          )}
         </AutoLayout>
       </AutoLayout>
     )
@@ -1686,38 +1614,29 @@ function Widget() {
   // ------------------------------------------------------------- done rows
   function DoneRow({ task, compact }: { task: Task; compact?: boolean }) {
     const open = openId === task.id
-    return (
-      <AutoLayout
-        key={task.id}
-        direction="vertical"
-        width="fill-parent"
-        spacing={0}
-        fill={C.bg}
-        cornerRadius={px(8)}
-        stroke={open ? C.accent : C.border}
-        strokeWidth={open ? 2 : 1}
-        hoverStyle={open ? undefined : { stroke: C.borderStrong }}
-      >
-      <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} padding={{ vertical: px(5), horizontal: px(8) }} verticalAlignItems="center">
-        {task.archived ? <Icon name="archive" color={C.faint} size={13} /> : <StatusGlyph status="done" size={14} />}
-        <AutoLayout direction="vertical" width="fill-parent" spacing={px(1)} onClick={() => setOpenId(open ? null : task.id)} >
-          <Label size={11} weight={500} color={C.muted} strike={!task.archived} width="fill-parent" truncate>
-            {task.title}
+    const toggle = () => (open ? closeCard() : openCard(task.id))
+    const frame = { fill: C.bg, cornerRadius: px(8), stroke: open ? C.accent : C.border, strokeWidth: open ? 2 : 1 }
+    const row = (
+      <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} padding={{ vertical: px(5), horizontal: px(8) }} verticalAlignItems="center" {...(open ? {} : frame)}>
+        <Label size={12} weight={700} color={task.archived ? C.faint : C.success}>
+          {task.archived ? '▣' : '✓'}
+        </Label>
+        {compact ? (
+          <Label size={11} weight={500} color={C.muted} strike={!task.archived} width="fill-parent" truncate onClick={toggle}>
+            {task.title || 'Untitled'}
           </Label>
-          {compact ? null : (
+        ) : (
+          <AutoLayout direction="vertical" width="fill-parent" spacing={px(1)} onClick={toggle}>
+            <Label size={11} weight={500} color={C.muted} strike={!task.archived} width="fill-parent" truncate>
+              {task.title || 'Untitled'}
+            </Label>
             <Label size={9} color={C.faint} width="fill-parent" truncate>
-              {[
-                task.assignee ? task.assignee : 'Unassigned',
-                task.due ? `due ${weekdayDate(task.due)}` : null,
-                task.completedAt ? `completed ${fromTimestamp(task.completedAt)}` : null,
-                task.priority ? `${PRIORITY_LABEL[task.priority]} priority` : null,
-                labelsOf(task).length ? labelsOf(task).join(', ') : null,
-              ]
+              {[task.assignee ? task.assignee : 'Unassigned', task.due ? `due ${weekdayDate(task.due)}` : null, task.completedAt ? `completed ${fromTimestamp(task.completedAt)}` : null, task.priority ? `${PRIORITY_LABEL[task.priority]} priority` : null, labelsOf(task).length ? labelsOf(task).join(', ') : null]
                 .filter(Boolean)
                 .join(' · ')}
             </Label>
-          )}
-        </AutoLayout>
+          </AutoLayout>
+        )}
         {compact ? (
           <Label size={9} color={C.faint}>
             {task.completedAt ? fromTimestamp(task.completedAt) : ''}
@@ -1725,25 +1644,16 @@ function Widget() {
         ) : (
           <Avatar name={task.assignee} photo={photoOf(task.assignee)} size={16} />
         )}
-        <IconBtn icon="undo" tooltip="Reopen" onClick={() => reopen(task.id)} />
-        {compact ? null : task.archived ? (
-          <IconBtn icon="archive" tooltip="Restore" color={C.accent} onClick={() => archive(task.id, false)} />
-        ) : (
-          <IconBtn icon="archive" tooltip="Archive" onClick={() => archive(task.id, true)} />
-        )}
-        {!compact && task.archived ? (
-          confirmDeleteId === task.id ? (
-            <Btn small tone="danger" icon="trash" label="Confirm" onClick={() => remove(task.id)} />
-          ) : (
-            <IconBtn icon="trash" tooltip="Delete" onClick={() => setConfirmDeleteId(task.id)} />
-          )
-        ) : null}
+        <Btn small tone="ghost" label="Reopen" onClick={() => reopen(task.id)} />
+        {compact ? null : task.archived ? <Btn small tone="ghost" label="Restore" onClick={() => archive(task.id, false)} /> : <Btn small tone="ghost" label="Archive" onClick={() => archive(task.id, true)} />}
+        {!compact && task.archived ? confirmDeleteId === task.id ? <Btn small tone="danger" label="Confirm" onClick={() => remove(task.id)} /> : <Btn small tone="ghost" label="Delete" onClick={() => setConfirmDeleteId(task.id)} /> : null}
       </AutoLayout>
-      {open ? (
-        <AutoLayout width="fill-parent" padding={{ top: 0, bottom: px(8), left: px(10), right: px(10) }}>
-          <Editor task={task} />
-        </AutoLayout>
-      ) : null}
+    )
+    if (!open) return row
+    return (
+      <AutoLayout key={task.id} direction="vertical" width="fill-parent" spacing={0} {...frame}>
+        {row}
+        <Editor task={task} showStatus inset />
       </AutoLayout>
     )
   }
@@ -1760,59 +1670,59 @@ function Widget() {
   }
 
   function WeekView() {
-    const pool = active.filter(matches).sort(compare)
+    const pool = sortTasks(active.filter(matches))
     const groups: Array<{ key: string; title: string; sub?: string; items: Task[]; color: string; tint: string }> = []
-    const overdue = pool.filter((t) => t.due && daysFromToday(t.due) < 0)
+    const overdue = pool.filter((t) => t.due && dueInfo(t.due).diff < 0)
     if (overdue.length) groups.push({ key: 'overdue', title: 'Overdue', items: overdue, color: C.danger, tint: '#FFF1F1' })
     for (let i = 0; i < 7; i++) {
       const iso = addDaysISO(today, i)
       const items = pool.filter((t) => t.due === iso)
-      groups.push({
-        key: iso,
-        title: i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : weekdayDate(iso).split(',')[0],
-        sub: weekdayDate(iso),
-        items,
-        color: i === 0 ? C.accent : C.muted,
-        tint: i === 0 ? C.accentSoft : C.surface,
-      })
+      const wd = dueInfo(iso).weekday
+      groups.push({ key: iso, title: i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : wd.split(',')[0], sub: wd, items, color: i === 0 ? C.accent : C.muted, tint: i === 0 ? C.accentSoft : C.surface })
     }
-    const later = pool.filter((t) => t.due && daysFromToday(t.due) > 6)
+    const later = pool.filter((t) => t.due && dueInfo(t.due).diff > 6)
     if (later.length) groups.push({ key: 'later', title: 'Later', items: later, color: C.muted, tint: C.surface })
     const undated = pool.filter((t) => !t.due)
     groups.push({ key: 'none', title: 'No due date', sub: 'Click “+ date” on a card to schedule it', items: undated, color: C.muted, tint: C.canvas })
 
     return (
       <AutoLayout direction="vertical" spacing={px(8)} width={BOARD_W}>
-        {groups.map((g) => (
-          <AutoLayout key={g.key} direction="horizontal" width="fill-parent" spacing={px(10)} padding={px(10)} fill={g.tint} cornerRadius={px(12)} verticalAlignItems="start">
-            <AutoLayout direction="vertical" width={px(118)} spacing={px(2)}>
-              <AutoLayout direction="horizontal" spacing={px(6)} verticalAlignItems="center">
-                <Label size={12} weight={700} color={g.color}>
-                  {g.title}
-                </Label>
-                <Pill text={String(g.items.length)} color={g.color} fill={C.bg} size={10} />
-              </AutoLayout>
+        {groups.map((g) => {
+          const title = `${g.title} · ${g.items.length}`
+          const shown = capped(g.items, 'week:' + g.key)
+          return (
+            <AutoLayout key={g.key} direction="horizontal" width="fill-parent" spacing={px(10)} padding={px(10)} fill={g.tint} cornerRadius={px(12)} verticalAlignItems="start">
               {g.sub ? (
-                <Label size={9} color={C.faint} width="fill-parent">
-                  {g.sub}
+                <AutoLayout direction="vertical" width={px(118)} spacing={px(2)}>
+                  <Label size={12} weight={700} color={g.color}>
+                    {title}
+                  </Label>
+                  <Label size={9} color={C.faint} width="fill-parent">
+                    {g.sub}
+                  </Label>
+                </AutoLayout>
+              ) : (
+                <Label size={12} weight={700} color={g.color} width={118}>
+                  {title}
                 </Label>
-              ) : null}
-            </AutoLayout>
-            {g.items.length ? (
-              <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} wrap verticalAlignItems="start">
-                {g.items.map((t) => (
-                  <Card key={t.id} task={t} width={CARD_W} showStatus />
-                ))}
-              </AutoLayout>
-            ) : (
-              <AutoLayout width="fill-parent" padding={{ vertical: px(2) }}>
-                <Label size={10} color={C.faint} italic>
+              )}
+              {g.items.length ? (
+                <AutoLayout direction="vertical" width="fill-parent" spacing={px(6)}>
+                  <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} wrap verticalAlignItems="start">
+                    {shown.map((t) => (
+                      <Card key={t.id} task={t} width={CARD_W} showStatus />
+                    ))}
+                  </AutoLayout>
+                  <ShowMore keyName={'week:' + g.key} total={g.items.length} />
+                </AutoLayout>
+              ) : (
+                <Label size={10} color={C.faint} italic width="fill-parent">
                   Nothing scheduled.
                 </Label>
-              </AutoLayout>
-            )}
-          </AutoLayout>
-        ))}
+              )}
+            </AutoLayout>
+          )
+        })}
       </AutoLayout>
     )
   }
@@ -1823,12 +1733,12 @@ function Widget() {
       .filter(matches)
       .filter((t) => !dq || `${t.title} ${t.description} ${t.assignee} ${labelsOf(t).join(' ')}`.toLowerCase().includes(dq))
       .sort((a, b) => (b.completedAt ?? b.updatedAt) - (a.completedAt ?? a.updatedAt))
+    const shown = capped(pool, 'done')
 
     return (
       <AutoLayout direction="vertical" spacing={px(8)} width={BOARD_W}>
         <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} verticalAlignItems="center">
           <AutoLayout direction="horizontal" spacing={px(6)} verticalAlignItems="center" padding={{ vertical: px(5), horizontal: px(9) }} fill={C.surface} cornerRadius={px(8)} width={px(260)}>
-            <Icon name="search" color={C.faint} size={12} />
             <Input
               value={doneSearch || null}
               placeholder="Search completed tasks…"
@@ -1839,32 +1749,34 @@ function Widget() {
               placeholderProps={{ fill: C.faint }}
               width="fill-parent"
               inputBehavior="truncate"
-              inputFrameProps={{ padding: px(0) }}
+              inputFrameProps={{ padding: 0 }}
             />
-            {doneSearch ? <IconBtn icon="x" size={16} tooltip="Clear search" onClick={() => setDoneSearch('')} /> : null}
+            {doneSearch ? <GlyphBtn glyph="×" size={16} tooltip="Clear" onClick={() => setDoneSearch('')} /> : null}
           </AutoLayout>
           <Chip label={`Show archived (${archived.length})`} active={showArchived} onClick={() => setShowArchived(!showArchived)} />
           <AutoLayout width="fill-parent" height={px(1)} />
-          <Btn small label="Archive done > 14 days" icon="archive" onClick={archiveOld}  />
+          <Btn small label="Archive done > 14 days" onClick={archiveOld} />
         </AutoLayout>
 
         <AutoLayout direction="vertical" width="fill-parent" spacing={0} fill={STATUS_TINT.done} cornerRadius={px(12)} overflow="hidden">
           <Rectangle width="fill-parent" height={px(4)} fill={STATUS_COLOR.done} />
           <AutoLayout direction="vertical" width="fill-parent" spacing={px(6)} padding={{ top: px(8), bottom: px(10), left: px(10), right: px(10) }}>
-          <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
-            <StatusGlyph status="done" size={13} />
-            <Label size={12} weight={700}>
-              {showArchived ? 'Completed & archived' : 'Completed'}
-            </Label>
-            <Pill text={String(pool.length)} color={C.success} fill={C.bg} size={10} />
-          </AutoLayout>
-          {pool.length ? (
-            pool.map((t) => <DoneRow key={t.id} task={t} />)
-          ) : (
-            <Label size={10} color={C.faint} italic>
-              {dq || anyFilter ? 'No completed tasks match.' : 'No completed tasks yet — click a card’s circle to mark it done.'}
-            </Label>
-          )}
+            <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
+              <StatusGlyph status="done" size={13} />
+              <Label size={12} weight={700}>
+                {showArchived ? 'Completed & archived' : 'Completed'}
+              </Label>
+              <Pill text={String(pool.length)} color={C.success} fill={C.bg} size={10} />
+            </AutoLayout>
+            {shown.map((t) => (
+              <DoneRow key={t.id} task={t} />
+            ))}
+            <ShowMore keyName="done" total={pool.length} />
+            {pool.length === 0 ? (
+              <Label size={10} color={C.faint} italic>
+                {dq || anyFilter ? 'No completed tasks match.' : 'No completed tasks yet — click a card’s circle to mark it done.'}
+              </Label>
+            ) : null}
           </AutoLayout>
         </AutoLayout>
       </AutoLayout>
@@ -1882,9 +1794,10 @@ function Widget() {
           </Label>
         ) : null}
         {names.map((name) => {
-          const items = pool.filter((t) => t.assignee === name).sort(compare)
-          const od = items.filter((t) => isOverdue(t.due)).length
+          const items = sortTasks(pool.filter((t) => t.assignee === name))
+          const od = items.filter(isLate).length
           const [bg, fg] = name ? avatarColors(name) : [C.surface, C.muted]
+          const shown = capped(items, 'people:' + name)
           return (
             <AutoLayout key={name || '__none__'} direction="vertical" width={COL_W} spacing={0} fill={C.canvas} cornerRadius={px(12)} overflow="hidden" stroke={C.border}>
               <Rectangle width="fill-parent" height={px(4)} fill={fg} />
@@ -1897,9 +1810,10 @@ function Widget() {
                   {od ? <Pill text={`${od} overdue`} color={C.danger} fill={C.dangerSoft} /> : null}
                   <Pill text={String(items.length)} color={fg} fill={bg} size={10} />
                 </AutoLayout>
-                {items.map((t) => (
+                {shown.map((t) => (
                   <Card key={t.id} task={t} width="fill-parent" showStatus />
                 ))}
+                <ShowMore keyName={'people:' + name} total={items.length} />
               </AutoLayout>
             </AutoLayout>
           )
@@ -1909,21 +1823,20 @@ function Widget() {
   }
 
   function SyncView() {
-    const agenda = live.filter((t) => t.discuss).filter(matches).sort(compare)
+    const agenda = sortTasks(live.filter((t) => t.discuss).filter(matches))
     return (
       <AutoLayout direction="vertical" spacing={px(8)} width={BOARD_W}>
         <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} verticalAlignItems="center">
           <Label size={11} color={C.muted} width="fill-parent">
             Flag any task with “Discuss in team sync”. Before the meeting, drop the agenda onto the canvas as stickies and work through it there.
           </Label>
-          {agenda.length ? <Btn small tone="ghost" icon="x" label="Clear agenda" onClick={() => agenda.forEach((t) => patch(t.id, { discuss: false }))} /> : null}
-          <Btn label="Create agenda on canvas" icon="sticky" tone="primary" onClick={createAgendaOnCanvas}  />
+          {agenda.length ? <Btn small tone="ghost" label="Clear agenda" onClick={() => patchMany(agenda.map((t) => t.id), { discuss: false })} /> : null}
+          <Btn label="Create agenda on canvas" tone="primary" onClick={createAgendaOnCanvas} />
         </AutoLayout>
         <AutoLayout direction="vertical" width="fill-parent" spacing={0} fill={C.accentSoft} cornerRadius={px(12)} overflow="hidden">
           <Rectangle width="fill-parent" height={px(4)} fill={C.accent} />
           <AutoLayout direction="vertical" width="fill-parent" spacing={px(6)} padding={{ top: px(8), bottom: px(10), left: px(10), right: px(10) }}>
             <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
-              <Icon name="chat" color={C.accent} size={13} />
               <Label size={12} weight={700}>
                 {`Team sync agenda · ${weekdayDate(today)}`}
               </Label>
@@ -1944,157 +1857,69 @@ function Widget() {
 
   function AgendaRow({ task }: { task: Task }) {
     const open = openId === task.id
-    const overdue = isOverdue(task.due) && task.status !== 'done'
-    return (
-      <AutoLayout key={task.id} direction="vertical" width="fill-parent" spacing={0} fill={C.bg} cornerRadius={px(8)} stroke={open ? C.accent : C.border} strokeWidth={open ? 2 : 1} hoverStyle={open ? undefined : { stroke: C.borderStrong }}>
-        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} padding={{ vertical: px(6), horizontal: px(8) }} verticalAlignItems="start">
-          <AutoLayout
-            width={px(16)}
-            height={px(16)}
-            cornerRadius={px(4)}
-            stroke={C.accent}
-            strokeWidth={1.5}
-            strokeAlign="inside"
-            horizontalAlignItems="center"
-            verticalAlignItems="center"
-            onClick={() => setDiscuss(task.id, false)}
-            hoverStyle={{ fill: C.accentSoft }}
-            tooltip="Discussed"
-          />
-          <AutoLayout direction="vertical" width="fill-parent" spacing={px(3)}>
-            <AutoLayout width="fill-parent" onClick={() => setOpenId(open ? null : task.id)}>
-              <Label size={12} weight={600} width="fill-parent" truncate={2}>
-                {task.title}
+    const late = isLate(task)
+    const due = task.due ? dueInfo(task.due) : null
+    const toggle = () => (open ? closeCard() : openCard(task.id))
+    const frame = { fill: C.bg, cornerRadius: px(8), stroke: open ? C.accent : C.border, strokeWidth: open ? 2 : 1 }
+    const row = (
+      <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} padding={{ vertical: px(6), horizontal: px(8) }} verticalAlignItems="start" {...(open ? {} : frame)}>
+        <AutoLayout width={px(16)} height={px(16)} cornerRadius={px(4)} stroke={C.accent} strokeWidth={1.5} onClick={() => setDiscuss(task.id, false)} hoverStyle={{ fill: C.accentSoft }} tooltip="Discussed" />
+        <AutoLayout direction="vertical" width="fill-parent" spacing={px(3)}>
+          <Label size={12} weight={600} width="fill-parent" truncate={2} onClick={toggle}>
+            {task.title || 'Untitled'}
+          </Label>
+          <AutoLayout direction="horizontal" spacing={px(6)} wrap verticalAlignItems="center" width="fill-parent">
+            <Label size={10} weight={700} color={STATUS_COLOR[task.status]}>
+              {STATUS_LABEL[task.status]}
+            </Label>
+            <Avatar name={task.assignee} photo={photoOf(task.assignee)} size={16} />
+            <Label size={10} weight={500} color={task.assignee ? C.text : C.faint} italic={!task.assignee}>
+              {task.assignee ? shortName(task.assignee, 20) : 'Unassigned'}
+            </Label>
+            {due ? (
+              <Label size={10} weight={late ? 700 : 500} color={late ? C.danger : C.muted}>
+                {late ? `Overdue · ${due.label}` : due.label}
               </Label>
-            </AutoLayout>
-            <AutoLayout direction="horizontal" spacing={px(6)} wrap verticalAlignItems="center" width="fill-parent">
-              <AutoLayout direction="horizontal" spacing={px(4)} padding={{ vertical: px(1), horizontal: px(6) }} cornerRadius={px(999)} fill={STATUS_SOFT[task.status]} verticalAlignItems="center">
-                <StatusGlyph status={task.status} size={10} />
-                <Label size={10} weight={700} color={STATUS_COLOR[task.status]}>
-                  {STATUS_LABEL[task.status]}
-                </Label>
-              </AutoLayout>
-              <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center">
-                <Avatar name={task.assignee} photo={photoOf(task.assignee)} size={16} />
-                <Label size={10} weight={500} color={task.assignee ? C.text : C.faint} italic={!task.assignee}>
-                  {task.assignee ? shortName(task.assignee, 20) : 'Unassigned'}
-                </Label>
-              </AutoLayout>
-              {task.due ? (
-                <Label size={10} weight={overdue ? 700 : 500} color={overdue ? C.danger : C.muted}>
-                  {overdue ? `Overdue · ${dueLabel(task.due)}` : dueLabel(task.due)}
-                </Label>
-              ) : null}
-              {labelsOf(task).map((l) => (
-                <LabelPill key={l} name={l} />
-              ))}
-            </AutoLayout>
-            <Input
-              value={task.discussNote || null}
-              placeholder="Add a talking point…"
-              onTextEditEnd={(e) => {
-                if (e.characters !== (task.discussNote ?? '')) patch(task.id, { discussNote: e.characters })
-              }}
-              fontFamily={FONT}
-              fontSize={px(11)}
-              fill={C.text}
-              placeholderProps={{ fill: C.faint }}
-              width="fill-parent"
-              inputBehavior="multiline"
-              inputFrameProps={{ padding: { vertical: px(4), horizontal: px(7) }, fill: C.surface, cornerRadius: px(6) }}
-            />
+            ) : null}
+            {labelsOf(task).map((l) => (
+              <LabelPill key={l} name={l} quiet />
+            ))}
           </AutoLayout>
-          <IconBtn icon={open ? 'chevronUp' : 'chevronDown'} tooltip={open ? 'Collapse' : 'Edit task'} onClick={() => setOpenId(open ? null : task.id)} />
+          <Input
+            value={task.discussNote || null}
+            placeholder="Add a talking point…"
+            onTextEditEnd={(e) => {
+              if (e.characters !== (task.discussNote ?? '')) patch(task.id, { discussNote: e.characters })
+            }}
+            fontFamily={FONT}
+            fontSize={px(11)}
+            fill={C.text}
+            placeholderProps={{ fill: C.faint }}
+            width="fill-parent"
+            inputBehavior="multiline"
+            inputFrameProps={{ padding: { vertical: px(4), horizontal: px(7) }, fill: C.surface, cornerRadius: px(6) }}
+          />
         </AutoLayout>
-        {open ? (
-          <AutoLayout width="fill-parent" padding={{ top: 0, bottom: px(8), left: px(10), right: px(10) }}>
-            <Editor task={task} />
-          </AutoLayout>
-        ) : null}
+        <GlyphBtn glyph={open ? '×' : '›'} tooltip={open ? 'Close' : 'Edit'} onClick={toggle} />
+      </AutoLayout>
+    )
+    if (!open) return row
+    return (
+      <AutoLayout key={task.id} direction="vertical" width="fill-parent" spacing={0} {...frame}>
+        {row}
+        <Editor task={task} showStatus inset />
       </AutoLayout>
     )
   }
 
   // ---------------------------------------------------------------- panels
-  /** New-task composer, rendered as a card at the top of the To Do column. */
-  function Composer() {
-    const customDue = !!draft.due && draft.due !== today && draft.due !== tomorrow && draft.due !== nextWeek
-    const assignee = draft.assignee || owner || ''
+  function FilterGroup({ label, children }: { label: string; children?: any }) {
     return (
-      <AutoLayout
-        direction="vertical"
-        width="fill-parent"
-        spacing={px(6)}
-        padding={{ vertical: px(8), horizontal: px(9) }}
-        fill={C.bg}
-        cornerRadius={px(8)}
-        stroke={C.accent}
-        strokeWidth={2}
-        effect={{ type: 'drop-shadow', color: { r: 0.31, g: 0.27, b: 0.9, a: 0.18 }, offset: { x: 0, y: 4 }, blur: 14 }}
-      >
-        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="start">
-          <AutoLayout width={px(16)} height={px(16)} cornerRadius={px(8)} stroke={C.borderStrong} strokeWidth={1.5} strokeAlign="inside" />
-          <Input
-            value={null}
-            placeholder="Task title, press Enter"
-            onTextEditEnd={(e) => createTask(e.characters, { status: 'todo', priority: draft.priority, due: draft.due, assignee, labels: draft.label ? [draft.label] : [] })}
-            fontFamily={FONT}
-            fontSize={px(13)}
-            fontWeight={600}
-            fill={C.text}
-            placeholderProps={{ fill: C.faint, fontWeight: 400 }}
-            width="fill-parent"
-            inputBehavior="wrap"
-            inputFrameProps={{ padding: 0 }}
-          />
-          <IconBtn icon="x" size={18} tooltip="Close" onClick={() => setQuickAddOpen(false)} />
-        </AutoLayout>
-        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(4)} wrap verticalAlignItems="center">
-          <Chip small label="Today" active={draft.due === today} onClick={() => setDraft({ ...draft, due: draft.due === today ? null : today })} />
-          <Chip small label="Tomorrow" active={draft.due === tomorrow} onClick={() => setDraft({ ...draft, due: draft.due === tomorrow ? null : tomorrow })} />
-          <Chip small label="Next week" active={draft.due === nextWeek} onClick={() => setDraft({ ...draft, due: draft.due === nextWeek ? null : nextWeek })} />
-          <Chip small label={customDue ? weekdayDate(draft.due as string) : 'Pick…'} active={customDue} onClick={() => pickDate('New task', draft.due, (iso) => setDraft({ ...draft, due: iso }))} />
-        </AutoLayout>
-        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(4)} wrap verticalAlignItems="center">
-          {PRIORITIES.map((p) => (
-            <Chip key={p} small label={PRIORITY_GLYPH[p]} active={draft.priority === p} color={PRIORITY_COLOR[p]} soft={PRIORITY_SOFT[p]} onClick={() => setDraft({ ...draft, priority: draft.priority === p ? null : p })} />
-          ))}
-        </AutoLayout>
-        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(4)} verticalAlignItems="center">
-          <Avatar name={assignee} photo={photoOf(assignee)} size={18} />
-          <Input
-            value={assignee || null}
-            placeholder="Assignee"
-            onTextEditEnd={(e) => setDraft({ ...draft, assignee: resolvePerson(e.characters) })}
-            fontFamily={FONT}
-            fontSize={px(10)}
-            fontWeight={600}
-            fill={C.text}
-            placeholderProps={{ fill: C.faint, italic: true }}
-            width="fill-parent"
-            inputBehavior="truncate"
-            inputFrameProps={{ padding: { vertical: px(3), horizontal: px(8) }, fill: C.surface, cornerRadius: px(999) }}
-          />
-          <Chip
-            small
-            label="Me"
-            tooltip="Assign to me"
-            onClick={() => {
-              const name = myName()
-              if (name) setDraft({ ...draft, assignee: draft.assignee === name ? '' : name })
-            }}
-          />
-        </AutoLayout>
-        {knownLabels.length ? (
-          <AutoLayout direction="horizontal" width="fill-parent" spacing={px(4)} wrap verticalAlignItems="center">
-            {knownLabels.slice(0, 6).map((l) => (
-              <LabelPill key={l} name={l} size={10} active={draft.label === l} onClick={() => setDraft({ ...draft, label: draft.label === l ? null : l })} />
-            ))}
-          </AutoLayout>
-        ) : null}
-        <Label size={9} color={C.faint}>
-          Enter adds the task and keeps this open for the next one.
+      <AutoLayout direction="horizontal" spacing={px(5)} verticalAlignItems="center">
+        <Label size={9} weight={700} color={C.faint}>
+          {label.toUpperCase()}
         </Label>
+        {children}
       </AutoLayout>
     )
   }
@@ -2106,7 +1931,7 @@ function Widget() {
           <FilterGroup label="Quick">
             <Chip small label={`Overdue (${overdueCount})`} color={C.danger} soft={C.dangerSoft} active={filters.due === 'overdue'} onClick={() => toggleFilter('due', 'overdue')} />
             <Chip small label={`Unassigned (${unassignedCount})`} active={filters.assignee === '__none__'} onClick={() => toggleFilter('assignee', '__none__')} dashed />
-            <Chip small label={`Stale ${staleDays}d+ (${staleCount})`} color={C.warn} soft={C.warnSoft} active={filters.stale} onClick={() => setFilter('stale', !filters.stale)}  />
+            <Chip small label={`Stale ${staleDays}d+ (${staleCount})`} color={C.warn} soft={C.warnSoft} active={filters.stale} onClick={() => setFilter('stale', !filters.stale)} />
           </FilterGroup>
           <FilterGroup label="Due">
             <Chip small label="Today" active={filters.due === 'today'} onClick={() => toggleFilter('due', 'today')} />
@@ -2120,7 +1945,7 @@ function Widget() {
           </FilterGroup>
           <FilterGroup label="Status">
             {STATUSES.map((s) => (
-              <Chip key={s} small label={STATUS_LABEL[s]} lead={<StatusGlyph status={s} size={10} muted={filters.status !== s} />} color={STATUS_COLOR[s]} soft={STATUS_SOFT[s]} active={filters.status === s} onClick={() => toggleFilter('status', s)} />
+              <Chip key={s} small label={STATUS_LABEL[s]} color={STATUS_COLOR[s]} soft={STATUS_SOFT[s]} active={filters.status === s} onClick={() => toggleFilter('status', s)} />
             ))}
           </FilterGroup>
         </AutoLayout>
@@ -2136,28 +1961,7 @@ function Widget() {
             {knownAssignees.length ? (
               <FilterGroup label="People">
                 {knownAssignees.map((a) => (
-                  <AutoLayout
-                    key={a}
-                    direction="horizontal"
-                    spacing={px(4)}
-                    padding={{ vertical: px(1), horizontal: px(1) }}
-                    cornerRadius={px(999)}
-                    fill={filters.assignee === a ? C.accentSoft : undefined}
-                    stroke={filters.assignee === a ? C.accent : undefined}
-                    verticalAlignItems="center"
-                    onClick={() => toggleFilter('assignee', a)}
-                    hoverStyle={{ fill: C.accentSoft }}
-                    tooltip={a}
-                  >
-                    <Avatar name={a} photo={photoOf(a)} size={20} />
-                    {filters.assignee === a ? (
-                      <AutoLayout padding={{ right: px(6) }}>
-                        <Label size={10} weight={700} color={C.accent}>
-                          {shortName(a)}
-                        </Label>
-                      </AutoLayout>
-                    ) : null}
-                  </AutoLayout>
+                  <PersonChip key={a} name={a} active={filters.assignee === a} onClick={() => toggleFilter('assignee', a)} />
                 ))}
               </FilterGroup>
             ) : null}
@@ -2168,41 +1972,17 @@ function Widget() {
             <Label size={10} color={C.muted}>
               {`${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'}${search ? ' + search' : ''} active`}
             </Label>
-            <Btn small tone="ghost" icon="x" label="Clear all" onClick={clearFilters} />
+            <Btn small tone="ghost" label="Clear all" onClick={clearFilters} />
           </AutoLayout>
         ) : null}
       </AutoLayout>
     )
   }
 
-  function FilterGroup({ label, children }: { label: string; children?: any }) {
-    return (
-      <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center">
-        <AutoLayout padding={{ right: px(2) }}>
-          <Label size={9} weight={700} color={C.faint}>
-            {label.toUpperCase()}
-          </Label>
-        </AutoLayout>
-        {children}
-      </AutoLayout>
-    )
-  }
-
-  function ViewTab({ id, label, iconName, count }: { id: View; label: string; iconName: IconName; count?: number }) {
+  function ViewTab({ id, label, count }: { id: View; label: string; count?: number }) {
     const on = view === id
     return (
-      <AutoLayout
-        direction="horizontal"
-        spacing={px(5)}
-        padding={{ vertical: px(5), horizontal: px(12) }}
-        cornerRadius={px(7)}
-        fill={on ? C.bg : undefined}
-        verticalAlignItems="center"
-        onClick={() => setView(id)}
-        hoverStyle={{ fill: on ? C.bg : C.surfaceAlt }}
-        effect={on ? { type: 'drop-shadow', color: { r: 0, g: 0, b: 0, a: 0.08 }, offset: { x: 0, y: 1 }, blur: 2 } : undefined}
-      >
-        <Icon name={iconName} color={on ? C.accent : C.muted} size={11} />
+      <AutoLayout direction="horizontal" spacing={px(5)} padding={{ vertical: px(5), horizontal: px(12) }} cornerRadius={px(7)} fill={on ? C.bg : undefined} stroke={on ? C.border : undefined} verticalAlignItems="center" onClick={() => setView(id)} hoverStyle={{ fill: on ? C.bg : C.surfaceAlt }}>
         <Label size={11} weight={on ? 700 : 500} color={on ? C.text : C.muted}>
           {label}
         </Label>
@@ -2212,22 +1992,11 @@ function Widget() {
   }
 
   // ----------------------------------------------------------------- header
-  const agendaCount = live.filter((t) => t.discuss).length
   void storeVersion
   const mainView = view === 'board' || (view === 'people' && owner) ? <BoardView /> : view === 'week' ? <WeekView /> : view === 'sync' ? <SyncView /> : view === 'people' ? <PeopleView /> : <DoneView />
 
   return (
-    <AutoLayout
-      direction="vertical"
-      spacing={px(10)}
-      padding={px(14)}
-      fill={C.bg}
-      cornerRadius={px(16)}
-      stroke={C.border}
-      strokeWidth={1}
-      width="hug-contents"
-      effect={{ type: 'drop-shadow', color: { r: 0.07, g: 0.09, b: 0.15, a: 0.08 }, offset: { x: 0, y: 4 }, blur: 16 }}
-    >
+    <AutoLayout direction="vertical" spacing={px(10)} padding={px(14)} fill={C.bg} cornerRadius={px(16)} stroke={C.border} strokeWidth={1} width="hug-contents">
       {/* Row 1: identity + primary action */}
       <AutoLayout direction="horizontal" width={BOARD_W} spacing={px(12)} verticalAlignItems="center">
         {owner ? <Avatar name={owner} photo={scope.kind === 'personal' ? scope.photoUrl ?? photoOf(owner) : null} size={30} /> : null}
@@ -2241,53 +2010,28 @@ function Widget() {
           fill={C.text}
           width={px(220)}
           inputBehavior="truncate"
-          inputFrameProps={{ padding: px(0) }}
+          inputFrameProps={{ padding: 0 }}
         />
-        <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center">
+        <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center" width="fill-parent">
           <Pill text={owner ? 'My board' : 'Team board'} color={owner ? C.accent : C.muted} fill={owner ? C.accentSoft : C.surface} size={10} />
-          <Pill
-            text={liveSync ? 'Live sync' : 'Manual sync'}
-            color={liveSync ? C.success : C.muted}
-            fill={liveSync ? C.successSoft : C.surface}
-            size={10}
-            onClick={() => setLive(!liveSync)}
-            tooltip={liveSync ? 'Switch to manual sync' : 'Switch to live sync'}
-          />
+          <Pill text={liveSync ? 'Live sync' : 'Manual sync'} color={liveSync ? C.success : C.muted} fill={liveSync ? C.successSoft : C.surface} size={10} onClick={() => setLive(!liveSync)} tooltip={liveSync ? 'Switch to manual sync' : 'Switch to live sync'} />
           <Pill text={`${active.length} active`} color={C.muted} fill={C.surface} size={10} />
           {overdueCount ? <Pill text={`${overdueCount} overdue`} color={C.danger} fill={C.dangerSoft} size={10} onClick={() => setFilter('due', filters.due === 'overdue' ? null : 'overdue')} tooltip="Filter" /> : null}
           {blockedCount ? <Pill text={`${blockedCount} blocked`} color={STATUS_COLOR.blocked} fill={STATUS_SOFT.blocked} size={10} /> : null}
           {unassignedCount ? <Pill text={`${unassignedCount} unassigned`} color={C.muted} fill={C.surface} size={10} onClick={() => setFilter('assignee', filters.assignee === '__none__' ? null : '__none__')} tooltip="Filter" /> : null}
         </AutoLayout>
-        <AutoLayout width="fill-parent" height={px(1)} />
-        <Btn
-          small
-          tone="ghost"
-          icon={owner ? 'users' : 'user'}
-          label={owner ? 'Switch to team board' : 'Make this my board'}
-          onClick={owner ? makeTeam : makeMine}
-          
-        />
-        <Btn
-          label="Add task"
-          icon="plus"
-          tone={quickAddOpen ? 'default' : 'primary'}
-          onClick={() => {
-            const next = !quickAddOpen
-            setQuickAddOpen(next)
-            if (next && collapsed.todo) setCollapsed({ ...collapsed, todo: false })
-          }}
-          
-        />
+        <Btn small tone="ghost" label={owner ? 'Switch to team board' : 'Make this my board'} onClick={owner ? makeTeam : makeMine} />
+        <Btn label="+ Add task" tone="primary" onClick={addTask} />
       </AutoLayout>
 
       {/* Row 2: navigation + search/filter */}
       <AutoLayout direction="horizontal" width={BOARD_W} spacing={px(10)} verticalAlignItems="center">
         <AutoLayout direction="horizontal" spacing={px(2)} padding={px(3)} fill={C.surface} cornerRadius={px(9)}>
-          <ViewTab id="board" label="Board" iconName="board" />
-          <ViewTab id="week" label="Week" iconName="week" />
-          <ViewTab id="done" label="Done" iconName="check" count={done.length} />
-          <ViewTab id="sync" label="Sync" iconName="chat" count={agendaCount} />
-          {owner ? null : <ViewTab id="people" label="People" iconName="users" />}
+          <ViewTab id="board" label="Board" />
+          <ViewTab id="week" label="Week" />
+          <ViewTab id="done" label="Done" count={done.length} />
+          <ViewTab id="sync" label="Sync" count={agendaCount} />
+          {owner ? null : <ViewTab id="people" label="People" />}
         </AutoLayout>
         <AutoLayout width="fill-parent" height={px(1)} />
         <AutoLayout direction="horizontal" spacing={px(6)} verticalAlignItems="center" padding={{ vertical: px(6), horizontal: px(10) }} fill={C.surface} stroke={search ? C.accent : undefined} cornerRadius={px(8)} width={px(220)}>
@@ -2302,26 +2046,15 @@ function Widget() {
             placeholderProps={{ fill: C.faint }}
             width="fill-parent"
             inputBehavior="truncate"
-            inputFrameProps={{ padding: px(0) }}
+            inputFrameProps={{ padding: 0 }}
           />
-          {search ? <IconBtn icon="x" size={16} tooltip="Clear search" onClick={() => setSearch('')} /> : null}
+          {search ? <GlyphBtn glyph="×" size={16} tooltip="Clear" onClick={() => setSearch('')} /> : null}
         </AutoLayout>
-        <Btn
-          label={activeFilterCount ? `Filters · ${activeFilterCount}` : 'Filters'}
-          icon="filter"
-          tone={filtersOpen || activeFilterCount ? 'primary' : 'default'}
-          onClick={() => setFiltersOpen(!filtersOpen)}
-          
-        />
+        <Btn label={activeFilterCount ? `Filters · ${activeFilterCount}` : 'Filters'} tone={filtersOpen || activeFilterCount ? 'primary' : 'default'} onClick={() => setFiltersOpen(!filtersOpen)} />
         <Btn icon="refresh" onClick={refresh} tooltip="Sync all boards" />
         <Btn icon="download" onClick={() => exportCsv(all, boardTitle)} tooltip="Export CSV" />
       </AutoLayout>
 
-      {quickAddOpen && view !== 'board' ? (
-        <AutoLayout width={COL_W}>
-          <Composer />
-        </AutoLayout>
-      ) : null}
       {filtersOpen ? <FilterPanel /> : null}
 
       {live.length === 0 ? (
@@ -2333,7 +2066,6 @@ function Widget() {
         </AutoLayout>
       ) : null}
 
-      {/* body: main view + optional inspector on the right */}
       {mainView}
     </AutoLayout>
   )

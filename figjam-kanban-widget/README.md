@@ -54,11 +54,11 @@ on the next widget interaction (or re-import the manifest).
 | Brief section | Where it lives |
 | --- | --- |
 | 1 Core layout | Four columns (To Do / In Progress / Blocked / Done), 248px wide, hug-height so there are never empty gaps. Chevron collapses a column to a 36px strip that still shows its count. Counts in every header. Done column is collapsed by default and shows the 4 most recent completions when expanded. |
-| Task details (editor) | Clicking a card title **expands the card in place**, inside its own column (columns are 300px wide at compact scale to give the form room). The expanded card has an editable title, description, segmented status control, due date (current value + quick picks), owner (photo/initials avatar, name field with prefix matching, **Me**, chips for every known person), priority, labels, a subtask checklist with progress bar, and archive/delete. Works the same in Week view and on rows in the Done view. It holds title, description, status, due date (current value + quick picks), owner (photo/initials avatar, name field, **Me**, one-click avatars of known people), priority, **labels**, and a **subtask checklist** with progress bar. |
+| Task details (editor) | Clicking a card title **expands the card in place**, inside its own column. The compact row (owner · due · subtasks · status control) stays as the single set of controls — nothing is shown twice — and the editor adds description, due quick picks, owner (photo/initials avatar, name field with prefix matching, **Me**, chips for every known person), priority, labels, team sync and a subtask checklist with progress bar, plus archive/delete. Works the same in Week view and on rows in the Done and Sync views. It holds title, description, status, due date (current value + quick picks), owner (photo/initials avatar, name field, **Me**, one-click avatars of known people), priority, **labels**, and a **subtask checklist** with progress bar. |
 | Labels & subtasks | Tasks can carry project labels (free text, colour derived from the name, consistent across the board). Cards show up to three label pills; clicking one filters the board by that label. Subtasks show as a `2/5` progress pill on the card; the inspector lets you add, rename, tick and remove them. Search covers labels and subtask titles. |
 | Team sync agenda | Any task can be flagged **Discuss in team sync** (in the expanded card) with an optional talking point. Flagged cards show a "Sync" pill, and the **Sync** tab lists the agenda with status, owner, due date, labels and the note. **Create agenda on canvas** creates a dated section (`Team sync · Tue, Oct 13`) to the right of the widget with one FigJam sticky per flagged task, colour-coded by status, so the meeting can run on the canvas. Ticking an agenda row removes it after it has been discussed; "Clear agenda" resets everything for the next meeting. |
-| 2 Quick creation | A dashed **"+ Add task"** input at the bottom of every active column: type, press Enter, task appears, input clears for the next one. The **Add task** header button opens a **composer card at the top of the To Do column** with optional due / priority / assignee / label chips that stay set while you add several tasks in a row (Enter adds and keeps the card open). Click a card to expand it and edit title, description, owner, due, priority inline. |
-| 3 One-step status | Every card has a 4-icon status selector (○ To Do, ◐ In Progress, ⊘ Blocked, ✓ Done). Clicking re-files the card into the right column instantly; columns re-flow automatically. A toast confirms each move. |
+| 2 Quick creation | A dashed **"+ Add task"** input at the bottom of every active column: type, press Enter, task appears, input clears for the next one. The **Add task** header button creates a blank card **at the top of the To Do column, already expanded** with the full editor (title, description, due, owner, priority, labels, subtasks, team sync). Type the title and press Enter; close it empty and it is discarded. The card stays pinned to the top until you close it. Click a card to expand it and edit title, description, owner, due, priority inline. |
+| 3 One-step status | Every card has one status control: three glyph buttons (○ To Do, ◐ In Progress, ⊖ Blocked) and the check circle at the start of the title for Done — the same control in the compact card, the expanded card and the editor. Clicking re-files the card instantly; columns re-flow automatically. Where there is no column to tell the status (Week, People, Done, Sync views) the control also shows the current status as text. |
 | 4 Scheduling | Due chips: Today / Tomorrow / Next week / Pick date… (native calendar in a small iframe) / clear. The card shows "Today", "Tomorrow", "Thu 16", or "Oct 24". Overdue cards get a red left stripe and an "Overdue · <date>" badge with a warning icon. **Week** view groups active tasks by Overdue / Today / Tomorrow / next five days / Later / No due date. Sort by due date (default), priority or newest via the property menu. |
 | 5 Assignees & priority | Owner is free text with a **Me** shortcut (uses your Figma name) and one-click avatars of people already on the board or active in the file. Avatars show the person's **Figma profile photo** when known, initials otherwise. Unassigned shows as a dashed "?" ring plus "Unassigned". Priority ↑ High / → Med / ↓ Low pills. Filter by both, plus by label. |
 | 6 Completed & history | Marking Done plays a brief check animation, then the card leaves the active board. **Done** view lists completed tasks with owner, due date, completion date, priority; searchable; **Reopen** returns a task to To Do. **Archive** hides outdated tasks (toggle *Show archived* to browse, restore or permanently delete them). Property menu: *Archive done > 14 days*. Nothing is deleted automatically. |
@@ -108,24 +108,42 @@ external backend, which this prototype deliberately avoids.
 
 - **Widget size** — property menu → *Size: compact / comfortable / large*. Comfortable (default) is sized to sit well next to FigJam sticky notes; compact is the original dense layout; large is for presenting. Every dimension scales together, so nothing wraps differently.
 - **Export CSV** — the download icon next to *Filters*, or property menu → *Export CSV*. Opens a small dialog with a **Download .csv** button and a copy-to-clipboard fallback. One row per task (active, completed and archived) with: id, title, description, status, assignee, due, priority, labels, subtasks done/total, subtask list, created/updated/completed timestamps (ISO 8601), archived. Values are RFC 4180 quoted, UTF-8 with BOM so Excel opens it cleanly.
-- **Tooltips** always render below the hovered element; the Widget API only takes a tooltip string and Figma decides the placement. They are kept to one or two words, and labelled buttons have none, so they cover as little as possible.
+- **Tooltips** always render below the hovered element; the Widget API only takes a tooltip string and Figma decides the placement. They are kept to one or two words, labelled buttons have none, and the status control has none, so they cover as little as possible.
+- **Teammate discovery** happens when someone opens a card, creates a task, uses **Me**, or presses the people icon — not on every click, to keep interactions cheap.
 
 ## Performance notes
 
-Figma re-renders the whole widget tree on every interaction, and SVG nodes are
-the most expensive part of that tree because each SVG string is parsed on every
-render. The widget therefore:
+How a click works in a FigJam widget, per Figma's documentation: the sandbox
+cold-starts, evaluates the bundle, renders the whole tree, runs effects, runs
+the handler, re-renders and runs effects again — all on the editor's main
+thread. Every JSX element becomes a real canvas sublayer. Figma documents
+blurs/shadows and complex SVG as the expensive rendering features, and
+`documentAccess: "dynamic-page"` as required to avoid loading the whole file.
+The widget is built around that:
 
-- draws every per-card glyph (status circles, check, avatar, priority, due) with
-  native frames, ellipses and text — **zero SVG per card**; the only SVGs are the
-  ~9 header/panel icons;
-- renders panels (quick add, filters, card details) only while they are open;
-- keeps the Done column collapsed by default and shows at most 4 recent rows
-  when expanded (the full list lives in the Done view);
-- avoids drop shadows on cards (one shadow on the outer frame, one on the active tab).
+- **No shadows, no clipping on cards, no SVG below the header.** Every per-card
+  glyph is a frame, ellipse or text; the only SVGs on a board are the search,
+  refresh and export icons (3). Open/blocked/overdue state is a border colour.
+- **Fewest nodes that still look right.** A compact card is ~18 sublayers (was
+  ~31): the status control is three glyph buttons that are their own hit
+  targets, pills on cards are plain coloured text, clickable text carries its own
+  click handler instead of a wrapper frame. Board with 8 tasks: 231 sublayers
+  (was 316); with 30 tasks: 625 (was 977); Week view with 30 tasks: 645 (was 1084).
+- **One commit per click.** A handler writes once to the store and bumps one
+  version stamp at the end, pushes to other boards at most once (live mode only,
+  and only to boards that can see the change), and no longer re-reads
+  collaborators on every click. The completion animation timer (two renders +
+  a live handler per completion) is gone.
+- **Version-gated merge.** A render reads one store key; the full merge only
+  runs when another board has written.
+- **Bounded trees.** Columns and groups show 10 cards before a "Show N more"
+  toggle, so a 100-task board does not render 100 cards on every click.
+- **Smaller bundle, lazy document.** Minified bundle (58 KB, was 108 KB) is
+  evaluated on every click; `documentAccess: "dynamic-page"` stops the
+  first interaction from loading every page of the file.
 
-If a very large board (100+ active cards) still feels slow, collapse columns you
-are not working in, or archive completed tasks from the Done view.
+Node counts come from the Node harness (`smoke/histogram.js`); Figma does not
+publish per-node costs, so treat them as a proxy and judge the feel in FigJam.
 
 ## Platform notes and limitations (honest list)
 
