@@ -53,10 +53,16 @@ function exportCode(glbPath: string, blendPath: string): string {
   return `
 import bpy
 bpy.ops.object.select_all(action='DESELECT')
-bpy.ops.export_scene.gltf(
+_extra = {}
+try:
+    if 'export_import_convert_lighting_mode' in bpy.ops.export_scene.gltf.get_rna_type().properties.keys():
+        _extra['export_import_convert_lighting_mode'] = 'SPEC'
+except Exception:
+    pass
+bpy.ops.export_scene.gltf(**_extra,
     filepath=${py(glbPath)}, export_format='GLB', export_apply=True,
     export_yup=True, export_materials='EXPORT', use_selection=False,
-    export_cameras=False, export_lights=False)
+    export_cameras=False, export_lights=True)
 bpy.ops.wm.save_as_mainfile(filepath=${py(blendPath)}, copy=True)
 print('EXPORT_OK')
 `;

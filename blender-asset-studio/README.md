@@ -102,6 +102,12 @@ Only one generation runs at a time because Blender holds a single scene; later r
   an optional note for the agent. In any run, tick the kit textures the agent must use: they are
   loaded as image textures with the recipe in `agent/SYSTEM_PROMPT.md`, so they are packed into
   the GLB and visible in the viewer. Kit textures win over procedural or downloaded ones.
+- **Viewer lighting.** Studio reflections and soft shadows by default. Lamps the agent places
+  (`Light_*` objects) and glowing materials are exported with the model; the viewer's
+  **day / night** toggle dims the studio light and adds bloom so they show. Models with lamps open
+  in night mode.
+- **Interiors and glass.** Vehicles, shopfronts, kiosks and cafes get a simple interior and
+  see-through glass by default (say "no interior" in the description to skip it).
 - **Usage, not money.** The top bar shows the 5-hour and 7-day subscription windows as the CLI
   reports them after each run. The API-equivalent cost of a version is only in a tooltip.
 

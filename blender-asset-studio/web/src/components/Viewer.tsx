@@ -2,6 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+
+const MAX_MODEL_LIGHTS = 16;
 
 interface Props {
   glbUrl: string | null;
@@ -27,7 +34,13 @@ export default function Viewer({ glbUrl, selected, onSelect, triangles }: Props)
     model: THREE.Group | null;
     raycaster: THREE.Raycaster;
     fit: () => void;
+    modelLights: THREE.Light[];
+    applyMode: (night: boolean) => void;
   } | null>(null);
+  const [night, setNight] = useState(false);
+  const nightRef = useRef(false);
+  nightRef.current = night;
+  const [lightCount, setLightCount] = useState(0);
   const [hover, setHover] = useState<{ name: string; x: number; y: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,19 +58,55 @@ export default function Viewer({ glbUrl, selected, onSelect, triangles }: Props)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     el.appendChild(renderer.domElement);
+
+    // soft studio reflections, generated locally (no network)
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environment = envTex;
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
 
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.2));
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x334455, 0.6);
+    scene.add(hemi);
     const sun = new THREE.DirectionalLight(0xffffff, 2.2);
     sun.position.set(5, 10, 4);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.bias = -0.0005;
+    sun.shadow.normalBias = 0.02;
     scene.add(sun);
-    const fill = new THREE.DirectionalLight(0x99bbff, 0.6);
+    scene.add(sun.target);
+    const fill = new THREE.DirectionalLight(0x99bbff, 0.4);
     fill.position.set(-6, 3, -4);
     scene.add(fill);
     const grid = new THREE.GridHelper(40, 40, 0x3a3f4b, 0x262a33);
     scene.add(grid);
+    // invisible ground that only shows the model's shadow
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.ShadowMaterial({ opacity: 0.35 }));
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // bloom for lamps and glowing materials, used in night mode only
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.45, 0.35, 0.92);
+    composer.addPass(bloom);
+    composer.addPass(new OutputPass());
+
+    const dayBg = new THREE.Color(0x15171c), nightBg = new THREE.Color(0x07080b);
+    const applyMode = (isNight: boolean) => {
+      hemi.intensity = isNight ? 0.06 : 0.6;
+      sun.intensity = isNight ? 0.12 : 2.2;
+      fill.intensity = isNight ? 0.04 : 0.4;
+      scene.environmentIntensity = isNight ? 0.06 : 0.7;
+      scene.background = isNight ? nightBg : dayBg;
+      renderer.toneMappingExposure = isNight ? 0.9 : 1.0;
+      for (const l of sceneRef.current?.modelLights ?? []) l.visible = isNight;
+    };
 
     const raycaster = new THREE.Raycaster();
     const fit = () => {
@@ -74,13 +123,27 @@ export default function Viewer({ glbUrl, selected, onSelect, triangles }: Props)
       camera.far = radius * 100;
       camera.updateProjectionMatrix();
       grid.position.y = box.min.y;
+      ground.position.set(center.x, box.min.y + 0.002, center.z);
+      ground.scale.setScalar(radius * 8);
+      // key light and its shadow frustum follow the model
+      sun.position.copy(center).add(new THREE.Vector3(radius * 1.5, radius * 3, radius * 1.2));
+      sun.target.position.copy(center);
+      const cam = sun.shadow.camera;
+      cam.left = cam.bottom = -radius * 1.6;
+      cam.right = cam.top = radius * 1.6;
+      cam.near = 0.05;
+      cam.far = radius * 10;
+      cam.updateProjectionMatrix();
       controls.update();
     };
-    sceneRef.current = { scene, camera, renderer, controls, model: null, raycaster, fit };
+    sceneRef.current = { scene, camera, renderer, controls, model: null, raycaster, fit, modelLights: [], applyMode };
+    applyMode(false);
 
     const resize = () => {
       const w = el.clientWidth, h = el.clientHeight;
       renderer.setSize(w, h, false);
+      composer.setSize(w, h);
+      bloom.resolution.set(w, h);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
     };
@@ -91,7 +154,8 @@ export default function Viewer({ glbUrl, selected, onSelect, triangles }: Props)
     let raf = 0;
     const loop = () => {
       controls.update();
-      renderer.render(scene, camera);
+      if (nightRef.current) composer.render();
+      else renderer.render(scene, camera);
       raf = requestAnimationFrame(loop);
     };
     loop();
@@ -100,6 +164,9 @@ export default function Viewer({ glbUrl, selected, onSelect, triangles }: Props)
       cancelAnimationFrame(raf);
       ro.disconnect();
       controls.dispose();
+      composer.dispose();
+      envTex.dispose();
+      pmrem.dispose();
       renderer.dispose();
       el.removeChild(renderer.domElement);
       sceneRef.current = null;
@@ -114,6 +181,8 @@ export default function Viewer({ glbUrl, selected, onSelect, triangles }: Props)
       s.scene.remove(s.model);
       s.model = null;
     }
+    s.modelLights = [];
+    setLightCount(0);
     setError(null);
     if (!glbUrl) return;
     setLoading(true);
@@ -123,15 +192,45 @@ export default function Viewer({ glbUrl, selected, onSelect, triangles }: Props)
       (gltf) => {
         if (cancelled || !sceneRef.current) return;
         const model = gltf.scene;
+        const lights: THREE.Light[] = [];
         model.traverse((o) => {
           const m = o as THREE.Mesh;
           if (m.isMesh) {
             m.userData.baseMaterial = m.material;
+            const mats = Array.isArray(m.material) ? m.material : [m.material];
+            const transparent = mats.some((x) => x.transparent || (x as THREE.MeshStandardMaterial).opacity < 1);
+            m.castShadow = !transparent;
+            m.receiveShadow = true;
+          }
+          const l = o as THREE.Light;
+          if (l.isLight) {
+            l.castShadow = false;
+            lights.push(l);
           }
         });
+        // keep the brightest lamps only, so big scenes stay fast
+        lights.sort((a, b) => b.intensity - a.intensity);
+        // Exported lamp strengths are physical and often far too strong for a small model seen
+        // from outside. Scale them so the brightest gives a soft pool of light at a quarter of
+        // the model's size; their ratios to each other stay as authored.
+        const bounds = new THREE.Box3().setFromObject(model);
+        const radius = Math.max(bounds.getSize(new THREE.Vector3()).length() / 2, 0.1);
+        const ref = lights.find((l) => (l as THREE.PointLight).isPointLight || (l as THREE.SpotLight).isSpotLight);
+        if (ref && ref.intensity > 0) {
+          const target = 6 * (radius * 0.25) ** 2; // candela for ~6 lux at r/4
+          const k = Math.min(1, target / ref.intensity);
+          for (const l of lights) if (!(l as THREE.DirectionalLight).isDirectionalLight) l.intensity *= k;
+        }
+        lights.slice(MAX_MODEL_LIGHTS).forEach((l) => l.parent?.remove(l));
+        sceneRef.current.modelLights = lights.slice(0, MAX_MODEL_LIGHTS);
+        setLightCount(sceneRef.current.modelLights.length);
         sceneRef.current.model = model;
         sceneRef.current.scene.add(model);
         sceneRef.current.fit();
+        // a model with lamps opens in night mode so they are noticed
+        const startNight = sceneRef.current.modelLights.length > 0;
+        setNight(startNight);
+        sceneRef.current.applyMode(startNight);
         applyHighlight(model, selectedRef.current, null);
         setLoading(false);
       },
@@ -146,6 +245,10 @@ export default function Viewer({ glbUrl, selected, onSelect, triangles }: Props)
       cancelled = true;
     };
   }, [glbUrl]);
+
+  useEffect(() => {
+    sceneRef.current?.applyMode(night);
+  }, [night]);
 
   // highlight selection / hover
   useEffect(() => {
@@ -189,6 +292,12 @@ export default function Viewer({ glbUrl, selected, onSelect, triangles }: Props)
       )}
       <div className="viewer-toolbar">
         <button onClick={() => sceneRef.current?.fit()} title="Reset camera">⟲ fit</button>
+        <button
+          onClick={() => setNight((n) => !n)}
+          title={night ? "Switch to daylight" : lightCount ? `Night: show the ${lightCount} lamp${lightCount === 1 ? "" : "s"} and glowing materials` : "Night: show glowing materials (this model has no lamps)"}
+        >
+          {night ? "☾ night" : "☀ day"}{lightCount > 0 ? ` · ${lightCount}` : ""}
+        </button>
         {selected && <button onClick={() => onSelect(null)}>✕ {selected}</button>}
       </div>
       <div className="viewer-status">

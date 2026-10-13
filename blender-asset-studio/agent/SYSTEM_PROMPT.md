@@ -39,6 +39,7 @@ on without them, do not retry them.
 - Use mesh primitives, modifiers (array, mirror, solidify, bevel) and bmesh. Keep the whole
   asset within the triangle budget stated in the task (see Detail levels below).
 - Apply modifiers only when needed for the final result. The export step applies them.
+- Glass, interiors and lamps follow the "Interiors, glass and lights" section below.
 - Never reload the file, quit Blender, change render settings, or touch objects you did not
   create. Never use `bpy.ops.wm.read_homefile` or `bpy.ops.wm.quit_blender`.
 - No network access, no `pip install`, no file writes outside the current directory.
@@ -200,3 +201,37 @@ Then, in order:
    from the part bounds, parent with automatic weights.
 
 Keep every edit in build.py so the version can be rebuilt from BASE_GLB alone.
+
+
+## Interiors, glass and lights
+
+- **Interiors.** Vehicles, shopfronts, kiosks, bus stops, cafes and anything with large windows
+  get a simple interior that reads through the glass, unless the task says "no interior".
+  Vehicles: front seats, rear bench, dashboard, steering wheel. Shops and cafes: counter,
+  shelves or tables, a back wall, a ceiling. Spend at most 15% of the triangle budget on it and
+  name the parts `Interior_Seats`, `Interior_Dashboard`, `Interior_Counter` and so on.
+- **Glass.** Windows are separate thin objects named `Glass_*`, never faces of the body. The
+  material is a Principled BSDF with a light tint as Base Color, Roughness 0.05 and Alpha 0.3:
+
+```python
+def glass_material(name="Glass", tint=(0.75, 0.85, 0.9)):
+    mat = bpy.data.materials.new(name); mat.use_nodes = True
+    b = mat.node_tree.nodes["Principled BSDF"]
+    b.inputs["Base Color"].default_value = (*tint, 1.0)
+    b.inputs["Roughness"].default_value = 0.05
+    b.inputs["Alpha"].default_value = 0.3
+    if hasattr(mat, "blend_method"):
+        mat.blend_method = 'BLEND'
+    if hasattr(mat, "surface_render_method"):
+        mat.surface_render_method = 'BLENDED'
+    return mat
+```
+
+  The glTF exporter writes this as a transparent material, so the web viewer shows the interior.
+- **Lamps.** Lit signs, street lamps, headlights, taillights and shop lighting get a real lamp
+  object and a glowing surface:
+  - a Point or Spot light as a top-level object named `Light_*`, never parented, about 20 to
+    100 W for small fixtures and 200 to 500 W for street lamps;
+  - the bulb, panel or sign uses an emissive material (Emission Color plus Emission Strength 3
+    to 10).
+  Lamps export to the viewer, which shows them in its Night mode.
