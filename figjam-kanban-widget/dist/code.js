@@ -433,7 +433,7 @@
     });
   }
   function Widget() {
-    var _a, _b;
+    var _a;
     const tasks = useSyncedMap("tasks");
     const people = useSyncedMap("people");
     const [view, setView] = useSyncedState("view", "board");
@@ -453,12 +453,11 @@
     const [boardTitle, setBoardTitle] = useSyncedState("boardTitle", "Team tasks");
     const [uiSize, setUiSize] = useSyncedState("uiSize", "comfortable");
     K = (_a = SCALES[uiSize]) != null ? _a : 1.35;
-    const COL_W = px(252);
+    const COL_W = px(300);
     const COL_GAP = px(10);
     const BOARD_W = COL_W * 4 + COL_GAP * 3;
     const COLLAPSED_W = px(40);
     const CARD_W = COL_W - px(20);
-    const PANEL_W = px(300);
     const today = todayISO();
     const tomorrow = addDaysISO(today, 1);
     const nextMon = nextMondayISO();
@@ -467,22 +466,21 @@
     const active = live.filter((t) => t.status !== "done");
     const done = live.filter((t) => t.status === "done");
     const archived = all.filter((t) => t.archived);
-    const openTask = openId ? (_b = tasks.get(openId)) != null ? _b : null : null;
     const syncPeople = () => {
-      var _a2, _b2;
+      var _a2, _b;
       const seen = [figma.currentUser, ...figma.activeUsers];
       const now = Date.now();
       for (const u of seen) {
         if (!u || !u.name) continue;
         const prev = people.get(u.name);
         if (!prev || prev.photoUrl !== ((_a2 = u.photoUrl) != null ? _a2 : null) || now - prev.seenAt > 36e5) {
-          people.set(u.name, { name: u.name, photoUrl: (_b2 = u.photoUrl) != null ? _b2 : null, seenAt: now });
+          people.set(u.name, { name: u.name, photoUrl: (_b = u.photoUrl) != null ? _b : null, seenAt: now });
         }
       }
     };
     const photoOf = (name) => {
-      var _a2, _b2;
-      return name ? (_b2 = (_a2 = people.get(name)) == null ? void 0 : _a2.photoUrl) != null ? _b2 : null : null;
+      var _a2, _b;
+      return name ? (_b = (_a2 = people.get(name)) == null ? void 0 : _a2.photoUrl) != null ? _b : null : null;
     };
     const patch = (id, p) => {
       const t = tasks.get(id);
@@ -613,10 +611,10 @@
       return true;
     };
     const compare = (a, b) => {
-      var _a2, _b2, _c, _d;
+      var _a2, _b, _c, _d;
       if (sort === "created") return b.createdAt - a.createdAt;
       if (sort === "priority") {
-        const pr2 = PRIORITY_RANK[(_a2 = a.priority) != null ? _a2 : "none"] - PRIORITY_RANK[(_b2 = b.priority) != null ? _b2 : "none"];
+        const pr2 = PRIORITY_RANK[(_a2 = a.priority) != null ? _a2 : "none"] - PRIORITY_RANK[(_b = b.priority) != null ? _b : "none"];
         if (pr2 !== 0) return pr2;
       }
       if (a.due && b.due && a.due !== b.due) return a.due < b.due ? -1 : 1;
@@ -746,13 +744,13 @@
         { title: "Fix mobile nav overlap", status: "done", priority: "high", due: d(-6), assignee: "Maya Chen", labels: ["Website"] }
       ];
       samples.forEach((s, i) => {
-        var _a2, _b2, _c, _d, _e, _f, _g;
+        var _a2, _b, _c, _d, _e, _f, _g;
         const now = Date.now() - (samples.length - i) * 1e3;
         const t = {
           id: uid() + i,
           title: s.title,
           description: (_a2 = s.description) != null ? _a2 : "",
-          status: (_b2 = s.status) != null ? _b2 : "todo",
+          status: (_b = s.status) != null ? _b : "todo",
           assignee: (_c = s.assignee) != null ? _c : "",
           due: (_d = s.due) != null ? _d : null,
           priority: (_e = s.priority) != null ? _e : null,
@@ -768,6 +766,38 @@
       syncPeople();
       toast("Added 8 sample tasks");
     };
+    const resolveAgainst = (typed, known) => {
+      const v = typed.trim();
+      if (!v) return "";
+      const lower = v.toLowerCase();
+      const exact = known.find((k) => k.toLowerCase() === lower);
+      if (exact) return exact;
+      const prefix = known.filter((k) => k.toLowerCase().startsWith(lower));
+      if (prefix.length === 1) return prefix[0];
+      const word = known.filter((k) => k.toLowerCase().split(/\s+/).some((w) => w.startsWith(lower)));
+      if (word.length === 1) return word[0];
+      return v;
+    };
+    const resolvePerson = (typed) => resolveAgainst(typed, knownAssignees);
+    const resolveLabel = (typed) => resolveAgainst(typed, knownLabels);
+    function PersonChip({ name, onClick, active: active2 }) {
+      return /* @__PURE__ */ figma.widget.h(
+        AutoLayout,
+        {
+          direction: "horizontal",
+          spacing: px(5),
+          padding: { top: px(2), bottom: px(2), left: px(2), right: px(8) },
+          cornerRadius: px(999),
+          fill: active2 ? C.accentSoft : C.bg,
+          stroke: active2 ? C.accent : C.border,
+          verticalAlignItems: "center",
+          onClick,
+          hoverStyle: { fill: C.accentSoft, stroke: C.accent }
+        },
+        /* @__PURE__ */ figma.widget.h(Avatar, { name, photo: photoOf(name), size: 16 }),
+        /* @__PURE__ */ figma.widget.h(Label, { size: 10, weight: 600, color: active2 ? C.accent : C.text }, shortName(name, 18))
+      );
+    }
     function Card({ task, width, showStatus }) {
       const open = openId === task.id;
       const isCelebrating = celebrating === task.id;
@@ -805,11 +835,27 @@
             horizontalAlignItems: "center",
             verticalAlignItems: "center",
             onClick: () => complete(task.id),
-            hoverStyle: { fill: isDone ? C.success : C.successSoft, stroke: C.success },
-            tooltip: isDone ? "Completed" : "Mark done"
+            hoverStyle: { fill: isDone ? C.success : C.successSoft, stroke: C.success }
           },
           isDone ? /* @__PURE__ */ figma.widget.h(Text, { fontFamily: FONT, fontSize: px(10), fontWeight: 700, fill: "#FFFFFF", lineHeight: px(16) }, "\u2713") : null
-        ), /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", onClick: () => setOpenId(open ? null : task.id), tooltip: open ? "Close details" : "Open details" }, /* @__PURE__ */ figma.widget.h(Label, { size: 12, weight: 600, width: "fill-parent", truncate: 2, strike: isDone, color: isDone ? C.muted : C.text }, task.title || "Untitled")), task.priority ? /* @__PURE__ */ figma.widget.h(Pill, { text: PRIORITY_GLYPH[task.priority], color: PRIORITY_COLOR[task.priority], fill: PRIORITY_SOFT[task.priority], tooltip: `${PRIORITY_LABEL[task.priority]} priority`, onClick: () => setOpenId(task.id) }) : null), labels.length ? /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(4), wrap: true, width: "fill-parent" }, labels.slice(0, 3).map((l) => /* @__PURE__ */ figma.widget.h(LabelPill, { key: l, name: l, onClick: () => setFilter("label", filters.label === l ? null : l) })), labels.length > 3 ? /* @__PURE__ */ figma.widget.h(Label, { size: 9, color: C.faint }, `+${labels.length - 3}`) : null) : null, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: "fill-parent", spacing: px(6), verticalAlignItems: "center", wrap: true }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(4), verticalAlignItems: "center", onClick: () => setOpenId(task.id), tooltip: task.assignee ? `Assigned to ${task.assignee}` : "Unassigned \u2014 click to assign" }, /* @__PURE__ */ figma.widget.h(Avatar, { name: task.assignee, photo: photoOf(task.assignee) }), task.assignee ? null : /* @__PURE__ */ figma.widget.h(Label, { size: 10, weight: 500, color: C.faint, italic: true }, "Unassigned")), task.due ? /* @__PURE__ */ figma.widget.h(
+        ), open ? /* @__PURE__ */ figma.widget.h(
+          Input,
+          {
+            value: task.title,
+            placeholder: "Task title",
+            onTextEditEnd: (e) => {
+              const v = e.characters.trim();
+              if (v && v !== task.title) patch(task.id, { title: v });
+            },
+            fontFamily: FONT,
+            fontSize: px(13),
+            fontWeight: 700,
+            fill: C.text,
+            width: "fill-parent",
+            inputBehavior: "wrap",
+            inputFrameProps: { padding: 0 }
+          }
+        ) : /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", onClick: () => setOpenId(task.id) }, /* @__PURE__ */ figma.widget.h(Label, { size: 12, weight: 600, width: "fill-parent", truncate: 2, strike: isDone, color: isDone ? C.muted : C.text }, task.title || "Untitled")), open ? /* @__PURE__ */ figma.widget.h(IconBtn, { icon: "chevronUp", size: 18, tooltip: "Collapse", onClick: () => setOpenId(null) }) : null, task.priority ? /* @__PURE__ */ figma.widget.h(Pill, { text: PRIORITY_GLYPH[task.priority], color: PRIORITY_COLOR[task.priority], fill: PRIORITY_SOFT[task.priority], tooltip: `${PRIORITY_LABEL[task.priority]} priority`, onClick: () => setOpenId(open ? null : task.id) }) : null), labels.length ? /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(4), wrap: true, width: "fill-parent" }, labels.slice(0, 3).map((l) => /* @__PURE__ */ figma.widget.h(LabelPill, { key: l, name: l, onClick: () => setFilter("label", filters.label === l ? null : l) })), labels.length > 3 ? /* @__PURE__ */ figma.widget.h(Label, { size: 9, color: C.faint }, `+${labels.length - 3}`) : null) : null, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: "fill-parent", spacing: px(6), verticalAlignItems: "center", wrap: true }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(4), verticalAlignItems: "center", onClick: () => setOpenId(task.id), tooltip: task.assignee ? `Assigned to ${task.assignee}` : "Unassigned \u2014 click to assign" }, /* @__PURE__ */ figma.widget.h(Avatar, { name: task.assignee, photo: photoOf(task.assignee) }), task.assignee ? null : /* @__PURE__ */ figma.widget.h(Label, { size: 10, weight: 500, color: C.faint, italic: true }, "Unassigned")), task.due ? /* @__PURE__ */ figma.widget.h(
           AutoLayout,
           {
             padding: { vertical: px(1), horizontal: px(6) },
@@ -848,196 +894,166 @@
               horizontalAlignItems: "center",
               verticalAlignItems: "center",
               onClick: () => setStatus(task.id, s),
-              hoverStyle: { fill: current ? C.bg : STATUS_SOFT[s] },
-              tooltip: current ? `${STATUS_LABEL[s]} (current)` : `Move to ${STATUS_LABEL[s]}`
+              hoverStyle: { fill: current ? C.bg : STATUS_SOFT[s] }
             },
             /* @__PURE__ */ figma.widget.h(StatusGlyph, { status: s, size: 11, muted: !current })
           );
-        }))), isCelebrating ? /* @__PURE__ */ figma.widget.h(Label, { size: 10, weight: 700, color: C.success }, "\u2713 Done! Moving to Completed\u2026") : null)
+        }))), isCelebrating ? /* @__PURE__ */ figma.widget.h(Label, { size: 10, weight: 700, color: C.success }, "\u2713 Done! Moving to Completed\u2026") : null, open ? /* @__PURE__ */ figma.widget.h(Editor, { task }) : null)
       );
     }
-    function PropRow({ label, children, top }) {
-      return /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: "fill-parent", spacing: px(8), verticalAlignItems: top ? "start" : "center" }, /* @__PURE__ */ figma.widget.h(AutoLayout, { width: px(58), padding: { top: top ? 4 : 0 } }, /* @__PURE__ */ figma.widget.h(Label, { size: 10, weight: 600, color: C.muted }, label)), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: "fill-parent", spacing: px(4), wrap: true, verticalAlignItems: "center" }, children));
+    function PropRow({ label, children, stack }) {
+      return /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", width: "fill-parent", spacing: px(4) }, /* @__PURE__ */ figma.widget.h(Label, { size: 9, weight: 700, color: C.faint }, label.toUpperCase()), stack ? /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", width: "fill-parent", spacing: px(5) }, children) : /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: "fill-parent", spacing: px(4), wrap: true, verticalAlignItems: "center" }, children));
     }
-    function Inspector({ task }) {
+    function Editor({ task }) {
       const confirming = confirmDeleteId === task.id;
       const customDue = !!task.due && task.due !== today && task.due !== tomorrow && task.due !== nextMon;
       const overdue = isOverdue(task.due) && task.status !== "done";
       const subs = subtasksOf(task);
       const subsDone = subs.filter((s) => s.done).length;
       const labels = labelsOf(task);
-      const peopleRow = knownAssignees.filter((a) => a !== task.assignee).slice(0, 8);
-      return /* @__PURE__ */ figma.widget.h(
-        AutoLayout,
+      const peopleRow = knownAssignees.filter((a) => a !== task.assignee);
+      return /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", width: "fill-parent", spacing: px(10), padding: { top: px(4) } }, /* @__PURE__ */ figma.widget.h(Divider, null), /* @__PURE__ */ figma.widget.h(
+        Input,
         {
-          direction: "vertical",
-          width: PANEL_W,
-          spacing: 0,
-          fill: C.bg,
-          cornerRadius: px(12),
-          stroke: C.accent,
-          strokeWidth: 1.5,
-          overflow: "hidden",
-          effect: { type: "drop-shadow", color: { r: 0.07, g: 0.09, b: 0.15, a: 0.1 }, offset: { x: 0, y: 6 }, blur: 18 }
-        },
-        /* @__PURE__ */ figma.widget.h(Rectangle, { width: "fill-parent", height: px(4), fill: STATUS_COLOR[task.status] }),
-        /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", width: "fill-parent", spacing: px(10), padding: { top: px(10), bottom: px(12), left: px(12), right: px(12) } }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: "fill-parent", spacing: px(6), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(4), padding: { vertical: px(2), horizontal: px(7) }, cornerRadius: px(999), fill: STATUS_SOFT[task.status], verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(StatusGlyph, { status: task.status, size: 10 }), /* @__PURE__ */ figma.widget.h(Label, { size: 10, weight: 700, color: STATUS_COLOR[task.status] }, STATUS_LABEL[task.status])), /* @__PURE__ */ figma.widget.h(Label, { size: 10, color: C.faint }, "Editing"), /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", height: px(1) }), /* @__PURE__ */ figma.widget.h(IconBtn, { icon: "x", tooltip: "Close", onClick: () => setOpenId(null) })), /* @__PURE__ */ figma.widget.h(
-          Input,
-          {
-            value: task.title,
-            placeholder: "Task title",
-            onTextEditEnd: (e) => {
-              const v = e.characters.trim();
-              if (v && v !== task.title) patch(task.id, { title: v });
-            },
-            fontFamily: FONT,
-            fontSize: px(14),
-            fontWeight: 700,
-            fill: C.text,
-            width: "fill-parent",
-            inputBehavior: "wrap",
-            inputFrameProps: { padding: px(0) }
-          }
-        ), /* @__PURE__ */ figma.widget.h(
-          Input,
-          {
-            value: task.description || null,
-            placeholder: "Add a description\u2026",
-            onTextEditEnd: (e) => {
-              if (e.characters !== task.description) patch(task.id, { description: e.characters });
-            },
-            fontFamily: FONT,
-            fontSize: px(11),
-            fill: C.text,
-            placeholderProps: { fill: C.faint },
-            width: "fill-parent",
-            inputBehavior: "multiline",
-            inputFrameProps: { padding: { vertical: px(6), horizontal: px(8) }, fill: C.surface, cornerRadius: px(8) }
-          }
-        ), /* @__PURE__ */ figma.widget.h(Divider, null), /* @__PURE__ */ figma.widget.h(PropRow, { label: "Status" }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(1), cornerRadius: px(8), fill: C.surface, padding: px(2) }, STATUSES.map((s) => {
-          const current = task.status === s;
-          return /* @__PURE__ */ figma.widget.h(
-            AutoLayout,
-            {
-              key: s,
-              direction: "horizontal",
-              spacing: px(4),
-              padding: { vertical: px(3), horizontal: current ? 8 : 6 },
-              cornerRadius: px(6),
-              fill: current ? C.bg : void 0,
-              stroke: current ? C.border : void 0,
-              verticalAlignItems: "center",
-              onClick: () => setStatus(task.id, s),
-              hoverStyle: { fill: current ? C.bg : STATUS_SOFT[s] },
-              tooltip: current ? `${STATUS_LABEL[s]} (current)` : `Move to ${STATUS_LABEL[s]}`
-            },
-            /* @__PURE__ */ figma.widget.h(StatusGlyph, { status: s, size: 11, muted: !current }),
-            current ? /* @__PURE__ */ figma.widget.h(Label, { size: 10, weight: 700, color: STATUS_COLOR[s] }, STATUS_LABEL[s]) : null
-          );
-        }))), /* @__PURE__ */ figma.widget.h(PropRow, { label: "Due", top: true }, task.due ? /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(4), verticalAlignItems: "center", padding: { vertical: px(2), horizontal: px(8) }, cornerRadius: px(999), fill: overdue ? C.dangerSoft : C.accentSoft }, /* @__PURE__ */ figma.widget.h(Label, { size: 10, weight: 700, color: overdue ? C.danger : C.accentText }, overdue ? `Overdue \xB7 ${weekdayDate(task.due)}` : weekdayDate(task.due)), /* @__PURE__ */ figma.widget.h(IconBtn, { icon: "x", size: 14, color: overdue ? C.danger : C.accentText, tooltip: "Clear due date", onClick: () => setDue(task.id, null) })) : /* @__PURE__ */ figma.widget.h(Label, { size: 10, color: C.faint, italic: true }, "No due date"), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(4), wrap: true, width: "fill-parent" }, /* @__PURE__ */ figma.widget.h(Chip, { small: true, label: "Today", active: task.due === today, onClick: () => setDue(task.id, today) }), /* @__PURE__ */ figma.widget.h(Chip, { small: true, label: "Tomorrow", active: task.due === tomorrow, onClick: () => setDue(task.id, tomorrow) }), /* @__PURE__ */ figma.widget.h(Chip, { small: true, label: "Next Mon", active: task.due === nextMon, onClick: () => setDue(task.id, nextMon) }), /* @__PURE__ */ figma.widget.h(Chip, { small: true, label: "Pick date\u2026", active: customDue, onClick: () => pickDate(task.title, task.due, (iso) => setDue(task.id, iso)) }))), /* @__PURE__ */ figma.widget.h(PropRow, { label: "Owner", top: true }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(6), verticalAlignItems: "center", width: "fill-parent" }, /* @__PURE__ */ figma.widget.h(Avatar, { name: task.assignee, photo: photoOf(task.assignee), size: 22 }), /* @__PURE__ */ figma.widget.h(
-          Input,
-          {
-            value: task.assignee || null,
-            placeholder: "Unassigned \u2014 type a name",
-            onTextEditEnd: (e) => {
-              const v = e.characters.trim();
-              if (v !== task.assignee) patch(task.id, { assignee: v });
-            },
-            fontFamily: FONT,
-            fontSize: px(11),
-            fontWeight: 600,
-            fill: C.text,
-            placeholderProps: { fill: C.faint, fontWeight: 400, italic: true },
-            width: "fill-parent",
-            inputBehavior: "truncate",
-            inputFrameProps: { padding: { vertical: px(4), horizontal: px(8) }, fill: C.surface, cornerRadius: px(8) }
-          }
-        ), /* @__PURE__ */ figma.widget.h(
-          Chip,
-          {
-            small: true,
-            label: "Me",
-            tooltip: "Assign to me",
-            onClick: () => {
-              const name = myName();
-              if (name) patch(task.id, { assignee: task.assignee === name ? "" : name });
-            }
-          }
-        )), peopleRow.length ? /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(4), wrap: true, width: "fill-parent", verticalAlignItems: "center" }, peopleRow.map((a) => /* @__PURE__ */ figma.widget.h(AutoLayout, { key: a, cornerRadius: px(999), padding: px(1), onClick: () => patch(task.id, { assignee: a }), hoverStyle: { fill: C.accentSoft }, tooltip: `Assign to ${a}` }, /* @__PURE__ */ figma.widget.h(Avatar, { name: a, photo: photoOf(a), size: 22 })))) : null), /* @__PURE__ */ figma.widget.h(PropRow, { label: "Priority" }, PRIORITIES.map((p) => /* @__PURE__ */ figma.widget.h(Chip, { small: true, key: p, label: PRIORITY_GLYPH[p], active: task.priority === p, color: PRIORITY_COLOR[p], soft: PRIORITY_SOFT[p], onClick: () => patch(task.id, { priority: task.priority === p ? null : p }) }))), /* @__PURE__ */ figma.widget.h(PropRow, { label: "Labels", top: true }, knownLabels.map((l) => /* @__PURE__ */ figma.widget.h(LabelPill, { key: l, name: l, size: 10, active: labels.includes(l), onClick: () => toggleLabel(task.id, l) })), /* @__PURE__ */ figma.widget.h(
-          Input,
-          {
-            value: null,
-            placeholder: "+ label",
-            onTextEditEnd: (e) => {
-              const v = e.characters.trim();
-              if (v && !labels.includes(v)) toggleLabel(task.id, v);
-            },
-            fontFamily: FONT,
-            fontSize: px(10),
-            fontWeight: 600,
-            fill: C.text,
-            placeholderProps: { fill: C.faint },
-            width: px(64),
-            inputBehavior: "truncate",
-            inputFrameProps: { padding: { vertical: px(2), horizontal: px(7) }, cornerRadius: px(4), stroke: C.border, strokeDashPattern: [3, 2] }
-          }
-        )), /* @__PURE__ */ figma.widget.h(Divider, null), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", width: "fill-parent", spacing: px(4) }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: "fill-parent", spacing: px(6), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(Label, { size: 10, weight: 600, color: C.muted }, "Subtasks"), subs.length ? /* @__PURE__ */ figma.widget.h(Label, { size: 10, weight: 700, color: subsDone === subs.length ? C.success : C.text }, `${subsDone}/${subs.length}`) : null, /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", height: px(1) }), subs.length ? /* @__PURE__ */ figma.widget.h(Progress, { done: subsDone, total: subs.length, width: px(90) }) : null), subs.map((s) => /* @__PURE__ */ figma.widget.h(AutoLayout, { key: s.id, direction: "horizontal", width: "fill-parent", spacing: px(6), verticalAlignItems: "center", padding: { vertical: px(2) }, hoverStyle: { fill: C.canvas }, cornerRadius: px(4) }, /* @__PURE__ */ figma.widget.h(
+          value: task.description || null,
+          placeholder: "Add a description\u2026",
+          onTextEditEnd: (e) => {
+            if (e.characters !== task.description) patch(task.id, { description: e.characters });
+          },
+          fontFamily: FONT,
+          fontSize: px(11),
+          fill: C.text,
+          placeholderProps: { fill: C.faint },
+          width: "fill-parent",
+          inputBehavior: "multiline",
+          inputFrameProps: { padding: { vertical: px(6), horizontal: px(8) }, fill: C.surface, cornerRadius: px(8) }
+        }
+      ), /* @__PURE__ */ figma.widget.h(Divider, null), /* @__PURE__ */ figma.widget.h(PropRow, { label: "Status" }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(1), cornerRadius: px(8), fill: C.surface, padding: px(2) }, STATUSES.map((s) => {
+        const current = task.status === s;
+        return /* @__PURE__ */ figma.widget.h(
           AutoLayout,
           {
-            width: px(14),
-            height: px(14),
-            cornerRadius: px(4),
-            fill: s.done ? C.success : void 0,
-            stroke: s.done ? void 0 : C.borderStrong,
-            strokeWidth: 1.5,
-            strokeAlign: "inside",
-            horizontalAlignItems: "center",
+            key: s,
+            direction: "horizontal",
+            spacing: px(4),
+            padding: { vertical: px(3), horizontal: current ? 8 : 6 },
+            cornerRadius: px(6),
+            fill: current ? C.bg : void 0,
+            stroke: current ? C.border : void 0,
             verticalAlignItems: "center",
-            onClick: () => patchSubtask(task.id, s.id, { done: !s.done }),
-            hoverStyle: { fill: s.done ? C.success : C.successSoft, stroke: C.success },
-            tooltip: s.done ? "Mark not done" : "Mark done"
+            onClick: () => setStatus(task.id, s),
+            hoverStyle: { fill: current ? C.bg : STATUS_SOFT[s] },
+            tooltip: current ? `${STATUS_LABEL[s]} (current)` : `Move to ${STATUS_LABEL[s]}`
           },
-          s.done ? /* @__PURE__ */ figma.widget.h(Text, { fontFamily: FONT, fontSize: px(9), fontWeight: 700, fill: "#FFFFFF", lineHeight: px(14) }, "\u2713") : null
-        ), /* @__PURE__ */ figma.widget.h(
-          Input,
-          {
-            value: s.title,
-            placeholder: "Subtask",
-            onTextEditEnd: (e) => {
-              const v = e.characters.trim();
-              if (!v) patchSubtask(task.id, s.id, null);
-              else if (v !== s.title) patchSubtask(task.id, s.id, { title: v });
-            },
-            fontFamily: FONT,
-            fontSize: px(11),
-            fill: s.done ? C.muted : C.text,
-            textDecoration: s.done ? "strikethrough" : "none",
-            width: "fill-parent",
-            inputBehavior: "truncate",
-            inputFrameProps: { padding: px(0) }
+          /* @__PURE__ */ figma.widget.h(StatusGlyph, { status: s, size: 11, muted: !current }),
+          current ? /* @__PURE__ */ figma.widget.h(Label, { size: 10, weight: 700, color: STATUS_COLOR[s] }, STATUS_LABEL[s]) : null
+        );
+      }))), /* @__PURE__ */ figma.widget.h(PropRow, { label: "Due", stack: true }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: "fill-parent", spacing: px(6), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(Icon, { name: "calendar", color: task.due ? overdue ? C.danger : C.accentText : C.faint, size: 12 }), task.due ? /* @__PURE__ */ figma.widget.h(Label, { size: 11, weight: 700, color: overdue ? C.danger : C.text, width: "fill-parent", truncate: true }, overdue ? `Overdue \xB7 was due ${weekdayDate(task.due)}` : `Due ${weekdayDate(task.due)}`) : /* @__PURE__ */ figma.widget.h(Label, { size: 11, color: C.faint, italic: true, width: "fill-parent" }, "No due date"), task.due ? /* @__PURE__ */ figma.widget.h(Btn, { small: true, tone: "ghost", icon: "x", label: "Clear", onClick: () => setDue(task.id, null) }) : null), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(4), wrap: true, width: "fill-parent" }, /* @__PURE__ */ figma.widget.h(Chip, { small: true, label: "Today", active: task.due === today, onClick: () => setDue(task.id, today) }), /* @__PURE__ */ figma.widget.h(Chip, { small: true, label: "Tomorrow", active: task.due === tomorrow, onClick: () => setDue(task.id, tomorrow) }), /* @__PURE__ */ figma.widget.h(Chip, { small: true, label: "Next Mon", active: task.due === nextMon, onClick: () => setDue(task.id, nextMon) }), /* @__PURE__ */ figma.widget.h(Chip, { small: true, label: customDue ? weekdayDate(task.due) : "Pick date\u2026", active: customDue, onClick: () => pickDate(task.title, task.due, (iso) => setDue(task.id, iso)) }))), /* @__PURE__ */ figma.widget.h(PropRow, { label: "Owner", stack: true }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(6), verticalAlignItems: "center", width: "fill-parent" }, /* @__PURE__ */ figma.widget.h(Avatar, { name: task.assignee, photo: photoOf(task.assignee), size: 22 }), /* @__PURE__ */ figma.widget.h(
+        Input,
+        {
+          value: task.assignee || null,
+          placeholder: "Type a name, press Enter",
+          onTextEditEnd: (e) => {
+            const v = resolvePerson(e.characters);
+            if (v !== task.assignee) patch(task.id, { assignee: v });
+          },
+          fontFamily: FONT,
+          fontSize: px(11),
+          fontWeight: 600,
+          fill: C.text,
+          placeholderProps: { fill: C.faint, fontWeight: 400, italic: true },
+          width: "fill-parent",
+          inputBehavior: "truncate",
+          inputFrameProps: { padding: { vertical: px(4), horizontal: px(8) }, fill: C.surface, cornerRadius: px(8) }
+        }
+      ), /* @__PURE__ */ figma.widget.h(
+        Chip,
+        {
+          small: true,
+          label: "Me",
+          tooltip: "Assign to me",
+          onClick: () => {
+            const name = myName();
+            if (name) patch(task.id, { assignee: task.assignee === name ? "" : name });
           }
-        ), /* @__PURE__ */ figma.widget.h(IconBtn, { icon: "x", size: 16, tooltip: "Remove subtask", onClick: () => patchSubtask(task.id, s.id, null) }))), /* @__PURE__ */ figma.widget.h(
-          Input,
-          {
-            value: null,
-            placeholder: "+ Add subtask",
-            onTextEditEnd: (e) => addSubtask(task.id, e.characters),
-            fontFamily: FONT,
-            fontSize: px(11),
-            fontWeight: 500,
-            fill: C.text,
-            placeholderProps: { fill: C.muted, fontWeight: 600 },
-            width: "fill-parent",
-            inputBehavior: "wrap",
-            inputFrameProps: { padding: { vertical: px(4), horizontal: px(6) }, cornerRadius: px(6), hoverStyle: { fill: C.surface } }
-          }
-        )), /* @__PURE__ */ figma.widget.h(Divider, null), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: "fill-parent", verticalAlignItems: "center", spacing: px(4) }, /* @__PURE__ */ figma.widget.h(Label, { size: 9, color: C.faint, width: "fill-parent", truncate: true }, `Created ${fromTimestamp(task.createdAt)}${task.completedAt ? ` \xB7 Done ${fromTimestamp(task.completedAt)}` : ""}`), /* @__PURE__ */ figma.widget.h(Btn, { small: true, tone: "ghost", icon: "archive", tooltip: "Archive (keeps the task, hides it from views)", onClick: () => archive(task.id, true) }), confirming ? /* @__PURE__ */ figma.widget.h(Btn, { small: true, tone: "danger", icon: "trash", label: "Confirm delete", onClick: () => remove(task.id) }) : /* @__PURE__ */ figma.widget.h(Btn, { small: true, tone: "ghost", icon: "trash", tooltip: "Delete permanently", onClick: () => setConfirmDeleteId(task.id) })))
-      );
+        }
+      )), peopleRow.length ? /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(4), wrap: true, width: "fill-parent", verticalAlignItems: "center" }, peopleRow.map((a) => /* @__PURE__ */ figma.widget.h(PersonChip, { key: a, name: a, onClick: () => patch(task.id, { assignee: a }) }))) : /* @__PURE__ */ figma.widget.h(Label, { size: 9, color: C.faint, width: "fill-parent" }, "Anyone you type becomes a chip here. Teammates who open this board appear automatically with their photo.")), /* @__PURE__ */ figma.widget.h(PropRow, { label: "Priority" }, PRIORITIES.map((p) => /* @__PURE__ */ figma.widget.h(Chip, { small: true, key: p, label: PRIORITY_GLYPH[p], active: task.priority === p, color: PRIORITY_COLOR[p], soft: PRIORITY_SOFT[p], onClick: () => patch(task.id, { priority: task.priority === p ? null : p }) }))), /* @__PURE__ */ figma.widget.h(PropRow, { label: "Labels" }, knownLabels.map((l) => /* @__PURE__ */ figma.widget.h(LabelPill, { key: l, name: l, size: 10, active: labels.includes(l), onClick: () => toggleLabel(task.id, l) })), /* @__PURE__ */ figma.widget.h(
+        Input,
+        {
+          value: null,
+          placeholder: "+ label",
+          onTextEditEnd: (e) => {
+            const v = resolveLabel(e.characters);
+            if (v && !labels.includes(v)) toggleLabel(task.id, v);
+          },
+          fontFamily: FONT,
+          fontSize: px(10),
+          fontWeight: 600,
+          fill: C.text,
+          placeholderProps: { fill: C.faint },
+          width: px(80),
+          inputBehavior: "truncate",
+          inputFrameProps: { padding: { vertical: px(2), horizontal: px(7) }, cornerRadius: px(4), stroke: C.border, strokeDashPattern: [3, 2] }
+        }
+      )), /* @__PURE__ */ figma.widget.h(Divider, null), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", width: "fill-parent", spacing: px(4) }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: "fill-parent", spacing: px(6), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(Label, { size: 10, weight: 600, color: C.muted }, "Subtasks"), subs.length ? /* @__PURE__ */ figma.widget.h(Label, { size: 10, weight: 700, color: subsDone === subs.length ? C.success : C.text }, `${subsDone}/${subs.length}`) : null, /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", height: px(1) }), subs.length ? /* @__PURE__ */ figma.widget.h(Progress, { done: subsDone, total: subs.length, width: px(90) }) : null), subs.map((s) => /* @__PURE__ */ figma.widget.h(AutoLayout, { key: s.id, direction: "horizontal", width: "fill-parent", spacing: px(6), verticalAlignItems: "center", padding: { vertical: px(2) }, hoverStyle: { fill: C.canvas }, cornerRadius: px(4) }, /* @__PURE__ */ figma.widget.h(
+        AutoLayout,
+        {
+          width: px(14),
+          height: px(14),
+          cornerRadius: px(4),
+          fill: s.done ? C.success : void 0,
+          stroke: s.done ? void 0 : C.borderStrong,
+          strokeWidth: 1.5,
+          strokeAlign: "inside",
+          horizontalAlignItems: "center",
+          verticalAlignItems: "center",
+          onClick: () => patchSubtask(task.id, s.id, { done: !s.done }),
+          hoverStyle: { fill: s.done ? C.success : C.successSoft, stroke: C.success },
+          tooltip: s.done ? "Mark not done" : "Mark done"
+        },
+        s.done ? /* @__PURE__ */ figma.widget.h(Text, { fontFamily: FONT, fontSize: px(9), fontWeight: 700, fill: "#FFFFFF", lineHeight: px(14) }, "\u2713") : null
+      ), /* @__PURE__ */ figma.widget.h(
+        Input,
+        {
+          value: s.title,
+          placeholder: "Subtask",
+          onTextEditEnd: (e) => {
+            const v = e.characters.trim();
+            if (!v) patchSubtask(task.id, s.id, null);
+            else if (v !== s.title) patchSubtask(task.id, s.id, { title: v });
+          },
+          fontFamily: FONT,
+          fontSize: px(11),
+          fill: s.done ? C.muted : C.text,
+          textDecoration: s.done ? "strikethrough" : "none",
+          width: "fill-parent",
+          inputBehavior: "truncate",
+          inputFrameProps: { padding: px(0) }
+        }
+      ), /* @__PURE__ */ figma.widget.h(IconBtn, { icon: "x", size: 16, tooltip: "Remove subtask", onClick: () => patchSubtask(task.id, s.id, null) }))), /* @__PURE__ */ figma.widget.h(
+        Input,
+        {
+          value: null,
+          placeholder: "+ Add subtask",
+          onTextEditEnd: (e) => addSubtask(task.id, e.characters),
+          fontFamily: FONT,
+          fontSize: px(11),
+          fontWeight: 500,
+          fill: C.text,
+          placeholderProps: { fill: C.muted, fontWeight: 600 },
+          width: "fill-parent",
+          inputBehavior: "wrap",
+          inputFrameProps: { padding: { vertical: px(4), horizontal: px(6) }, cornerRadius: px(6), hoverStyle: { fill: C.surface } }
+        }
+      )), /* @__PURE__ */ figma.widget.h(Divider, null), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: "fill-parent", verticalAlignItems: "center", spacing: px(4) }, /* @__PURE__ */ figma.widget.h(Label, { size: 9, color: C.faint, width: "fill-parent", truncate: true }, `Created ${fromTimestamp(task.createdAt)}${task.completedAt ? ` \xB7 Done ${fromTimestamp(task.completedAt)}` : ""}`), /* @__PURE__ */ figma.widget.h(Btn, { small: true, tone: "ghost", icon: "archive", tooltip: "Archive (keeps the task, hides it from views)", onClick: () => archive(task.id, true) }), confirming ? /* @__PURE__ */ figma.widget.h(Btn, { small: true, tone: "danger", icon: "trash", label: "Confirm delete", onClick: () => remove(task.id) }) : /* @__PURE__ */ figma.widget.h(Btn, { small: true, tone: "ghost", icon: "trash", tooltip: "Delete permanently", onClick: () => setConfirmDeleteId(task.id) }), /* @__PURE__ */ figma.widget.h(Btn, { small: true, tone: "ghost", icon: "chevronUp", tooltip: "Collapse", onClick: () => setOpenId(null) })));
     }
     function Column({ status }) {
       const isCollapsed = !!collapsed[status];
       const items = live.filter((t) => t.status === status);
-      const visible = items.filter(matches).sort(compare);
+      const visible = items.filter(matches).sort(status === "done" ? (a, b) => {
+        var _a2, _b;
+        return ((_a2 = b.completedAt) != null ? _a2 : b.updatedAt) - ((_b = a.completedAt) != null ? _b : a.updatedAt);
+      } : compare);
       const color = STATUS_COLOR[status];
       const hiddenByFilter = items.length - visible.length;
       if (isCollapsed) {
@@ -1062,7 +1078,7 @@
           /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", spacing: px(-1), horizontalAlignItems: "center", padding: { top: px(2) } }, STATUS_SHORT[status].split("").map((ch, i) => /* @__PURE__ */ figma.widget.h(Label, { key: i, size: 9, weight: 700, color }, ch)))
         );
       }
-      return /* @__PURE__ */ figma.widget.h(AutoLayout, { key: status, direction: "vertical", width: COL_W, spacing: 0, fill: STATUS_TINT[status], cornerRadius: px(12), overflow: "hidden" }, /* @__PURE__ */ figma.widget.h(Rectangle, { width: "fill-parent", height: px(4), fill: color }), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", width: "fill-parent", spacing: px(8), padding: { top: px(8), bottom: px(10), left: px(10), right: px(10) } }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: "fill-parent", spacing: px(6), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(StatusGlyph, { status, size: 13 }), /* @__PURE__ */ figma.widget.h(Label, { size: 12, weight: 700, color: C.text }, STATUS_LABEL[status]), /* @__PURE__ */ figma.widget.h(Pill, { text: String(visible.length), color, fill: C.bg, size: 10 }), hiddenByFilter > 0 ? /* @__PURE__ */ figma.widget.h(Label, { size: 9, color: C.faint }, `+${hiddenByFilter} filtered`) : null, /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", height: px(1) }), /* @__PURE__ */ figma.widget.h(IconBtn, { icon: "chevronDown", tooltip: "Collapse column", onClick: () => setCollapsed(__spreadProps(__spreadValues({}, collapsed), { [status]: true })) })), status === "done" ? /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", width: "fill-parent", spacing: px(4) }, visible.slice(0, 4).map((t) => /* @__PURE__ */ figma.widget.h(DoneRow, { key: t.id, task: t, compact: true })), visible.length === 0 ? /* @__PURE__ */ figma.widget.h(Label, { size: 10, color: C.faint, italic: true }, "Completed tasks land here.") : null, /* @__PURE__ */ figma.widget.h(Btn, { label: visible.length > 4 ? `View all ${visible.length} completed` : "Open Done view", icon: "chevronRight", tone: "ghost", small: true, onClick: () => setView("done") })) : /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", width: "fill-parent", spacing: px(6) }, visible.map((t) => /* @__PURE__ */ figma.widget.h(Card, { key: t.id, task: t, width: "fill-parent" })), visible.length === 0 ? /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", padding: { vertical: px(4), horizontal: px(4) } }, /* @__PURE__ */ figma.widget.h(Label, { size: 10, color: C.faint, italic: true }, items.length > 0 ? "No matches for current filters." : status === "todo" && live.length === 0 ? "Type below to add your first task." : "Nothing here.")) : null, /* @__PURE__ */ figma.widget.h(
+      return /* @__PURE__ */ figma.widget.h(AutoLayout, { key: status, direction: "vertical", width: COL_W, spacing: 0, fill: STATUS_TINT[status], cornerRadius: px(12), overflow: "hidden" }, /* @__PURE__ */ figma.widget.h(Rectangle, { width: "fill-parent", height: px(4), fill: color }), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", width: "fill-parent", spacing: px(8), padding: { top: px(8), bottom: px(10), left: px(10), right: px(10) } }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: "fill-parent", spacing: px(6), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(StatusGlyph, { status, size: 13 }), /* @__PURE__ */ figma.widget.h(Label, { size: 12, weight: 700, color: C.text }, STATUS_LABEL[status]), /* @__PURE__ */ figma.widget.h(Pill, { text: String(visible.length), color, fill: C.bg, size: 10 }), hiddenByFilter > 0 ? /* @__PURE__ */ figma.widget.h(Label, { size: 9, color: C.faint }, `+${hiddenByFilter} filtered`) : null, /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", height: px(1) }), /* @__PURE__ */ figma.widget.h(IconBtn, { icon: "chevronDown", tooltip: "Collapse column", onClick: () => setCollapsed(__spreadProps(__spreadValues({}, collapsed), { [status]: true })) })), status === "done" ? /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", width: "fill-parent", spacing: px(4) }, visible.slice(0, 5).map((t) => /* @__PURE__ */ figma.widget.h(DoneRow, { key: t.id, task: t, compact: true })), visible.length === 0 ? /* @__PURE__ */ figma.widget.h(Label, { size: 10, color: C.faint, italic: true }, "Completed tasks land here.") : null, /* @__PURE__ */ figma.widget.h(Btn, { label: visible.length > 5 ? `${visible.length - 5} more in Done view` : "Open Done view", icon: "chevronRight", tone: "ghost", small: true, onClick: () => setView("done") })) : /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", width: "fill-parent", spacing: px(6) }, visible.map((t) => /* @__PURE__ */ figma.widget.h(Card, { key: t.id, task: t, width: "fill-parent" })), visible.length === 0 ? /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", padding: { vertical: px(4), horizontal: px(4) } }, /* @__PURE__ */ figma.widget.h(Label, { size: 10, color: C.faint, italic: true }, items.length > 0 ? "No matches for current filters." : status === "todo" && live.length === 0 ? "Type below to add your first task." : "Nothing here.")) : null, /* @__PURE__ */ figma.widget.h(
         Input,
         {
           value: null,
@@ -1085,37 +1101,27 @@
         AutoLayout,
         {
           key: task.id,
-          direction: "horizontal",
+          direction: "vertical",
           width: "fill-parent",
-          spacing: px(8),
-          padding: { vertical: px(5), horizontal: px(8) },
+          spacing: 0,
           fill: open ? C.accentSoft : C.bg,
           cornerRadius: px(8),
           stroke: open ? C.accent : C.border,
-          verticalAlignItems: "center",
+          strokeWidth: open ? 1.5 : 1,
           hoverStyle: open ? void 0 : { stroke: C.borderStrong }
         },
-        task.archived ? /* @__PURE__ */ figma.widget.h(Icon, { name: "archive", color: C.faint, size: 13 }) : /* @__PURE__ */ figma.widget.h(StatusGlyph, { status: "done", size: 14 }),
-        /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", width: "fill-parent", spacing: px(1), onClick: () => setOpenId(open ? null : task.id), tooltip: "Open details" }, /* @__PURE__ */ figma.widget.h(Label, { size: 11, weight: 500, color: C.muted, strike: !task.archived, width: "fill-parent", truncate: true }, task.title), compact ? null : /* @__PURE__ */ figma.widget.h(Label, { size: 9, color: C.faint, width: "fill-parent", truncate: true }, [
+        /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: "fill-parent", spacing: px(8), padding: { vertical: px(5), horizontal: px(8) }, verticalAlignItems: "center" }, task.archived ? /* @__PURE__ */ figma.widget.h(Icon, { name: "archive", color: C.faint, size: 13 }) : /* @__PURE__ */ figma.widget.h(StatusGlyph, { status: "done", size: 14 }), /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", width: "fill-parent", spacing: px(1), onClick: () => setOpenId(open ? null : task.id), tooltip: "Open details" }, /* @__PURE__ */ figma.widget.h(Label, { size: 11, weight: 500, color: C.muted, strike: !task.archived, width: "fill-parent", truncate: true }, task.title), compact ? null : /* @__PURE__ */ figma.widget.h(Label, { size: 9, color: C.faint, width: "fill-parent", truncate: true }, [
           task.assignee ? task.assignee : "Unassigned",
           task.due ? `due ${weekdayDate(task.due)}` : null,
           task.completedAt ? `completed ${fromTimestamp(task.completedAt)}` : null,
           task.priority ? `${PRIORITY_LABEL[task.priority]} priority` : null,
           labelsOf(task).length ? labelsOf(task).join(", ") : null
-        ].filter(Boolean).join(" \xB7 "))),
-        compact ? /* @__PURE__ */ figma.widget.h(Label, { size: 9, color: C.faint }, task.completedAt ? fromTimestamp(task.completedAt) : "") : /* @__PURE__ */ figma.widget.h(Avatar, { name: task.assignee, photo: photoOf(task.assignee), size: 16 }),
-        /* @__PURE__ */ figma.widget.h(IconBtn, { icon: "undo", tooltip: "Reopen in To Do", onClick: () => reopen(task.id) }),
-        compact ? null : task.archived ? /* @__PURE__ */ figma.widget.h(IconBtn, { icon: "archive", tooltip: "Restore from archive", color: C.accent, onClick: () => archive(task.id, false) }) : /* @__PURE__ */ figma.widget.h(IconBtn, { icon: "archive", tooltip: "Archive", onClick: () => archive(task.id, true) }),
-        !compact && task.archived ? confirmDeleteId === task.id ? /* @__PURE__ */ figma.widget.h(Btn, { small: true, tone: "danger", icon: "trash", label: "Confirm", onClick: () => remove(task.id) }) : /* @__PURE__ */ figma.widget.h(IconBtn, { icon: "trash", tooltip: "Delete permanently", onClick: () => setConfirmDeleteId(task.id) }) : null
+        ].filter(Boolean).join(" \xB7 "))), compact ? /* @__PURE__ */ figma.widget.h(Label, { size: 9, color: C.faint }, task.completedAt ? fromTimestamp(task.completedAt) : "") : /* @__PURE__ */ figma.widget.h(Avatar, { name: task.assignee, photo: photoOf(task.assignee), size: 16 }), /* @__PURE__ */ figma.widget.h(IconBtn, { icon: "undo", tooltip: "Reopen in To Do", onClick: () => reopen(task.id) }), compact ? null : task.archived ? /* @__PURE__ */ figma.widget.h(IconBtn, { icon: "archive", tooltip: "Restore from archive", color: C.accent, onClick: () => archive(task.id, false) }) : /* @__PURE__ */ figma.widget.h(IconBtn, { icon: "archive", tooltip: "Archive", onClick: () => archive(task.id, true) }), !compact && task.archived ? confirmDeleteId === task.id ? /* @__PURE__ */ figma.widget.h(Btn, { small: true, tone: "danger", icon: "trash", label: "Confirm", onClick: () => remove(task.id) }) : /* @__PURE__ */ figma.widget.h(IconBtn, { icon: "trash", tooltip: "Delete permanently", onClick: () => setConfirmDeleteId(task.id) }) : null),
+        open ? /* @__PURE__ */ figma.widget.h(AutoLayout, { width: "fill-parent", padding: { top: 0, bottom: px(8), left: px(10), right: px(10) } }, /* @__PURE__ */ figma.widget.h(Editor, { task })) : null
       );
     }
     function BoardView() {
-      const nodes = [];
-      for (const s of STATUSES) {
-        nodes.push(/* @__PURE__ */ figma.widget.h(Column, { key: s, status: s }));
-        if (openTask && openTask.status === s) nodes.push(/* @__PURE__ */ figma.widget.h(Inspector, { key: "inspector", task: openTask }));
-      }
-      return /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: COL_GAP, verticalAlignItems: "start", width: "hug-contents" }, nodes);
+      return /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: COL_GAP, verticalAlignItems: "start", width: "hug-contents" }, STATUSES.map((s) => /* @__PURE__ */ figma.widget.h(Column, { key: s, status: s })));
     }
     function WeekView() {
       const pool = active.filter(matches).sort(compare);
@@ -1143,8 +1149,8 @@
     function DoneView() {
       const dq = doneSearch.trim().toLowerCase();
       const pool = (showArchived ? all.filter((t) => t.archived || t.status === "done") : done).filter(matches).filter((t) => !dq || `${t.title} ${t.description} ${t.assignee} ${labelsOf(t).join(" ")}`.toLowerCase().includes(dq)).sort((a, b) => {
-        var _a2, _b2;
-        return ((_a2 = b.completedAt) != null ? _a2 : b.updatedAt) - ((_b2 = a.completedAt) != null ? _b2 : a.updatedAt);
+        var _a2, _b;
+        return ((_a2 = b.completedAt) != null ? _a2 : b.updatedAt) - ((_b = a.completedAt) != null ? _b : a.updatedAt);
       });
       return /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "vertical", spacing: px(8), width: BOARD_W }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: "fill-parent", spacing: px(8), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(6), verticalAlignItems: "center", padding: { vertical: px(5), horizontal: px(9) }, fill: C.surface, cornerRadius: px(8), width: px(260) }, /* @__PURE__ */ figma.widget.h(Icon, { name: "search", color: C.faint, size: 12 }), /* @__PURE__ */ figma.widget.h(
         Input,
@@ -1306,7 +1312,7 @@
       quickAddOpen ? /* @__PURE__ */ figma.widget.h(QuickAddPanel, null) : null,
       filtersOpen ? /* @__PURE__ */ figma.widget.h(FilterPanel, null) : null,
       live.length === 0 ? /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", width: BOARD_W, spacing: px(8), padding: { vertical: px(8), horizontal: px(10) }, fill: C.surface, cornerRadius: px(10), verticalAlignItems: "center" }, /* @__PURE__ */ figma.widget.h(Label, { size: 11, color: C.muted, width: "fill-parent" }, "Empty board. Type a title into any column, use \u201CAdd task\u201D, or load a few sample tasks to see how it works."), /* @__PURE__ */ figma.widget.h(Btn, { small: true, label: "Load sample tasks", onClick: addSamples })) : null,
-      /* @__PURE__ */ figma.widget.h(AutoLayout, { direction: "horizontal", spacing: px(12), verticalAlignItems: "start", width: "hug-contents" }, mainView, openTask && view !== "board" ? /* @__PURE__ */ figma.widget.h(Inspector, { task: openTask }) : null)
+      mainView
     );
   }
   widget.register(Widget);

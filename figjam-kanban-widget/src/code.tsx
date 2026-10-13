@@ -360,12 +360,11 @@ function Widget() {
   const [uiSize, setUiSize] = useSyncedState<string>('uiSize', 'comfortable')
   K = SCALES[uiSize] ?? 1.35
 
-  const COL_W = px(252)
+  const COL_W = px(300)
   const COL_GAP = px(10)
   const BOARD_W = COL_W * 4 + COL_GAP * 3
   const COLLAPSED_W = px(40)
   const CARD_W = COL_W - px(20)
-  const PANEL_W = px(300)
 
   const today = todayISO()
   const tomorrow = addDaysISO(today, 1)
@@ -375,7 +374,6 @@ function Widget() {
   const active = live.filter((t) => t.status !== 'done')
   const done = live.filter((t) => t.status === 'done')
   const archived = all.filter((t) => t.archived)
-  const openTask = openId ? tasks.get(openId) ?? null : null
 
   // ------------------------------------------------------------------ people
   /**
@@ -707,6 +705,43 @@ function Widget() {
     toast('Added 8 sample tasks')
   }
 
+  /** Prefix-match typed text against known names so "jon" → "Jon Park". */
+  const resolveAgainst = (typed: string, known: string[]): string => {
+    const v = typed.trim()
+    if (!v) return ''
+    const lower = v.toLowerCase()
+    const exact = known.find((k) => k.toLowerCase() === lower)
+    if (exact) return exact
+    const prefix = known.filter((k) => k.toLowerCase().startsWith(lower))
+    if (prefix.length === 1) return prefix[0]
+    const word = known.filter((k) => k.toLowerCase().split(/\s+/).some((w) => w.startsWith(lower)))
+    if (word.length === 1) return word[0]
+    return v
+  }
+  const resolvePerson = (typed: string) => resolveAgainst(typed, knownAssignees)
+  const resolveLabel = (typed: string) => resolveAgainst(typed, knownLabels)
+
+  function PersonChip({ name, onClick, active }: { name: string; onClick: () => void; active?: boolean }) {
+    return (
+      <AutoLayout
+        direction="horizontal"
+        spacing={px(5)}
+        padding={{ top: px(2), bottom: px(2), left: px(2), right: px(8) }}
+        cornerRadius={px(999)}
+        fill={active ? C.accentSoft : C.bg}
+        stroke={active ? C.accent : C.border}
+        verticalAlignItems="center"
+        onClick={onClick}
+        hoverStyle={{ fill: C.accentSoft, stroke: C.accent }}
+      >
+        <Avatar name={name} photo={photoOf(name)} size={16} />
+        <Label size={10} weight={600} color={active ? C.accent : C.text}>
+          {shortName(name, 18)}
+        </Label>
+      </AutoLayout>
+    )
+  }
+
   // ------------------------------------------------------------------- card
   function Card({ task, width, showStatus }: { task: Task; width: number | 'fill-parent'; showStatus?: boolean }) {
     const open = openId === task.id
@@ -747,7 +782,6 @@ function Widget() {
               verticalAlignItems="center"
               onClick={() => complete(task.id)}
               hoverStyle={{ fill: isDone ? C.success : C.successSoft, stroke: C.success }}
-              tooltip={isDone ? 'Completed' : 'Mark done'}
             >
               {isDone ? (
                 <Text fontFamily={FONT} fontSize={px(10)} fontWeight={700} fill="#FFFFFF" lineHeight={px(16)}>
@@ -755,13 +789,32 @@ function Widget() {
                 </Text>
               ) : null}
             </AutoLayout>
-            <AutoLayout width="fill-parent" onClick={() => setOpenId(open ? null : task.id)} tooltip={open ? 'Close details' : 'Open details'}>
-              <Label size={12} weight={600} width="fill-parent" truncate={2} strike={isDone} color={isDone ? C.muted : C.text}>
-                {task.title || 'Untitled'}
-              </Label>
-            </AutoLayout>
+            {open ? (
+              <Input
+                value={task.title}
+                placeholder="Task title"
+                onTextEditEnd={(e) => {
+                  const v = e.characters.trim()
+                  if (v && v !== task.title) patch(task.id, { title: v })
+                }}
+                fontFamily={FONT}
+                fontSize={px(13)}
+                fontWeight={700}
+                fill={C.text}
+                width="fill-parent"
+                inputBehavior="wrap"
+                inputFrameProps={{ padding: 0 }}
+              />
+            ) : (
+              <AutoLayout width="fill-parent" onClick={() => setOpenId(task.id)}>
+                <Label size={12} weight={600} width="fill-parent" truncate={2} strike={isDone} color={isDone ? C.muted : C.text}>
+                  {task.title || 'Untitled'}
+                </Label>
+              </AutoLayout>
+            )}
+            {open ? <IconBtn icon="chevronUp" size={18} tooltip="Collapse" onClick={() => setOpenId(null)} /> : null}
             {task.priority ? (
-              <Pill text={PRIORITY_GLYPH[task.priority]} color={PRIORITY_COLOR[task.priority]} fill={PRIORITY_SOFT[task.priority]} tooltip={`${PRIORITY_LABEL[task.priority]} priority`} onClick={() => setOpenId(task.id)} />
+              <Pill text={PRIORITY_GLYPH[task.priority]} color={PRIORITY_COLOR[task.priority]} fill={PRIORITY_SOFT[task.priority]} tooltip={`${PRIORITY_LABEL[task.priority]} priority`} onClick={() => setOpenId(open ? null : task.id)} />
             ) : null}
           </AutoLayout>
 
@@ -858,7 +911,6 @@ function Widget() {
                     verticalAlignItems="center"
                     onClick={() => setStatus(task.id, s)}
                     hoverStyle={{ fill: current ? C.bg : STATUS_SOFT[s] }}
-                    tooltip={current ? `${STATUS_LABEL[s]} (current)` : `Move to ${STATUS_LABEL[s]}`}
                   >
                     <StatusGlyph status={s} size={11} muted={!current} />
                   </AutoLayout>
@@ -872,82 +924,44 @@ function Widget() {
               ✓ Done! Moving to Completed…
             </Label>
           ) : null}
+          {open ? <Editor task={task} /> : null}
         </AutoLayout>
       </AutoLayout>
     )
   }
 
   // -------------------------------------------------------- inspector panel
-  function PropRow({ label, children, top }: { label: string; children?: any; top?: boolean }) {
+  function PropRow({ label, children, stack }: { label: string; children?: any; top?: boolean; stack?: boolean }) {
     return (
-      <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} verticalAlignItems={top ? 'start' : 'center'}>
-        <AutoLayout width={px(58)} padding={{ top: top ? 4 : 0 }}>
-          <Label size={10} weight={600} color={C.muted}>
-            {label}
-          </Label>
-        </AutoLayout>
-        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(4)} wrap verticalAlignItems="center">
-          {children}
-        </AutoLayout>
+      <AutoLayout direction="vertical" width="fill-parent" spacing={px(4)}>
+        <Label size={9} weight={700} color={C.faint}>
+          {label.toUpperCase()}
+        </Label>
+        {stack ? (
+          <AutoLayout direction="vertical" width="fill-parent" spacing={px(5)}>
+            {children}
+          </AutoLayout>
+        ) : (
+          <AutoLayout direction="horizontal" width="fill-parent" spacing={px(4)} wrap verticalAlignItems="center">
+            {children}
+          </AutoLayout>
+        )}
       </AutoLayout>
     )
   }
 
-  function Inspector({ task }: { task: Task }) {
+  function Editor({ task }: { task: Task }) {
     const confirming = confirmDeleteId === task.id
     const customDue = !!task.due && task.due !== today && task.due !== tomorrow && task.due !== nextMon
     const overdue = isOverdue(task.due) && task.status !== 'done'
     const subs = subtasksOf(task)
     const subsDone = subs.filter((s) => s.done).length
     const labels = labelsOf(task)
-    const peopleRow = knownAssignees.filter((a) => a !== task.assignee).slice(0, 8)
+    const peopleRow = knownAssignees.filter((a) => a !== task.assignee)
 
     return (
-      <AutoLayout
-        direction="vertical"
-        width={PANEL_W}
-        spacing={0}
-        fill={C.bg}
-        cornerRadius={px(12)}
-        stroke={C.accent}
-        strokeWidth={1.5}
-        overflow="hidden"
-        effect={{ type: 'drop-shadow', color: { r: 0.07, g: 0.09, b: 0.15, a: 0.1 }, offset: { x: 0, y: 6 }, blur: 18 }}
-      >
-        <Rectangle width="fill-parent" height={px(4)} fill={STATUS_COLOR[task.status]} />
-        <AutoLayout direction="vertical" width="fill-parent" spacing={px(10)} padding={{ top: px(10), bottom: px(12), left: px(12), right: px(12) }}>
-
-        {/* title row */}
-        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
-          <AutoLayout direction="horizontal" spacing={px(4)} padding={{ vertical: px(2), horizontal: px(7) }} cornerRadius={px(999)} fill={STATUS_SOFT[task.status]} verticalAlignItems="center">
-            <StatusGlyph status={task.status} size={10} />
-            <Label size={10} weight={700} color={STATUS_COLOR[task.status]}>
-              {STATUS_LABEL[task.status]}
-            </Label>
-          </AutoLayout>
-          <Label size={10} color={C.faint}>
-            Editing
-          </Label>
-          <AutoLayout width="fill-parent" height={px(1)} />
-          <IconBtn icon="x" tooltip="Close" onClick={() => setOpenId(null)} />
-        </AutoLayout>
-
-        <Input
-          value={task.title}
-          placeholder="Task title"
-          onTextEditEnd={(e) => {
-            const v = e.characters.trim()
-            if (v && v !== task.title) patch(task.id, { title: v })
-          }}
-          fontFamily={FONT}
-          fontSize={px(14)}
-          fontWeight={700}
-          fill={C.text}
-          width="fill-parent"
-          inputBehavior="wrap"
-          inputFrameProps={{ padding: px(0) }}
-        />
-
+      <AutoLayout direction="vertical" width="fill-parent" spacing={px(10)} padding={{ top: px(4) }}>
+        <Divider />
         <Input
           value={task.description || null}
           placeholder="Add a description…"
@@ -995,35 +1009,36 @@ function Widget() {
           </AutoLayout>
         </PropRow>
 
-        <PropRow label="Due" top>
-          {task.due ? (
-            <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center" padding={{ vertical: px(2), horizontal: px(8) }} cornerRadius={px(999)} fill={overdue ? C.dangerSoft : C.accentSoft}>
-              <Label size={10} weight={700} color={overdue ? C.danger : C.accentText}>
-                {overdue ? `Overdue · ${weekdayDate(task.due)}` : weekdayDate(task.due)}
+        <PropRow label="Due" stack>
+          <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
+            <Icon name="calendar" color={task.due ? (overdue ? C.danger : C.accentText) : C.faint} size={12} />
+            {task.due ? (
+              <Label size={11} weight={700} color={overdue ? C.danger : C.text} width="fill-parent" truncate>
+                {overdue ? `Overdue · was due ${weekdayDate(task.due)}` : `Due ${weekdayDate(task.due)}`}
               </Label>
-              <IconBtn icon="x" size={14} color={overdue ? C.danger : C.accentText} tooltip="Clear due date" onClick={() => setDue(task.id, null)} />
-            </AutoLayout>
-          ) : (
-            <Label size={10} color={C.faint} italic>
-              No due date
-            </Label>
-          )}
+            ) : (
+              <Label size={11} color={C.faint} italic width="fill-parent">
+                No due date
+              </Label>
+            )}
+            {task.due ? <Btn small tone="ghost" icon="x" label="Clear" onClick={() => setDue(task.id, null)} /> : null}
+          </AutoLayout>
           <AutoLayout direction="horizontal" spacing={px(4)} wrap width="fill-parent">
             <Chip small label="Today" active={task.due === today} onClick={() => setDue(task.id, today)} />
             <Chip small label="Tomorrow" active={task.due === tomorrow} onClick={() => setDue(task.id, tomorrow)} />
             <Chip small label="Next Mon" active={task.due === nextMon} onClick={() => setDue(task.id, nextMon)} />
-            <Chip small label="Pick date…" active={customDue} onClick={() => pickDate(task.title, task.due, (iso) => setDue(task.id, iso))} />
+            <Chip small label={customDue ? weekdayDate(task.due as string) : 'Pick date…'} active={customDue} onClick={() => pickDate(task.title, task.due, (iso) => setDue(task.id, iso))} />
           </AutoLayout>
         </PropRow>
 
-        <PropRow label="Owner" top>
+        <PropRow label="Owner" stack>
           <AutoLayout direction="horizontal" spacing={px(6)} verticalAlignItems="center" width="fill-parent">
             <Avatar name={task.assignee} photo={photoOf(task.assignee)} size={22} />
             <Input
               value={task.assignee || null}
-              placeholder="Unassigned — type a name"
+              placeholder="Type a name, press Enter"
               onTextEditEnd={(e) => {
-                const v = e.characters.trim()
+                const v = resolvePerson(e.characters)
                 if (v !== task.assignee) patch(task.id, { assignee: v })
               }}
               fontFamily={FONT}
@@ -1048,12 +1063,14 @@ function Widget() {
           {peopleRow.length ? (
             <AutoLayout direction="horizontal" spacing={px(4)} wrap width="fill-parent" verticalAlignItems="center">
               {peopleRow.map((a) => (
-                <AutoLayout key={a} cornerRadius={px(999)} padding={px(1)} onClick={() => patch(task.id, { assignee: a })} hoverStyle={{ fill: C.accentSoft }} tooltip={`Assign to ${a}`}>
-                  <Avatar name={a} photo={photoOf(a)} size={22} />
-                </AutoLayout>
+                <PersonChip key={a} name={a} onClick={() => patch(task.id, { assignee: a })} />
               ))}
             </AutoLayout>
-          ) : null}
+          ) : (
+            <Label size={9} color={C.faint} width="fill-parent">
+              Anyone you type becomes a chip here. Teammates who open this board appear automatically with their photo.
+            </Label>
+          )}
         </PropRow>
 
         <PropRow label="Priority">
@@ -1062,7 +1079,7 @@ function Widget() {
           ))}
         </PropRow>
 
-        <PropRow label="Labels" top>
+        <PropRow label="Labels">
           {knownLabels.map((l) => (
             <LabelPill key={l} name={l} size={10} active={labels.includes(l)} onClick={() => toggleLabel(task.id, l)} />
           ))}
@@ -1070,7 +1087,7 @@ function Widget() {
             value={null}
             placeholder="+ label"
             onTextEditEnd={(e) => {
-              const v = e.characters.trim()
+              const v = resolveLabel(e.characters)
               if (v && !labels.includes(v)) toggleLabel(task.id, v)
             }}
             fontFamily={FONT}
@@ -1078,7 +1095,7 @@ function Widget() {
             fontWeight={600}
             fill={C.text}
             placeholderProps={{ fill: C.faint }}
-            width={px(64)}
+            width={px(80)}
             inputBehavior="truncate"
             inputFrameProps={{ padding: { vertical: px(2), horizontal: px(7) }, cornerRadius: px(4), stroke: C.border, strokeDashPattern: [3, 2] }}
           />
@@ -1168,7 +1185,7 @@ function Widget() {
           ) : (
             <Btn small tone="ghost" icon="trash" tooltip="Delete permanently" onClick={() => setConfirmDeleteId(task.id)} />
           )}
-        </AutoLayout>
+          <Btn small tone="ghost" icon="chevronUp" tooltip="Collapse" onClick={() => setOpenId(null)} />
         </AutoLayout>
       </AutoLayout>
     )
@@ -1178,7 +1195,8 @@ function Widget() {
   function Column({ status }: { status: Status }) {
     const isCollapsed = !!collapsed[status]
     const items = live.filter((t) => t.status === status)
-    const visible = items.filter(matches).sort(compare)
+    // Done column: most recently completed first; other columns use the chosen sort.
+    const visible = items.filter(matches).sort(status === 'done' ? (a, b) => (b.completedAt ?? b.updatedAt) - (a.completedAt ?? a.updatedAt) : compare)
     const color = STATUS_COLOR[status]
     const hiddenByFilter = items.length - visible.length
 
@@ -1232,7 +1250,7 @@ function Widget() {
 
         {status === 'done' ? (
           <AutoLayout direction="vertical" width="fill-parent" spacing={px(4)}>
-            {visible.slice(0, 4).map((t) => (
+            {visible.slice(0, 5).map((t) => (
               <DoneRow key={t.id} task={t} compact />
             ))}
             {visible.length === 0 ? (
@@ -1240,7 +1258,7 @@ function Widget() {
                 Completed tasks land here.
               </Label>
             ) : null}
-            <Btn label={visible.length > 4 ? `View all ${visible.length} completed` : 'Open Done view'} icon="chevronRight" tone="ghost" small onClick={() => setView('done')} />
+            <Btn label={visible.length > 5 ? `${visible.length - 5} more in Done view` : 'Open Done view'} icon="chevronRight" tone="ghost" small onClick={() => setView('done')} />
           </AutoLayout>
         ) : (
           <AutoLayout direction="vertical" width="fill-parent" spacing={px(6)}>
@@ -1280,16 +1298,16 @@ function Widget() {
     return (
       <AutoLayout
         key={task.id}
-        direction="horizontal"
+        direction="vertical"
         width="fill-parent"
-        spacing={px(8)}
-        padding={{ vertical: px(5), horizontal: px(8) }}
+        spacing={0}
         fill={open ? C.accentSoft : C.bg}
         cornerRadius={px(8)}
         stroke={open ? C.accent : C.border}
-        verticalAlignItems="center"
+        strokeWidth={open ? 1.5 : 1}
         hoverStyle={open ? undefined : { stroke: C.borderStrong }}
       >
+      <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} padding={{ vertical: px(5), horizontal: px(8) }} verticalAlignItems="center">
         {task.archived ? <Icon name="archive" color={C.faint} size={13} /> : <StatusGlyph status="done" size={14} />}
         <AutoLayout direction="vertical" width="fill-parent" spacing={px(1)} onClick={() => setOpenId(open ? null : task.id)} tooltip="Open details">
           <Label size={11} weight={500} color={C.muted} strike={!task.archived} width="fill-parent" truncate>
@@ -1330,21 +1348,22 @@ function Widget() {
           )
         ) : null}
       </AutoLayout>
+      {open ? (
+        <AutoLayout width="fill-parent" padding={{ top: 0, bottom: px(8), left: px(10), right: px(10) }}>
+          <Editor task={task} />
+        </AutoLayout>
+      ) : null}
+      </AutoLayout>
     )
   }
 
   // ------------------------------------------------------------------ views
   function BoardView() {
-    // The inspector slots in directly after the column that holds the open
-    // task, so the editor sits next to the card it belongs to.
-    const nodes: any[] = []
-    for (const s of STATUSES) {
-      nodes.push(<Column key={s} status={s} />)
-      if (openTask && openTask.status === s) nodes.push(<Inspector key="inspector" task={openTask} />)
-    }
     return (
       <AutoLayout direction="horizontal" spacing={COL_GAP} verticalAlignItems="start" width="hug-contents">
-        {nodes}
+        {STATUSES.map((s) => (
+          <Column key={s} status={s} />
+        ))}
       </AutoLayout>
     )
   }
@@ -1736,10 +1755,7 @@ function Widget() {
       ) : null}
 
       {/* body: main view + optional inspector on the right */}
-      <AutoLayout direction="horizontal" spacing={px(12)} verticalAlignItems="start" width="hug-contents">
-        {mainView}
-        {openTask && view !== 'board' ? <Inspector task={openTask} /> : null}
-      </AutoLayout>
+      {mainView}
     </AutoLayout>
   )
 }
