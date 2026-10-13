@@ -1,6 +1,6 @@
 export type Status = 'todo' | 'inprogress' | 'blocked' | 'done'
 export type Priority = 'low' | 'medium' | 'high'
-export type View = 'board' | 'week' | 'done'
+export type View = 'board' | 'week' | 'done' | 'sync'
 export type SortMode = 'due' | 'priority' | 'created'
 export type DueFilter = 'overdue' | 'today' | 'week' | 'none'
 
@@ -22,6 +22,9 @@ export interface Task {
   /** Project / topic labels, free text, coloured deterministically. */
   labels?: string[]
   subtasks?: Subtask[]
+  /** Flagged for the next team sync; optional talking point. */
+  discuss?: boolean
+  discussNote?: string
   createdAt: number
   updatedAt: number
   completedAt: number | null

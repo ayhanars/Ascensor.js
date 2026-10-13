@@ -16,7 +16,7 @@ import {
   Task,
   View,
 } from './types'
-import { addDaysISO, ageInDays, daysFromToday, dueLabel, fromTimestamp, isOverdue, nextMondayISO, todayISO, weekdayDate } from './dates'
+import { addDaysISO, ageInDays, daysFromToday, dueLabel, fromTimestamp, isOverdue, todayISO, weekdayDate } from './dates'
 import {
   C,
   PRIORITY_COLOR,
@@ -33,7 +33,7 @@ import {
 } from './theme'
 
 const { widget } = figma
-const { AutoLayout, Text, Input, SVG, Image, Ellipse, Rectangle, useSyncedState, useSyncedMap, usePropertyMenu } = widget
+const { AutoLayout, Text, Input, SVG, Image, Ellipse, Rectangle, useSyncedState, useSyncedMap, usePropertyMenu, useWidgetNodeId } = widget
 
 // ---------------------------------------------------------------------------
 // Layout constants
@@ -53,6 +53,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 const toast = (msg: string) => figma.notify(msg, { timeout: 1400 })
 const shortName = (s: string, n = 14) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
 const subtasksOf = (t: Task): Subtask[] => t.subtasks ?? []
+const hexToRgb = (hex: string): RGB => ({ r: parseInt(hex.slice(1, 3), 16) / 255, g: parseInt(hex.slice(3, 5), 16) / 255, b: parseInt(hex.slice(5, 7), 16) / 255 })
 const labelsOf = (t: Task): string[] => t.labels ?? []
 
 // ---------------------------------------------------------------------------
@@ -343,7 +344,7 @@ function Widget() {
   const tasks = useSyncedMap<Task>('tasks')
   const people = useSyncedMap<Person>('people')
   const [view, setView] = useSyncedState<View>('view', 'board')
-  const [collapsed, setCollapsed] = useSyncedState<Record<string, boolean>>('collapsed', { done: true })
+  const [collapsed, setCollapsed] = useSyncedState<Record<string, boolean>>('collapsed2', {})
   const [openId, setOpenId] = useSyncedState<string | null>('openId', null)
   const [confirmDeleteId, setConfirmDeleteId] = useSyncedState<string | null>('confirmDeleteId', null)
   const [filters, setFilters] = useSyncedState<Filters>('filters', EMPTY_FILTERS)
@@ -358,6 +359,7 @@ function Widget() {
   const [staleDays, setStaleDays] = useSyncedState<number>('staleDays', 7)
   const [boardTitle, setBoardTitle] = useSyncedState<string>('boardTitle', 'Team tasks')
   const [uiSize, setUiSize] = useSyncedState<string>('uiSize', 'comfortable')
+  const widgetId = useWidgetNodeId()
   K = SCALES[uiSize] ?? 1.35
 
   const COL_W = px(300)
@@ -368,7 +370,7 @@ function Widget() {
 
   const today = todayISO()
   const tomorrow = addDaysISO(today, 1)
-  const nextMon = nextMondayISO()
+  const nextWeek = addDaysISO(today, 7)
   const all = tasks.values()
   const live = all.filter((t) => !t.archived)
   const active = live.filter((t) => t.status !== 'done')
@@ -393,6 +395,13 @@ function Widget() {
     }
   }
   const photoOf = (name: string): string | null => (name ? people.get(name)?.photoUrl ?? null : null)
+  const findTeammates = () => {
+    const before = people.size
+    syncPeople()
+    const here = figma.activeUsers.filter((u) => u.name).length
+    const added = people.size - before
+    toast(`${here} ${here === 1 ? 'person is' : 'people are'} in this file right now${added ? ` · ${added} new` : ''}`)
+  }
 
   // ------------------------------------------------------------- mutations
   const patch = (id: string, p: Partial<Task>) => {
@@ -467,6 +476,58 @@ function Widget() {
     setConfirmDeleteId(null)
     if (openId === id) setOpenId(null)
     toast('Task deleted')
+  }
+
+  const setDiscuss = (id: string, flag: boolean) => {
+    patch(id, { discuss: flag })
+    toast(flag ? 'Added to the team sync agenda' : 'Removed from the agenda')
+  }
+
+  /**
+   * Creates a dated section with one sticky per flagged task, placed to the
+   * right of the widget on the current FigJam page.
+   */
+  const createAgendaOnCanvas = async () => {
+    const flagged = live.filter((t) => t.discuss)
+    if (!flagged.length) {
+      toast('Flag tasks with “Discuss in team sync” first')
+      return
+    }
+    await figma.loadFontAsync({ family: 'Inter', style: 'Medium' })
+    const me = await figma.getNodeByIdAsync(widgetId)
+    const anchor = me && 'x' in me ? (me as SceneNode) : null
+    const section = figma.createSection()
+    section.name = `Team sync · ${weekdayDate(today)}`
+    section.fills = [{ type: 'SOLID', color: hexToRgb('#EEF2FF') }]
+    const gap = 24
+    const cols = 3
+    let w = 0
+    let h = 0
+    flagged.forEach((t, i) => {
+      const sticky = figma.createSticky()
+      const lines = [t.title]
+      const meta = [t.assignee ? `@${t.assignee}` : 'Unassigned', STATUS_LABEL[t.status], t.due ? `due ${dueLabel(t.due)}` : null].filter(Boolean).join(' · ')
+      lines.push('', meta)
+      if (t.discussNote) lines.push('', t.discussNote)
+      sticky.text.characters = lines.join('\n')
+      sticky.authorVisible = false
+      sticky.fills = [{ type: 'SOLID', color: hexToRgb(t.status === 'blocked' ? '#FFD8B5' : t.status === 'inprogress' ? '#BFDBFE' : t.status === 'done' ? '#BBF7D0' : '#FDE68A') }]
+      section.appendChild(sticky)
+      const col = i % cols
+      const row = Math.floor(i / cols)
+      sticky.x = gap + col * (sticky.width + gap)
+      sticky.y = 56 + row * (sticky.height + gap)
+      w = Math.max(w, sticky.x + sticky.width + gap)
+      h = Math.max(h, sticky.y + sticky.height + gap)
+    })
+    section.resizeWithoutConstraints(w, h)
+    if (anchor) {
+      section.x = anchor.x + anchor.width + 80
+      section.y = anchor.y
+    }
+    figma.currentPage.appendChild(section)
+    figma.viewport.scrollAndZoomIntoView([section])
+    toast(`Created an agenda with ${flagged.length} stick${flagged.length === 1 ? 'y' : 'ies'} next to the board`)
   }
 
   const setDue = (id: string, due: string | null) => {
@@ -578,6 +639,7 @@ function Widget() {
           { option: 'board', label: 'Board' },
           { option: 'week', label: 'Week' },
           { option: 'done', label: 'Done' },
+          { option: 'sync', label: 'Team sync' },
         ],
       },
       {
@@ -616,6 +678,7 @@ function Widget() {
       },
       { itemType: 'separator' },
       { itemType: 'action', propertyName: 'export', tooltip: 'Export CSV' },
+      { itemType: 'action', propertyName: 'agenda', tooltip: 'Create sync agenda on canvas' },
       { itemType: 'action', propertyName: 'expandAll', tooltip: 'Expand all columns' },
       { itemType: 'action', propertyName: 'collapseAll', tooltip: 'Collapse all columns' },
       { itemType: 'action', propertyName: 'clearFilters', tooltip: 'Clear filters' },
@@ -639,6 +702,8 @@ function Widget() {
           break
         case 'export':
           return exportCsv(all, boardTitle)
+        case 'agenda':
+          return createAgendaOnCanvas()
         case 'expandAll':
           setCollapsed({})
           break
@@ -759,12 +824,13 @@ function Widget() {
         key={task.id}
         direction="horizontal"
         width={width}
-        fill={isCelebrating ? C.successSoft : open ? C.accentSoft : C.bg}
+        fill={isCelebrating ? C.successSoft : C.bg}
         cornerRadius={px(8)}
         stroke={open ? C.accent : isCelebrating ? C.success : C.border}
-        strokeWidth={open ? 1.5 : 1}
+        strokeWidth={open ? 2 : 1}
         hoverStyle={open ? undefined : { stroke: C.borderStrong }}
         overflow="hidden"
+        effect={open ? { type: 'drop-shadow', color: { r: 0.31, g: 0.27, b: 0.9, a: 0.18 }, offset: { x: 0, y: 4 }, blur: 14 } : undefined}
       >
         {stripe ? <Rectangle width={px(3)} height="fill-parent" fill={stripe} /> : null}
         <AutoLayout direction="vertical" width="fill-parent" spacing={px(5)} padding={{ vertical: px(7), horizontal: px(9) }}>
@@ -886,6 +952,15 @@ function Widget() {
               <Pill text={`${ageInDays(task.createdAt)}d old`} color={C.warn} fill={C.warnSoft} size={10} tooltip={`In To Do for ${ageInDays(task.createdAt)} days`} />
             ) : null}
 
+            {task.discuss ? (
+              <AutoLayout direction="horizontal" spacing={px(3)} padding={{ vertical: px(1), horizontal: px(6) }} cornerRadius={px(999)} fill={C.accentSoft} verticalAlignItems="center" onClick={() => setView('sync')} tooltip="On the team sync agenda">
+                <Icon name="chat" color={C.accentText} size={10} />
+                <Label size={10} weight={700} color={C.accentText}>
+                  Sync
+                </Label>
+              </AutoLayout>
+            ) : null}
+
             {showStatus ? (
               <AutoLayout direction="horizontal" spacing={px(4)} padding={{ vertical: px(1), horizontal: px(6) }} cornerRadius={px(999)} fill={STATUS_SOFT[task.status]} verticalAlignItems="center">
                 <StatusGlyph status={task.status} size={10} />
@@ -952,7 +1027,7 @@ function Widget() {
 
   function Editor({ task }: { task: Task }) {
     const confirming = confirmDeleteId === task.id
-    const customDue = !!task.due && task.due !== today && task.due !== tomorrow && task.due !== nextMon
+    const customDue = !!task.due && task.due !== today && task.due !== tomorrow && task.due !== nextWeek
     const overdue = isOverdue(task.due) && task.status !== 'done'
     const subs = subtasksOf(task)
     const subsDone = subs.filter((s) => s.done).length
@@ -1026,7 +1101,7 @@ function Widget() {
           <AutoLayout direction="horizontal" spacing={px(4)} wrap width="fill-parent">
             <Chip small label="Today" active={task.due === today} onClick={() => setDue(task.id, today)} />
             <Chip small label="Tomorrow" active={task.due === tomorrow} onClick={() => setDue(task.id, tomorrow)} />
-            <Chip small label="Next Mon" active={task.due === nextMon} onClick={() => setDue(task.id, nextMon)} />
+            <Chip small label="Next week" active={task.due === nextWeek} onClick={() => setDue(task.id, nextWeek)} />
             <Chip small label={customDue ? weekdayDate(task.due as string) : 'Pick date…'} active={customDue} onClick={() => pickDate(task.title, task.due, (iso) => setDue(task.id, iso))} />
           </AutoLayout>
         </PropRow>
@@ -1059,6 +1134,7 @@ function Widget() {
                 if (name) patch(task.id, { assignee: task.assignee === name ? '' : name })
               }}
             />
+            <IconBtn icon="users" tooltip="Find teammates who are in this file right now" onClick={findTeammates} />
           </AutoLayout>
           {peopleRow.length ? (
             <AutoLayout direction="horizontal" spacing={px(4)} wrap width="fill-parent" verticalAlignItems="center">
@@ -1099,6 +1175,35 @@ function Widget() {
             inputBehavior="truncate"
             inputFrameProps={{ padding: { vertical: px(2), horizontal: px(7) }, cornerRadius: px(4), stroke: C.border, strokeDashPattern: [3, 2] }}
           />
+        </PropRow>
+
+        <PropRow label="Team sync" stack>
+          <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
+            <Chip
+              small
+              label={task.discuss ? 'On the agenda' : 'Discuss in team sync'}
+              lead={<Icon name="chat" color={task.discuss ? C.accent : C.muted} size={11} />}
+              active={!!task.discuss}
+              onClick={() => setDiscuss(task.id, !task.discuss)}
+            />
+            {task.discuss ? <Btn small tone="ghost" icon="chat" label="Open agenda" onClick={() => setView('sync')} /> : null}
+          </AutoLayout>
+          {task.discuss ? (
+            <Input
+              value={task.discussNote || null}
+              placeholder="What needs deciding? (shows on the agenda)"
+              onTextEditEnd={(e) => {
+                if (e.characters !== (task.discussNote ?? '')) patch(task.id, { discussNote: e.characters })
+              }}
+              fontFamily={FONT}
+              fontSize={px(11)}
+              fill={C.text}
+              placeholderProps={{ fill: C.faint }}
+              width="fill-parent"
+              inputBehavior="multiline"
+              inputFrameProps={{ padding: { vertical: px(5), horizontal: px(7) }, fill: C.accentSoft, cornerRadius: px(6) }}
+            />
+          ) : null}
         </PropRow>
 
         <Divider />
@@ -1301,10 +1406,10 @@ function Widget() {
         direction="vertical"
         width="fill-parent"
         spacing={0}
-        fill={open ? C.accentSoft : C.bg}
+        fill={C.bg}
         cornerRadius={px(8)}
         stroke={open ? C.accent : C.border}
-        strokeWidth={open ? 1.5 : 1}
+        strokeWidth={open ? 2 : 1}
         hoverStyle={open ? undefined : { stroke: C.borderStrong }}
       >
       <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} padding={{ vertical: px(5), horizontal: px(8) }} verticalAlignItems="center">
@@ -1480,9 +1585,116 @@ function Widget() {
     )
   }
 
+  function SyncView() {
+    const agenda = live.filter((t) => t.discuss).filter(matches).sort(compare)
+    return (
+      <AutoLayout direction="vertical" spacing={px(8)} width={BOARD_W}>
+        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} verticalAlignItems="center">
+          <Label size={11} color={C.muted} width="fill-parent">
+            Flag any task with “Discuss in team sync”. Before the meeting, drop the agenda onto the canvas as stickies and work through it there.
+          </Label>
+          {agenda.length ? <Btn small tone="ghost" icon="x" label="Clear agenda" onClick={() => agenda.forEach((t) => patch(t.id, { discuss: false }))} /> : null}
+          <Btn label="Create agenda on canvas" icon="sticky" tone="primary" onClick={createAgendaOnCanvas} tooltip="Creates a dated section with one sticky per flagged task next to the board" />
+        </AutoLayout>
+        <AutoLayout direction="vertical" width="fill-parent" spacing={0} fill={C.accentSoft} cornerRadius={px(12)} overflow="hidden">
+          <Rectangle width="fill-parent" height={px(4)} fill={C.accent} />
+          <AutoLayout direction="vertical" width="fill-parent" spacing={px(6)} padding={{ top: px(8), bottom: px(10), left: px(10), right: px(10) }}>
+            <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
+              <Icon name="chat" color={C.accent} size={13} />
+              <Label size={12} weight={700}>
+                {`Team sync agenda · ${weekdayDate(today)}`}
+              </Label>
+              <Pill text={String(agenda.length)} color={C.accent} fill={C.bg} size={10} />
+            </AutoLayout>
+            {agenda.length ? (
+              agenda.map((t) => <AgendaRow key={t.id} task={t} />)
+            ) : (
+              <Label size={10} color={C.faint} italic>
+                Nothing on the agenda yet — open a task and click “Discuss in team sync”.
+              </Label>
+            )}
+          </AutoLayout>
+        </AutoLayout>
+      </AutoLayout>
+    )
+  }
+
+  function AgendaRow({ task }: { task: Task }) {
+    const open = openId === task.id
+    const overdue = isOverdue(task.due) && task.status !== 'done'
+    return (
+      <AutoLayout key={task.id} direction="vertical" width="fill-parent" spacing={0} fill={C.bg} cornerRadius={px(8)} stroke={open ? C.accent : C.border} strokeWidth={open ? 2 : 1} hoverStyle={open ? undefined : { stroke: C.borderStrong }}>
+        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} padding={{ vertical: px(6), horizontal: px(8) }} verticalAlignItems="start">
+          <AutoLayout
+            width={px(16)}
+            height={px(16)}
+            cornerRadius={px(4)}
+            stroke={C.accent}
+            strokeWidth={1.5}
+            strokeAlign="inside"
+            horizontalAlignItems="center"
+            verticalAlignItems="center"
+            onClick={() => setDiscuss(task.id, false)}
+            hoverStyle={{ fill: C.accentSoft }}
+            tooltip="Discussed — remove from agenda"
+          />
+          <AutoLayout direction="vertical" width="fill-parent" spacing={px(3)}>
+            <AutoLayout width="fill-parent" onClick={() => setOpenId(open ? null : task.id)}>
+              <Label size={12} weight={600} width="fill-parent" truncate={2}>
+                {task.title}
+              </Label>
+            </AutoLayout>
+            <AutoLayout direction="horizontal" spacing={px(6)} wrap verticalAlignItems="center" width="fill-parent">
+              <AutoLayout direction="horizontal" spacing={px(4)} padding={{ vertical: px(1), horizontal: px(6) }} cornerRadius={px(999)} fill={STATUS_SOFT[task.status]} verticalAlignItems="center">
+                <StatusGlyph status={task.status} size={10} />
+                <Label size={10} weight={700} color={STATUS_COLOR[task.status]}>
+                  {STATUS_LABEL[task.status]}
+                </Label>
+              </AutoLayout>
+              <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center">
+                <Avatar name={task.assignee} photo={photoOf(task.assignee)} size={16} />
+                <Label size={10} weight={500} color={task.assignee ? C.text : C.faint} italic={!task.assignee}>
+                  {task.assignee ? shortName(task.assignee, 20) : 'Unassigned'}
+                </Label>
+              </AutoLayout>
+              {task.due ? (
+                <Label size={10} weight={overdue ? 700 : 500} color={overdue ? C.danger : C.muted}>
+                  {overdue ? `Overdue · ${dueLabel(task.due)}` : dueLabel(task.due)}
+                </Label>
+              ) : null}
+              {labelsOf(task).map((l) => (
+                <LabelPill key={l} name={l} />
+              ))}
+            </AutoLayout>
+            <Input
+              value={task.discussNote || null}
+              placeholder="Add a talking point…"
+              onTextEditEnd={(e) => {
+                if (e.characters !== (task.discussNote ?? '')) patch(task.id, { discussNote: e.characters })
+              }}
+              fontFamily={FONT}
+              fontSize={px(11)}
+              fill={C.text}
+              placeholderProps={{ fill: C.faint }}
+              width="fill-parent"
+              inputBehavior="multiline"
+              inputFrameProps={{ padding: { vertical: px(4), horizontal: px(7) }, fill: C.surface, cornerRadius: px(6) }}
+            />
+          </AutoLayout>
+          <IconBtn icon={open ? 'chevronUp' : 'chevronDown'} tooltip={open ? 'Collapse' : 'Edit task'} onClick={() => setOpenId(open ? null : task.id)} />
+        </AutoLayout>
+        {open ? (
+          <AutoLayout width="fill-parent" padding={{ top: 0, bottom: px(8), left: px(10), right: px(10) }}>
+            <Editor task={task} />
+          </AutoLayout>
+        ) : null}
+      </AutoLayout>
+    )
+  }
+
   // ---------------------------------------------------------------- panels
   function QuickAddPanel() {
-    const customDue = !!draft.due && draft.due !== today && draft.due !== tomorrow && draft.due !== nextMon
+    const customDue = !!draft.due && draft.due !== today && draft.due !== tomorrow && draft.due !== nextWeek
     return (
       <AutoLayout direction="vertical" width="fill-parent" spacing={px(8)} padding={px(10)} fill={C.accentSoft} cornerRadius={px(12)}>
         <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
@@ -1512,7 +1724,7 @@ function Widget() {
           <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center">
             <Chip small label="Today" active={draft.due === today} onClick={() => setDraft({ ...draft, due: draft.due === today ? null : today })} />
             <Chip small label="Tomorrow" active={draft.due === tomorrow} onClick={() => setDraft({ ...draft, due: draft.due === tomorrow ? null : tomorrow })} />
-            <Chip small label="Next Mon" active={draft.due === nextMon} onClick={() => setDraft({ ...draft, due: draft.due === nextMon ? null : nextMon })} />
+            <Chip small label="Next week" active={draft.due === nextWeek} onClick={() => setDraft({ ...draft, due: draft.due === nextWeek ? null : nextWeek })} />
             <Chip small label={customDue ? weekdayDate(draft.due as string) : 'Pick…'} active={customDue} onClick={() => pickDate('New task', draft.due, (iso) => setDraft({ ...draft, due: iso }))} />
           </AutoLayout>
           <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center">
@@ -1664,13 +1876,14 @@ function Widget() {
         <Label size={11} weight={on ? 700 : 500} color={on ? C.text : C.muted}>
           {label}
         </Label>
-        {count !== undefined && count > 0 ? <Pill text={String(count)} color={on ? C.success : C.muted} fill={on ? C.successSoft : C.surfaceAlt} /> : null}
+        {count !== undefined && count > 0 ? <Pill text={String(count)} color={id === 'sync' ? C.accent : on ? C.success : C.muted} fill={id === 'sync' ? C.accentSoft : on ? C.successSoft : C.surfaceAlt} /> : null}
       </AutoLayout>
     )
   }
 
   // ----------------------------------------------------------------- header
-  const mainView = view === 'board' ? <BoardView /> : view === 'week' ? <WeekView /> : <DoneView />
+  const agendaCount = live.filter((t) => t.discuss).length
+  const mainView = view === 'board' ? <BoardView /> : view === 'week' ? <WeekView /> : view === 'sync' ? <SyncView /> : <DoneView />
 
   return (
     <AutoLayout
@@ -1714,6 +1927,7 @@ function Widget() {
           <ViewTab id="board" label="Board" iconName="board" />
           <ViewTab id="week" label="Week" iconName="week" />
           <ViewTab id="done" label="Done" iconName="check" count={done.length} />
+          <ViewTab id="sync" label="Sync" iconName="chat" count={agendaCount} />
         </AutoLayout>
         <AutoLayout width="fill-parent" height={px(1)} />
         <AutoLayout direction="horizontal" spacing={px(6)} verticalAlignItems="center" padding={{ vertical: px(6), horizontal: px(10) }} fill={C.surface} stroke={search ? C.accent : undefined} cornerRadius={px(8)} width={px(220)}>
