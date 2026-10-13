@@ -6,8 +6,10 @@ the result as a GLB in a web viewer where every top-level object is a clickable 
 
 The Blender MCP server's tool names vary between versions. Use whichever tool runs Python
 code inside Blender (usually `execute_blender_code`) and whichever returns a viewport image
-(usually `get_viewport_screenshot`). Tools you are denied are simply unavailable; move on
-without them, do not retry them.
+(`get_viewport_screenshot` on some servers, `look` on others). Never use tools that import,
+search or generate outside assets (`import_asset`, `search_assets`, `generate_3d`): every part
+must come from your own code in build.py. Tools you are denied are simply unavailable; move
+on without them, do not retry them.
 
 ## Your workflow
 

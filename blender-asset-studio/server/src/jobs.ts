@@ -10,6 +10,21 @@ import { runClaude } from "./claude.js";
 import { buildPrompt } from "./prompts.js";
 import { collectParts, exportScene, renderViews } from "./finalize.js";
 import { startLivePolling, clearLive } from "./live.js";
+import { executeCode } from "./blender.js";
+
+/** Same reset the agent's build.py starts with, so nothing from an earlier run is shown or kept. */
+const SCENE_RESET = `
+import bpy
+for obj in list(bpy.data.objects):
+    bpy.data.objects.remove(obj, do_unlink=True)
+for coll in list(bpy.data.collections):
+    bpy.data.collections.remove(coll)
+for block_list in (bpy.data.meshes, bpy.data.materials, bpy.data.curves, bpy.data.images, bpy.data.lights, bpy.data.cameras):
+    for block in list(block_list):
+        if block.users == 0:
+            block_list.remove(block)
+print('RESET_OK')
+`;
 import type { LogLine, Version } from "./types.js";
 
 interface Job {
@@ -172,6 +187,13 @@ async function runJob(job: Job): Promise<void> {
   fs.writeFileSync(path.join(dir, "prompt.txt"), prompt);
 
   const started = Date.now();
+  clearLive(assetId, n);
+  try {
+    await executeCode(SCENE_RESET, 60_000);
+    log("info", "cleared the Blender scene");
+  } catch (e) {
+    log("error", `could not clear the Blender scene: ${(e as Error).message}`);
+  }
   const stopLive = startLivePolling(assetId, n);
   const result = await runClaude({
     cwd: dir,

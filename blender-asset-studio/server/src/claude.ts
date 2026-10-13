@@ -48,6 +48,13 @@ export function claudeArgs(opts: { effort: Effort; model?: string }): string[] {
     ...ALLOWED_TOOLS,
     // Not offered to the model at all, so it never spends a turn asking for them.
     "--disallowedTools",
+    // Blender MCP tools that import or generate outside assets: they break "build.py is the
+    // single source of truth" and may call paid services.
+    "mcp__blender__generate_3d",
+    "mcp__blender__import_asset",
+    "mcp__blender__search_assets",
+    "mcp__blender__record_trajectory_feedback",
+    "mcp__blender__disable_telemetry",
     "Bash",
     "PowerShell",
     "WebFetch",
