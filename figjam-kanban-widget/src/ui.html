@@ -31,6 +31,11 @@
   .preview div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .opt { display: flex; gap: 6px; align-items: baseline; margin: 0 0 6px; cursor: pointer; }
   .opt span { color: #6b7280; }
+  body.confetti { padding: 0; overflow: hidden; background: #fff; }
+  #confetti-mode { position: relative; width: 320px; height: 200px; }
+  #confetti { position: absolute; inset: 0; }
+  .cheer { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 0 24px; font-size: 16px; font-weight: 700; color: #111827; text-shadow: 0 1px 0 #fff, 0 0 8px #fff; animation: pop .45s cubic-bezier(.2,1.4,.4,1) both; }
+  @keyframes pop { from { transform: scale(.6); opacity: 0 } to { transform: scale(1); opacity: 1 } }
   input[type=text] { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid #cbd0d8; border-radius: 8px; margin: 2px 0 10px; color: #111827; }
 </style>
 </head>
@@ -99,6 +104,12 @@
     </div>
   </div>
 
+  <!-- Confetti -->
+  <div id="confetti-mode" class="hidden">
+    <canvas id="confetti" width="320" height="200"></canvas>
+    <div class="cheer" id="cheer"></div>
+  </div>
+
 <script>
   const pad = (n) => (n < 10 ? '0' + n : '' + n)
   const iso = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
@@ -126,6 +137,12 @@
     }
     if (m.type === 'import-init') {
       $('import-mode').classList.remove('hidden')
+    }
+    if (m.type === 'confetti-init') {
+      document.body.classList.add('confetti')
+      $('confetti-mode').classList.remove('hidden')
+      $('cheer').textContent = m.message || 'Done!'
+      runConfetti(m.ms || 1300)
     }
     if (m.type === 'stickies-init') {
       $('stickies-mode').classList.remove('hidden')
@@ -183,6 +200,28 @@
   $('paste').addEventListener('input', () => tryParse($('paste').value))
   $('import-go').onclick = () => { if (parsed) send({ type: 'import', tasks: parsed.tasks, people: parsed.people }) }
   $('import-cancel').onclick = () => send({ type: 'cancel' })
+  // --- confetti
+  const runConfetti = (ms) => {
+    const cv = $('confetti'), ctx = cv.getContext('2d'), W = cv.width, H = cv.height
+    const colors = ['#4f46e5', '#059669', '#f59e0b', '#ec4899', '#3b82f6', '#ef4444']
+    const parts = []
+    for (let i = 0; i < 90; i++) parts.push({ x: W / 2 + (Math.random() - 0.5) * 40, y: H * 0.6, vx: (Math.random() - 0.5) * 9, vy: -Math.random() * 9 - 3, w: 4 + Math.random() * 5, h: 6 + Math.random() * 6, r: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.3, c: colors[i % colors.length] })
+    const t0 = performance.now()
+    const frame = (now) => {
+      const el = now - t0
+      ctx.clearRect(0, 0, W, H)
+      for (const p of parts) {
+        p.vy += 0.25; p.x += p.vx; p.y += p.vy; p.r += p.vr; p.vx *= 0.99
+        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r); ctx.fillStyle = p.c
+        ctx.globalAlpha = Math.max(0, 1 - Math.max(0, el - ms * 0.6) / (ms * 0.4))
+        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h); ctx.restore()
+      }
+      if (el < ms) requestAnimationFrame(frame)
+      else send({ type: 'cancel' })
+    }
+    requestAnimationFrame(frame)
+  }
+
   // --- stickies
   let stickyCount = 0
   const stickyMode = () => document.querySelector('input[name=smode]:checked').value

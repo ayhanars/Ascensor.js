@@ -392,6 +392,7 @@ const STATE_KEYS = [
   'storeVersion',
   'lastSyncedVersion',
   'liveSync',
+  'celebrate',
 ]
 function storeRead<T>(key: string): T | null {
   const raw = figma.root.getSharedPluginData(NS, key)
@@ -556,6 +557,8 @@ function Widget() {
   const [boardTitle, setBoardTitle] = useSyncedState<string>('boardTitle', 'Team tasks')
   const [uiSize, setUiSize] = useSyncedState<string>('uiSize', 'comfortable')
   const [scope, setScope] = useSyncedState<Scope>('scope', { kind: 'team' })
+  /** Confetti popup on completion (a one-second iframe window); property-menu toggle, on by default. */
+  const [celebrate, setCelebrate] = useSyncedState<boolean>('celebrate', true)
   /** Bumped by other boards on this page when they write, which re-renders this one. */
   const [storeVersion] = useSyncedState<number>('storeVersion', 0)
   /** The store version this instance has already merged; renders skip the merge while it matches. */
@@ -1087,7 +1090,7 @@ function Widget() {
     if (anyFilter) clearFilters()
   }
 
-  const complete = (id: string) => {
+  const complete = (id: string): Promise<void> | void => {
     const t = tasks.get(id)
     if (!t || t.status === 'done') return
     if (id === freshId && !t.title.trim()) {
@@ -1098,8 +1101,20 @@ function Widget() {
     const now = Date.now()
     patch(id, { status: 'done', completedAt: now })
     if (openId === id) setOpenId(null)
-    figma.notify(cheerFor(t, now), { timeout: 2400 })
+    const msg = cheerFor(t, now)
+    figma.notify(msg, { timeout: 2400 })
+    if (celebrate) return confettiPopup(msg)
   }
+  /** A one-second confetti burst in the widget's iframe window, which closes itself. */
+  const confettiPopup = (message: string): Promise<void> =>
+    new Promise<void>((resolve) => {
+      figma.showUI(__html__, { width: 320, height: 200, title: 'Done!' })
+      figma.ui.postMessage({ type: 'confetti-init', message, ms: 1300 })
+      figma.ui.onmessage = () => {
+        figma.closePlugin()
+        resolve()
+      }
+    })
   /** A short, personal completion message; milestones first, then a rotating cheer with today's count. */
   const cheerFor = (t: Task, now: number): string => {
     let first = ''
@@ -1359,13 +1374,7 @@ function Widget() {
       },
       { itemType: 'separator' },
       { itemType: 'toggle', propertyName: 'live', tooltip: 'Live sync between boards', isToggled: liveSync },
-      { itemType: 'action', propertyName: 'export', tooltip: 'Export CSV / backup' },
-      { itemType: 'action', propertyName: 'import', tooltip: 'Import backup' },
-      { itemType: 'action', propertyName: 'stickies', tooltip: 'Selected stickies → tasks' },
-      { itemType: 'action', propertyName: 'agenda', tooltip: 'Create sync agenda on canvas' },
-      { itemType: 'action', propertyName: 'expandAll', tooltip: 'Expand all columns' },
-      { itemType: 'action', propertyName: 'collapseAll', tooltip: 'Collapse all columns' },
-      { itemType: 'action', propertyName: 'clearFilters', tooltip: 'Clear filters' },
+      { itemType: 'toggle', propertyName: 'celebrate', tooltip: 'Confetti on completion', isToggled: celebrate },
       { itemType: 'separator' },
       { itemType: 'action', propertyName: 'archiveOld', tooltip: 'Archive done > 14 days' },
     ],
@@ -1383,29 +1392,15 @@ function Widget() {
         case 'live':
           setLive(!liveSync)
           break
-        case 'export':
-          return exportDialog(all, everything, people.values(), boardTitle)
-        case 'import':
-          return importBackup()
-        case 'agenda':
-          return createAgendaOnCanvas()
-        case 'expandAll':
-          setCollapsed({})
-          break
-        case 'collapseAll':
-          setCollapsed({ todo: true, inprogress: true, blocked: true, done: true })
-          break
-        case 'clearFilters':
-          clearFilters()
+        case 'celebrate':
+          setCelebrate(!celebrate)
+          toast(celebrate ? 'Confetti off' : 'Confetti on')
           break
         case 'archiveOld':
           archiveOld()
           break
-        case 'samples':
+        case 'samples': // not in the menu; kept for the test harness
           addSamples()
-          break
-        case 'stickies':
-          importStickies()
           break
       }
     },
