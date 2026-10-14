@@ -57,6 +57,13 @@ const toast = (msg: string) => figma.notify(msg, { timeout: 1400 })
 const shortName = (s: string, n = 14) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
 const subtasksOf = (t: Task): Subtask[] => t.subtasks ?? []
 const labelsOf = (t: Task): string[] => t.labels ?? []
+/** Everyone assigned: the owner (first) plus co-assignees, deduplicated. */
+const assigneesOf = (t: Task): string[] => {
+  const out: string[] = t.assignee ? [t.assignee] : []
+  for (const n of t.coassignees ?? []) if (n && out.indexOf(n) < 0) out.push(n)
+  return out
+}
+const isAssigned = (t: Task, name: string): boolean => assigneesOf(t).indexOf(name) >= 0
 const hexToRgb = (hex: string): RGB => ({ r: parseInt(hex.slice(1, 3), 16) / 255, g: parseInt(hex.slice(3, 5), 16) / 255, b: parseInt(hex.slice(5, 7), 16) / 255 })
 
 // ---------------------------------------------------------------------------
@@ -376,7 +383,7 @@ const csvCell = (v: string | number | boolean | null | undefined): string => {
 const isoDateTime = (ts: number | null) => (ts ? new Date(ts).toISOString() : '')
 
 function tasksToCsv(list: Task[]): string {
-  const header = ['id', 'title', 'description', 'status', 'assignee', 'due', 'priority', 'labels', 'subtasks_done', 'subtasks_total', 'subtasks', 'created_at', 'updated_at', 'completed_at', 'archived']
+  const header = ['id', 'title', 'description', 'status', 'assignee', 'co_assignees', 'due', 'priority', 'labels', 'subtasks_done', 'subtasks_total', 'subtasks', 'created_at', 'updated_at', 'completed_at', 'archived']
   const rows = list.map((t) => {
     const subs = subtasksOf(t)
     return [
@@ -385,6 +392,7 @@ function tasksToCsv(list: Task[]): string {
       t.description,
       STATUS_LABEL[t.status],
       t.assignee,
+      assigneesOf(t).slice(1).join('; '),
       t.due ?? '',
       t.priority ? PRIORITY_LABEL[t.priority] : '',
       labelsOf(t).join('; '),
@@ -443,12 +451,14 @@ function coerceTask(raw: any): Task | null {
   const status = (VALID_STATUS[statusRaw] ? statusRaw : 'todo') as Status
   const prioRaw = typeof raw.priority === 'string' ? raw.priority.toLowerCase() : ''
   const priority = prioRaw === 'high' || prioRaw === 'medium' || prioRaw === 'low' ? prioRaw : null
+  const assignee = typeof raw.assignee === 'string' ? raw.assignee : ''
   return {
     id: id ?? uid(),
     title,
     description: typeof raw.description === 'string' ? raw.description : '',
     status,
-    assignee: typeof raw.assignee === 'string' ? raw.assignee : '',
+    assignee,
+    coassignees: Array.isArray(raw.coassignees) ? raw.coassignees.filter((n: any) => typeof n === 'string' && n && n !== assignee).slice(0, 10) : [],
     due: typeof raw.due === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.due) ? raw.due : null,
     priority,
     labels: Array.isArray(raw.labels) ? raw.labels.filter((l: any) => typeof l === 'string' && l).slice(0, 20) : [],
@@ -532,7 +542,7 @@ function Widget() {
 
   const everything = tasks.values()
   /** Personal boards only show tasks assigned to their owner; the store still holds everything. */
-  const all = owner ? everything.filter((t) => t.assignee === owner) : everything
+  const all = owner ? everything.filter((t) => isAssigned(t, owner)) : everything
   const live = all.filter((t) => !t.archived)
   const active = live.filter((t) => t.status !== 'done')
   const done = live.filter((t) => t.status === 'done')
@@ -554,7 +564,7 @@ function Widget() {
     const before = tasks.get(t.id)
     tasks.set(t.id, t)
     storeWrite('task:' + t.id, t)
-    markTouched(before?.assignee, t.assignee)
+    markTouched(...(before ? assigneesOf(before) : []), ...assigneesOf(t))
     dirty = true
   }
   const deleteTask = (id: string) => {
@@ -567,7 +577,7 @@ function Widget() {
     if (stored) {
       storeWrite('task:' + id, null)
       storeWrite('deleted:' + id, { at: Date.now() })
-      markTouched(before?.assignee)
+      markTouched(...(before ? assigneesOf(before) : []))
       if (!before) touched = null
       dirty = true
     }
@@ -847,9 +857,11 @@ function Widget() {
   const patch = (id: string, p: Partial<Task>) => {
     const t = tasks.get(id)
     if (!t) return
-    writeTask({ ...t, ...p, updatedAt: Date.now() })
-    if (owner && 'assignee' in p && t.assignee === owner && p.assignee !== owner) {
-      toast(p.assignee ? `Moved to ${p.assignee}'s board` : 'Unassigned — now only on the team board')
+    const next = { ...t, ...p, updatedAt: Date.now() }
+    writeTask(next)
+    if (owner && isAssigned(t, owner) && !isAssigned(next, owner)) {
+      const names = assigneesOf(next)
+      toast(names.length ? `Moved to ${names[0]}'s board` : 'Unassigned — now only on the team board')
     }
     commit()
   }
@@ -859,6 +871,24 @@ function Widget() {
       if (t) writeTask({ ...t, ...p, updatedAt: Date.now() })
     }
     commit()
+  }
+
+  /** Replace the whole assignee list; the first name is the owner, the rest co-assignees. */
+  const setAssignees = (id: string, names: string[]) => {
+    const clean: string[] = []
+    for (const n of names) if (n && clean.indexOf(n) < 0) clean.push(n)
+    patch(id, { assignee: clean[0] ?? '', coassignees: clean.slice(1) })
+  }
+  const toggleAssignee = (id: string, name: string) => {
+    const t = tasks.get(id)
+    if (!t || !name) return
+    const names = assigneesOf(t)
+    setAssignees(id, names.indexOf(name) >= 0 ? names.filter((n) => n !== name) : names.concat(name))
+  }
+  const addAssignee = (id: string, name: string) => {
+    const t = tasks.get(id)
+    if (!t || !name || isAssigned(t, name)) return
+    setAssignees(id, assigneesOf(t).concat(name))
   }
 
   const createTask = (title: string, extra: Partial<Task> = {}, allowEmpty = false): string | null => {
@@ -896,7 +926,7 @@ function Widget() {
   /** "Add task": a blank card at the top of To Do, already open for editing. */
   /** A card is blank only if the user has done nothing with it at all (title, fields, status, owner, completion). */
   const isBlank = (t: Task) =>
-    !t.title.trim() && !t.description && !t.due && !t.priority && !labelsOf(t).length && !subtasksOf(t).length && !t.discuss && t.status === 'todo' && !t.completedAt && t.assignee === (owner ?? '')
+    !t.title.trim() && !t.description && !t.due && !t.priority && !labelsOf(t).length && !subtasksOf(t).length && !t.discuss && t.status === 'todo' && !t.completedAt && t.assignee === (owner ?? '') && !(t.coassignees ?? []).length
   const discardIfBlank = (id: string | null) => {
     if (!id) return
     const t = tasks.get(id)
@@ -907,7 +937,7 @@ function Widget() {
     if (freshId && freshId !== id) discardIfBlank(freshId)
     setOpenId(id)
     const t = tasks.get(id)
-    if (people.size === 0 || (t && t.assignee && !photoOf(t.assignee))) syncPeople() // only when it can add a photo
+    if (people.size === 0 || (t && assigneesOf(t).some((n) => !photoOf(n)))) syncPeople() // only when it can add a photo
     commit()
   }
   const closeCard = () => {
@@ -1020,7 +1050,7 @@ function Widget() {
     flagged.forEach((t, i) => {
       const sticky = stickies[i]
       const lines = [t.title || 'Untitled']
-      const meta = [t.assignee ? `@${t.assignee}` : 'Unassigned', STATUS_LABEL[t.status], t.due ? `due ${dueInfo(t.due).label}` : null].filter(Boolean).join(' · ')
+      const meta = [assigneesOf(t).length ? assigneesOf(t).map((n) => `@${n}`).join(' ') : 'Unassigned', STATUS_LABEL[t.status], t.due ? `due ${dueInfo(t.due).label}` : null].filter(Boolean).join(' · ')
       lines.push('', meta)
       if (t.discussNote) lines.push('', t.discussNote)
       sticky.text.characters = lines.join('\n')
@@ -1059,11 +1089,11 @@ function Widget() {
   const matches = (t: Task): boolean => {
     if (t.id === freshId || t.id === openId) return true
     if (q) {
-      const hay = `${t.title} ${t.description} ${t.assignee} ${labelsOf(t).join(' ')} ${subtasksOf(t).map((s) => s.title).join(' ')}`.toLowerCase()
+      const hay = `${t.title} ${t.description} ${assigneesOf(t).join(' ')} ${labelsOf(t).join(' ')} ${subtasksOf(t).map((s) => s.title).join(' ')}`.toLowerCase()
       if (!hay.includes(q)) return false
     }
-    if (filters.assignee === '__none__' && t.assignee) return false
-    if (filters.assignee && filters.assignee !== '__none__' && t.assignee !== filters.assignee) return false
+    if (filters.assignee === '__none__' && assigneesOf(t).length) return false
+    if (filters.assignee && filters.assignee !== '__none__' && !isAssigned(t, filters.assignee)) return false
     if (filters.priority && t.priority !== filters.priority) return false
     if (filters.status && t.status !== filters.status) return false
     if (filters.stale && !isStale(t)) return false
@@ -1106,11 +1136,11 @@ function Widget() {
     return sorted
   }
 
-  const knownAssignees = Array.from(new Set([...live.map((t) => t.assignee).filter((a) => a), ...Object.keys(photoByName)])).sort()
+  const knownAssignees = Array.from(new Set([...([] as string[]).concat(...live.map(assigneesOf)), ...Object.keys(photoByName)])).sort()
   const knownLabels: string[] = Array.from(new Set(live.reduce<string[]>((acc, t) => acc.concat(labelsOf(t)), []))).sort()
   const overdueCount = active.filter(isLate).length
   const blockedCount = active.filter((t) => t.status === 'blocked').length
-  const unassignedCount = active.filter((t) => !t.assignee).length
+  const unassignedCount = active.filter((t) => assigneesOf(t).length === 0).length
   const staleCount = active.filter(isStale).length
   const agendaCount = live.filter((t) => t.discuss).length
 
@@ -1231,7 +1261,7 @@ function Widget() {
       { title: 'Draft Q4 roadmap outline', status: 'todo', priority: 'high', due: d(1), assignee: 'Maya Chen', labels: ['Roadmap'], subtasks: st(['Collect team input', 'Write first draft', 'Review with leads'], 1) },
       { title: 'Review onboarding copy', status: 'todo', priority: 'medium', due: d(3), labels: ['Website'] },
       { title: 'Collect customer interview notes', status: 'todo', priority: 'low', due: d(-2), assignee: 'Jon Park', labels: ['Research'] },
-      { title: 'Prototype billing settings page', status: 'inprogress', priority: 'high', due: d(0), assignee: 'Priya Nair', labels: ['Billing', 'Design'], subtasks: st(['Wireframe', 'Hi-fi mockup', 'Prototype flows', 'Usability test'], 2) },
+      { title: 'Prototype billing settings page', status: 'inprogress', priority: 'high', due: d(0), assignee: 'Priya Nair', coassignees: ['Maya Chen'], labels: ['Billing', 'Design'], subtasks: st(['Wireframe', 'Hi-fi mockup', 'Prototype flows', 'Usability test'], 2) },
       { title: 'Update design tokens', status: 'inprogress', priority: 'medium', due: d(5), assignee: 'Maya Chen', labels: ['Design'] },
       { title: 'Waiting on legal: privacy copy', status: 'blocked', priority: 'high', due: d(-1), assignee: 'Jon Park', labels: ['Website'], description: 'Blocked until legal signs off on the new consent wording.' },
       { title: 'Ship notification preferences', status: 'done', priority: 'medium', due: d(-3), assignee: 'Priya Nair', labels: ['Billing'] },
@@ -1245,6 +1275,7 @@ function Widget() {
         description: s.description ?? '',
         status: s.status ?? 'todo',
         assignee: s.assignee ?? '',
+        coassignees: s.coassignees ?? [],
         due: s.due ?? null,
         priority: s.priority ?? null,
         labels: s.labels ?? [],
@@ -1284,13 +1315,34 @@ function Widget() {
     )
   }
 
-  function PersonChip({ name, onClick, active }: { name: string; onClick: Click; active?: boolean }) {
+  function PersonChip({ name, onClick, active, tooltip }: { name: string; onClick: Click; active?: boolean; tooltip?: string }) {
     return (
-      <AutoLayout direction="horizontal" spacing={px(5)} padding={{ top: px(2), bottom: px(2), left: px(2), right: px(8) }} cornerRadius={px(999)} fill={active ? C.accentSoft : C.bg} stroke={active ? C.accent : C.border} verticalAlignItems="center" onClick={onClick} hoverStyle={{ fill: C.accentSoft, stroke: C.accent }}>
+      <AutoLayout direction="horizontal" spacing={px(5)} padding={{ top: px(2), bottom: px(2), left: px(2), right: px(8) }} cornerRadius={px(999)} fill={active ? C.accentSoft : C.bg} stroke={active ? C.accent : C.border} verticalAlignItems="center" onClick={onClick} hoverStyle={{ fill: C.accentSoft, stroke: C.accent }} tooltip={tooltip}>
         <Avatar name={name} photo={photoOf(name)} size={16} />
         <Label size={10} weight={600} color={active ? C.accent : C.text}>
           {shortName(name, 18)}
         </Label>
+      </AutoLayout>
+    )
+  }
+
+  /** Everyone assigned to a task: one avatar, or up to three overlapping ones plus a "+N". */
+  function AvatarStack({ task, size = 18, onClick }: { task: Task; size?: number; onClick?: Click }) {
+    const names = assigneesOf(task)
+    if (names.length <= 1) return <Avatar name={names[0] ?? ''} photo={photoOf(names[0] ?? '')} size={size} onClick={onClick} tooltip={names[0] || undefined} />
+    const shown = names.slice(0, 3)
+    return (
+      <AutoLayout direction="horizontal" spacing={px(-Math.round(size * 0.3))} verticalAlignItems="center" onClick={onClick} tooltip={names.join(', ')}>
+        {shown.map((n) => (
+          <Avatar key={n} name={n} photo={photoOf(n)} size={size} />
+        ))}
+        {names.length > shown.length ? (
+          <AutoLayout padding={{ left: px(Math.round(size * 0.3) + 3) }}>
+            <Label size={9} weight={700} color={C.muted}>
+              {`+${names.length - shown.length}`}
+            </Label>
+          </AutoLayout>
+        ) : null}
       </AutoLayout>
     )
   }
@@ -1374,8 +1426,8 @@ function Widget() {
 
         {/* Row 2: owner, due, subtasks, stale, sync, status — the single control row, also when open */}
         <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} verticalAlignItems="center" wrap>
-          <Avatar name={task.assignee} photo={photoOf(task.assignee)} onClick={open ? undefined : openMe} tooltip={task.assignee || undefined} />
-          {task.assignee ? null : (
+          <AvatarStack task={task} onClick={open ? undefined : openMe} />
+          {assigneesOf(task).length ? null : (
             <Label size={10} weight={500} color={C.faint} italic onClick={open ? undefined : openMe}>
               Unassigned
             </Label>
@@ -1441,8 +1493,10 @@ function Widget() {
     const subsDone = subs.filter((s) => s.done).length
     const labels = labelsOf(task)
     const late = isLate(task)
-    const peopleAll = knownAssignees.filter((a) => a !== task.assignee)
-    const peopleRow = peopleAll.slice(0, 8)
+    const assigned = assigneesOf(task)
+    const others = knownAssignees.filter((a) => assigned.indexOf(a) < 0)
+    const peopleRow = assigned.concat(others.slice(0, Math.max(0, 8 - assigned.length)))
+    const peopleHidden = assigned.length + others.length - peopleRow.length
     const labelsShown = knownLabels.slice(0, 12)
 
     return (
@@ -1488,15 +1542,15 @@ function Widget() {
           ) : null}
         </PropRow>
 
-        <PropRow label="Owner" stack>
+        <PropRow label="Assigned to" stack>
           <AutoLayout direction="horizontal" spacing={px(6)} verticalAlignItems="center" width="fill-parent">
-            <Avatar name={task.assignee} photo={photoOf(task.assignee)} size={22} />
+            <AvatarStack task={task} size={22} />
             <Input
-              value={task.assignee || null}
-              placeholder="Type a name, press Enter"
+              value={null}
+              placeholder={assigned.length ? 'Add another person, press Enter' : 'Type a name, press Enter'}
               onTextEditEnd={(e) => {
                 const v = resolvePerson(e.characters)
-                if (v !== task.assignee) patch(task.id, { assignee: v })
+                if (v) addAssignee(task.id, v)
               }}
               fontFamily={FONT}
               fontSize={px(11)}
@@ -1510,10 +1564,10 @@ function Widget() {
             <Chip
               small
               label="Me"
-              tooltip="Assign to me"
+              tooltip="Assign to me / remove me"
               onClick={() => {
                 const name = myName()
-                if (name) patch(task.id, { assignee: task.assignee === name ? '' : name })
+                if (name) toggleAssignee(task.id, name)
               }}
             />
             <IconBtn icon="users" tooltip="Find teammates" onClick={findTeammates} />
@@ -1521,11 +1575,11 @@ function Widget() {
           {peopleRow.length ? (
             <AutoLayout direction="horizontal" spacing={px(4)} wrap width="fill-parent" verticalAlignItems="center">
               {peopleRow.map((a) => (
-                <PersonChip key={a} name={a} onClick={() => patch(task.id, { assignee: a })} />
+                <PersonChip key={a} name={a} active={assigned.indexOf(a) >= 0} onClick={() => toggleAssignee(task.id, a)} tooltip={assigned.indexOf(a) >= 0 ? 'Remove from task' : 'Add to task'} />
               ))}
-              {peopleAll.length > peopleRow.length ? (
+              {peopleHidden > 0 ? (
                 <Label size={9} color={C.faint}>
-                  {`+${peopleAll.length - peopleRow.length} more — type a name`}
+                  {`+${peopleHidden} more — type a name`}
                 </Label>
               ) : null}
             </AutoLayout>
@@ -1790,7 +1844,7 @@ function Widget() {
               {task.title || 'Untitled'}
             </Label>
             <Label size={9} color={C.faint} width="fill-parent" truncate>
-              {[task.assignee ? task.assignee : 'Unassigned', task.due ? `due ${weekdayDate(task.due)}` : null, task.completedAt ? `completed ${fromTimestamp(task.completedAt)}` : null, task.priority ? `${PRIORITY_LABEL[task.priority]} priority` : null, labelsOf(task).length ? labelsOf(task).join(', ') : null]
+              {[assigneesOf(task).length ? assigneesOf(task).join(', ') : 'Unassigned', task.due ? `due ${weekdayDate(task.due)}` : null, task.completedAt ? `completed ${fromTimestamp(task.completedAt)}` : null, task.priority ? `${PRIORITY_LABEL[task.priority]} priority` : null, labelsOf(task).length ? labelsOf(task).join(', ') : null]
                 .filter(Boolean)
                 .join(' · ')}
             </Label>
@@ -1801,7 +1855,7 @@ function Widget() {
             {task.completedAt ? fromTimestamp(task.completedAt) : ''}
           </Label>
         ) : (
-          <Avatar name={task.assignee} photo={photoOf(task.assignee)} size={16} />
+          <AvatarStack task={task} size={16} />
         )}
         <Btn small tone="ghost" label="Reopen" onClick={() => reopen(task.id)} />
         {compact ? null : task.archived ? <Btn small tone="ghost" label="Restore" onClick={() => archive(task.id, false)} /> : <Btn small tone="ghost" label="Archive" onClick={() => archive(task.id, true)} />}
@@ -1890,7 +1944,7 @@ function Widget() {
     const dq = doneSearch.trim().toLowerCase()
     const pool = (showArchived ? all.filter((t) => t.archived || t.status === 'done') : done)
       .filter(matches)
-      .filter((t) => !dq || `${t.title} ${t.description} ${t.assignee} ${labelsOf(t).join(' ')}`.toLowerCase().includes(dq))
+      .filter((t) => !dq || `${t.title} ${t.description} ${assigneesOf(t).join(' ')} ${labelsOf(t).join(' ')}`.toLowerCase().includes(dq))
       .sort((a, b) => (b.completedAt ?? b.updatedAt) - (a.completedAt ?? a.updatedAt))
     const shown = capped(pool, 'done')
 
@@ -1944,7 +1998,15 @@ function Widget() {
 
   function PeopleView() {
     const pool = active.filter(matches)
-    const names = Array.from(new Set(pool.map((t) => t.assignee))).sort((a, b) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)))
+    const nameSet = new Set<string>()
+    let anyUnassigned = false
+    for (const t of pool) {
+      const ns = assigneesOf(t)
+      if (!ns.length) anyUnassigned = true
+      for (const n of ns) nameSet.add(n)
+    }
+    const names = Array.from(nameSet).sort((a, b) => a.localeCompare(b))
+    if (anyUnassigned) names.push('')
     return (
       <AutoLayout direction="horizontal" spacing={COL_GAP} wrap width={BOARD_W} verticalAlignItems="start">
         {names.length === 0 ? (
@@ -1953,7 +2015,7 @@ function Widget() {
           </Label>
         ) : null}
         {names.map((name) => {
-          const items = sortTasks(pool.filter((t) => t.assignee === name))
+          const items = sortTasks(pool.filter((t) => (name ? isAssigned(t, name) : assigneesOf(t).length === 0)))
           const od = items.filter(isLate).length
           const [bg, fg] = name ? avatarColors(name) : [C.surface, C.muted]
           const shown = capped(items, 'people:' + name)
@@ -2031,9 +2093,9 @@ function Widget() {
             <Label size={10} weight={700} color={STATUS_COLOR[task.status]}>
               {STATUS_LABEL[task.status]}
             </Label>
-            <Avatar name={task.assignee} photo={photoOf(task.assignee)} size={16} />
-            <Label size={10} weight={500} color={task.assignee ? C.text : C.faint} italic={!task.assignee}>
-              {task.assignee ? shortName(task.assignee, 20) : 'Unassigned'}
+            <AvatarStack task={task} size={16} />
+            <Label size={10} weight={500} color={assigneesOf(task).length ? C.text : C.faint} italic={!assigneesOf(task).length}>
+              {assigneesOf(task).length ? assigneesOf(task).map((n) => shortName(n, 20)).join(', ') : 'Unassigned'}
             </Label>
             {due ? (
               <Label size={10} weight={late ? 700 : 500} color={late ? C.danger : C.muted}>

@@ -15,7 +15,10 @@ export interface Task {
   title: string
   description: string
   status: Status
+  /** Owner: the first person assigned. Empty string = unassigned. */
   assignee: string
+  /** Everyone else working on the task with the owner. */
+  coassignees?: string[]
   /** ISO date string YYYY-MM-DD or null */
   due: string | null
   priority: Priority | null
