@@ -57,6 +57,27 @@ const toast = (msg: string) => figma.notify(msg, { timeout: 1400 })
 const shortName = (s: string, n = 14) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
 const subtasksOf = (t: Task): Subtask[] => t.subtasks ?? []
 const labelsOf = (t: Task): string[] => t.labels ?? []
+const URL_RE = /\bhttps?:\/\/[^\s<>"'`)\]]+/gi
+/** Links found in free text, trailing punctuation stripped, deduplicated, first five. */
+const linksIn = (text: string): string[] => {
+  const out: string[] = []
+  const found = text.match(URL_RE) ?? []
+  for (const raw of found) {
+    const u = raw.replace(/[.,;:!?]+$/, '')
+    if (u && out.indexOf(u) < 0) out.push(u)
+    if (out.length === 5) break
+  }
+  return out
+}
+/** Short, readable form of a URL for a link chip: host plus the start of the path. */
+const linkText = (u: string): string => {
+  const m = /^https?:\/\/([^/?#]+)([^?#]*)/i.exec(u)
+  if (!m) return u
+  const host = m[1].replace(/^www\./, '')
+  const path = m[2] && m[2] !== '/' ? m[2] : ''
+  const full = host + path
+  return full.length > 40 ? full.slice(0, 39) + '…' : full
+}
 /** Everyone assigned: the owner (first) plus co-assignees, deduplicated. */
 const assigneesOf = (t: Task): string[] => {
   const out: string[] = t.assignee ? [t.assignee] : []
@@ -104,6 +125,7 @@ function StatusGlyph(props: { status: Status; size?: number; color?: string; mut
       fill={props.fill}
       stroke={c}
       strokeWidth={props.fill ? 2 : 1.5}
+      strokeDashPattern={status === 'todo' ? [px(2), px(2)] : undefined}
       horizontalAlignItems="center"
       verticalAlignItems="center"
       onClick={props.onClick}
@@ -158,17 +180,22 @@ function Label(props: {
   onClick?: Click
   hover?: string
   tooltip?: string
+  /** Makes the text a clickable link (opens in the browser). */
+  href?: string
+  underline?: boolean
 }) {
   const size = px(props.size ?? 11)
+  const link = props.href ? { href: props.href } : {}
   return (
     <Text
+      {...(link as Record<string, never>)}
       fontFamily={FONT}
       fontSize={size}
       fontWeight={props.weight ?? 400}
       fill={props.color ?? C.text}
       width={typeof props.width === 'number' ? px(props.width) : props.width ?? 'hug-contents'}
       truncate={props.truncate}
-      textDecoration={props.strike ? 'strikethrough' : 'none'}
+      textDecoration={props.strike ? 'strikethrough' : props.underline ? 'underline' : 'none'}
       italic={props.italic}
       horizontalAlignText={props.align ?? 'left'}
       lineHeight={Math.round(size * 1.35)}
@@ -206,7 +233,7 @@ function GlyphBtn({ glyph, onClick, tooltip, size = 20, color }: { glyph: string
   const s = px(size)
   return (
     <AutoLayout width={s} height={s} cornerRadius={px(6)} horizontalAlignItems="center" verticalAlignItems="center" onClick={onClick} hoverStyle={{ fill: C.surfaceAlt }} tooltip={tooltip}>
-      <Text fontFamily={FONT} fontSize={Math.round(s * (glyph === '›' ? 0.95 : 0.7))} fontWeight={600} fill={color ?? C.muted} lineHeight={s}>
+      <Text fontFamily={FONT} fontSize={Math.round(s * (glyph === '›' || glyph === '⌃' ? 0.95 : 0.7))} fontWeight={700} fill={color ?? C.muted} lineHeight={glyph === '⌃' ? Math.round(s * 1.35) : s}>
         {glyph}
       </Text>
     </AutoLayout>
@@ -269,7 +296,6 @@ function LabelPill({ name, size = 9, onClick, active = true, quiet }: { name: st
       verticalAlignItems="center"
       onClick={onClick}
       hoverStyle={onClick && !quiet ? { fill: bg, stroke: fg } : undefined}
-      tooltip={quiet ? undefined : onClick ? (active ? `Remove “${name}”` : `Add “${name}”`) : undefined}
     >
       <Label size={size} weight={700} color={active ? fg : C.muted}>
         {name}
@@ -1207,7 +1233,6 @@ function Widget() {
       { itemType: 'action', propertyName: 'clearFilters', tooltip: 'Clear filters' },
       { itemType: 'separator' },
       { itemType: 'action', propertyName: 'archiveOld', tooltip: 'Archive done > 14 days' },
-      { itemType: 'action', propertyName: 'samples', tooltip: 'Add sample tasks' },
     ],
     ({ propertyName, propertyValue }) => {
       switch (propertyName) {
@@ -1373,7 +1398,7 @@ function Widget() {
       >
         {/* Row 1: done circle, title, priority, close */}
         <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="start">
-          <AutoLayout width={px(16)} height={px(16)} cornerRadius={px(8)} fill={isDone ? C.success : undefined} stroke={isDone ? undefined : C.borderStrong} strokeWidth={1.5} horizontalAlignItems="center" verticalAlignItems="center" onClick={() => complete(task.id)} hoverStyle={{ fill: isDone ? C.success : C.successSoft, stroke: C.success }}>
+          <AutoLayout width={px(16)} height={px(16)} cornerRadius={px(4)} fill={isDone ? C.success : undefined} stroke={isDone ? undefined : C.borderStrong} strokeWidth={1.5} horizontalAlignItems="center" verticalAlignItems="center" onClick={() => complete(task.id)} hoverStyle={{ fill: isDone ? C.success : C.successSoft, stroke: C.success }}>
             {isDone ? (
               <Text fontFamily={FONT} fontSize={px(10)} fontWeight={700} fill="#FFFFFF" lineHeight={px(16)}>
                 ✓
@@ -1407,7 +1432,7 @@ function Widget() {
               {PRIORITY_GLYPH[task.priority]}
             </Label>
           ) : null}
-          {open ? <GlyphBtn glyph="×" size={18} tooltip="Close" onClick={closeCard} /> : null}
+          {open ? <GlyphBtn glyph="⌃" size={18} onClick={closeCard} /> : null}
         </AutoLayout>
 
         {/* Labels (closed cards; the editor lists them when open) */}
@@ -1437,7 +1462,7 @@ function Widget() {
               {late ? `Overdue · ${due.label}` : due.label}
             </Label>
           ) : open ? null : (
-            <Label size={10} weight={500} color={C.faint} onClick={() => setDue(task.id, today)} hover={C.accentText} tooltip="Set due today">
+            <Label size={10} weight={500} color={C.faint} onClick={() => setDue(task.id, today)} hover={C.accentText}>
               + date
             </Label>
           )}
@@ -1453,7 +1478,7 @@ function Widget() {
             </Label>
           ) : null}
           {task.discuss && !open ? (
-            <Label size={10} weight={700} color={C.accentText} onClick={() => setView('sync')} tooltip="Open agenda">
+            <Label size={10} weight={700} color={C.accentText} onClick={() => setView('sync')}>
               Sync
             </Label>
           ) : null}
@@ -1493,6 +1518,7 @@ function Widget() {
     const subsDone = subs.filter((s) => s.done).length
     const labels = labelsOf(task)
     const late = isLate(task)
+    const links = linksIn(task.description || '')
     const assigned = assigneesOf(task)
     const others = knownAssignees.filter((a) => assigned.indexOf(a) < 0)
     const peopleRow = assigned.concat(others.slice(0, Math.max(0, 8 - assigned.length)))
@@ -1516,6 +1542,15 @@ function Widget() {
           inputBehavior="multiline"
           inputFrameProps={{ padding: { vertical: px(6), horizontal: px(8) }, fill: C.surface, cornerRadius: px(8) }}
         />
+        {links.length ? (
+          <AutoLayout direction="horizontal" spacing={px(6)} wrap width="fill-parent" verticalAlignItems="center">
+            {links.map((u) => (
+              <Label key={u} size={10} weight={600} color={C.accentText} underline href={u} hover={C.accent}>
+                {`↗ ${linkText(u)}`}
+              </Label>
+            ))}
+          </AutoLayout>
+        ) : null}
 
         {showStatus ? (
           <PropRow label="Status">
@@ -1536,7 +1571,7 @@ function Widget() {
             onClick={() => pickDate(task.title, task.due, (iso) => setDue(task.id, iso))}
           />
           {task.due ? (
-            <Label size={10} weight={600} color={C.muted} hover={C.danger} tooltip="Remove due date" onClick={() => setDue(task.id, null)}>
+            <Label size={10} weight={600} color={C.muted} hover={C.danger} onClick={() => setDue(task.id, null)}>
               × Clear
             </Label>
           ) : null}
@@ -1547,7 +1582,7 @@ function Widget() {
             <AvatarStack task={task} size={22} />
             <Input
               value={null}
-              placeholder={assigned.length ? 'Add another person, press Enter' : 'Type a name, press Enter'}
+              placeholder={assigned.length ? 'Add a person…' : 'Type a name…'}
               onTextEditEnd={(e) => {
                 const v = resolvePerson(e.characters)
                 if (v) addAssignee(task.id, v)
@@ -1575,7 +1610,7 @@ function Widget() {
           {peopleRow.length ? (
             <AutoLayout direction="horizontal" spacing={px(4)} wrap width="fill-parent" verticalAlignItems="center">
               {peopleRow.map((a) => (
-                <PersonChip key={a} name={a} active={assigned.indexOf(a) >= 0} onClick={() => toggleAssignee(task.id, a)} tooltip={assigned.indexOf(a) >= 0 ? 'Remove from task' : 'Add to task'} />
+                <PersonChip key={a} name={a} active={assigned.indexOf(a) >= 0} onClick={() => toggleAssignee(task.id, a)} />
               ))}
               {peopleHidden > 0 ? (
                 <Label size={9} color={C.faint}>
@@ -1666,7 +1701,7 @@ function Widget() {
           </AutoLayout>
           {subs.map((s) => (
             <AutoLayout key={s.id} direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center" padding={{ vertical: px(2) }}>
-              <AutoLayout width={px(14)} height={px(14)} cornerRadius={px(4)} fill={s.done ? C.success : undefined} stroke={s.done ? undefined : C.borderStrong} strokeWidth={1.5} horizontalAlignItems="center" verticalAlignItems="center" onClick={() => patchSubtask(task.id, s.id, { done: !s.done })} hoverStyle={{ fill: s.done ? C.success : C.successSoft, stroke: C.success }} tooltip={s.done ? 'Mark not done' : 'Mark done'}>
+              <AutoLayout width={px(14)} height={px(14)} cornerRadius={px(4)} fill={s.done ? C.success : undefined} stroke={s.done ? undefined : C.borderStrong} strokeWidth={1.5} horizontalAlignItems="center" verticalAlignItems="center" onClick={() => patchSubtask(task.id, s.id, { done: !s.done })} hoverStyle={{ fill: s.done ? C.success : C.successSoft, stroke: C.success }}>
                 {s.done ? (
                   <Text fontFamily={FONT} fontSize={px(9)} fontWeight={700} fill="#FFFFFF" lineHeight={px(14)}>
                     ✓
@@ -1689,7 +1724,7 @@ function Widget() {
                 inputBehavior="truncate"
                 inputFrameProps={{ padding: 0 }}
               />
-              <Label size={13} color={C.faint} onClick={() => patchSubtask(task.id, s.id, null)} hover={C.danger} tooltip="Remove">
+              <Label size={13} color={C.faint} onClick={() => patchSubtask(task.id, s.id, null)} hover={C.danger}>
                 ×
               </Label>
             </AutoLayout>
@@ -1742,7 +1777,7 @@ function Widget() {
 
     if (isCollapsed) {
       return (
-        <AutoLayout key={status} direction="vertical" width={COLLAPSED_W} spacing={px(8)} padding={{ vertical: px(10), horizontal: px(4) }} fill={STATUS_TINT[status]} cornerRadius={px(12)} horizontalAlignItems="center" onClick={() => setCollapsed({ ...collapsed, [status]: false })} hoverStyle={{ fill: STATUS_SOFT[status] }} tooltip={`Expand ${STATUS_LABEL[status]}`}>
+        <AutoLayout key={status} direction="vertical" width={COLLAPSED_W} spacing={px(8)} padding={{ vertical: px(10), horizontal: px(4) }} fill={STATUS_TINT[status]} cornerRadius={px(12)} horizontalAlignItems="center" onClick={() => setCollapsed({ ...collapsed, [status]: false })} hoverStyle={{ fill: STATUS_SOFT[status] }}>
           <Rectangle width={px(20)} height={px(3)} cornerRadius={px(2)} fill={color} />
           <StatusGlyph status={status} size={14} />
           <Pill text={String(items.length)} color={color} solid size={10} />
@@ -1770,7 +1805,7 @@ function Widget() {
               </Label>
             ) : null}
             <AutoLayout width="fill-parent" height={px(1)} />
-            <GlyphBtn glyph="−" tooltip="Collapse" onClick={() => setCollapsed({ ...collapsed, [status]: true })} />
+            <GlyphBtn glyph="−" onClick={() => setCollapsed({ ...collapsed, [status]: true })} />
           </AutoLayout>
 
           {status === 'done' ? (
@@ -1964,7 +1999,7 @@ function Widget() {
               inputBehavior="truncate"
               inputFrameProps={{ padding: 0 }}
             />
-            {doneSearch ? <GlyphBtn glyph="×" size={16} tooltip="Clear" onClick={() => setDoneSearch('')} /> : null}
+            {doneSearch ? <GlyphBtn glyph="×" size={16} onClick={() => setDoneSearch('')} /> : null}
           </AutoLayout>
           <Chip label={`Show archived (${archived.length})`} active={showArchived} onClick={() => setShowArchived(!showArchived)} />
           <AutoLayout width="fill-parent" height={px(1)} />
@@ -2084,7 +2119,7 @@ function Widget() {
     const frame = { fill: C.bg, cornerRadius: px(8), stroke: open ? C.accent : C.border, strokeWidth: open ? 2 : 1 }
     const row = (
       <AutoLayout key={task.id} direction="horizontal" width="fill-parent" spacing={px(8)} padding={{ vertical: px(6), horizontal: px(8) }} verticalAlignItems="start" {...(open ? {} : frame)}>
-        <AutoLayout width={px(16)} height={px(16)} cornerRadius={px(4)} stroke={C.accent} strokeWidth={1.5} onClick={() => setDiscuss(task.id, false)} hoverStyle={{ fill: C.accentSoft }} tooltip="Discussed" />
+        <AutoLayout width={px(16)} height={px(16)} cornerRadius={px(4)} stroke={C.accent} strokeWidth={1.5} onClick={() => setDiscuss(task.id, false)} hoverStyle={{ fill: C.accentSoft }} />
         <AutoLayout direction="vertical" width="fill-parent" spacing={px(3)}>
           <Label size={12} weight={600} width="fill-parent" truncate={2} onClick={toggle}>
             {task.title || 'Untitled'}
@@ -2121,7 +2156,7 @@ function Widget() {
             inputFrameProps={{ padding: { vertical: px(4), horizontal: px(7) }, fill: C.surface, cornerRadius: px(6) }}
           />
         </AutoLayout>
-        <GlyphBtn glyph={open ? '×' : '›'} tooltip={open ? 'Close' : 'Edit'} onClick={toggle} />
+        <GlyphBtn glyph={open ? '⌃' : '›'} onClick={toggle} />
       </AutoLayout>
     )
     if (!open) return row
@@ -2237,9 +2272,9 @@ function Widget() {
           <Pill text={owner ? 'My board' : 'Team board'} color={owner ? C.accent : C.muted} fill={owner ? C.accentSoft : C.surface} size={10} />
           <Pill text={liveSync ? 'Live sync' : 'Manual sync'} color={liveSync ? C.success : C.muted} fill={liveSync ? C.successSoft : C.surface} size={10} onClick={() => setLive(!liveSync)} tooltip={liveSync ? 'Switch to manual sync' : 'Switch to live sync'} />
           <Pill text={`${active.length} active`} color={C.muted} fill={C.surface} size={10} />
-          {overdueCount ? <Pill text={`${overdueCount} overdue`} color={C.danger} fill={C.dangerSoft} size={10} onClick={() => setFilter('due', filters.due === 'overdue' ? null : 'overdue')} tooltip="Filter" /> : null}
+          {overdueCount ? <Pill text={`${overdueCount} overdue`} color={C.danger} fill={C.dangerSoft} size={10} onClick={() => setFilter('due', filters.due === 'overdue' ? null : 'overdue')} /> : null}
           {blockedCount ? <Pill text={`${blockedCount} blocked`} color={STATUS_COLOR.blocked} fill={STATUS_SOFT.blocked} size={10} /> : null}
-          {unassignedCount ? <Pill text={`${unassignedCount} unassigned`} color={C.muted} fill={C.surface} size={10} onClick={() => setFilter('assignee', filters.assignee === '__none__' ? null : '__none__')} tooltip="Filter" /> : null}
+          {unassignedCount ? <Pill text={`${unassignedCount} unassigned`} color={C.muted} fill={C.surface} size={10} onClick={() => setFilter('assignee', filters.assignee === '__none__' ? null : '__none__')} /> : null}
         </AutoLayout>
         <Btn small tone="ghost" label={owner ? 'Switch to team board' : 'Make this my board'} onClick={owner ? makeTeam : makeMine} />
         <Btn label="+ Add task" tone="primary" onClick={addTask} />
@@ -2268,12 +2303,12 @@ function Widget() {
             inputBehavior="truncate"
             inputFrameProps={{ padding: 0 }}
           />
-          {search ? <GlyphBtn glyph="×" size={16} tooltip="Clear" onClick={() => setSearch('')} /> : null}
+          {search ? <GlyphBtn glyph="×" size={16} onClick={() => setSearch('')} /> : null}
         </AutoLayout>
         <Btn label={activeFilterCount ? `Filters · ${activeFilterCount}` : 'Filters'} tone={filtersOpen || activeFilterCount ? 'primary' : 'default'} onClick={() => setFiltersOpen(!filtersOpen)} />
-        <Btn label="Sync" onClick={refresh} tooltip="Sync all boards" />
-        <Btn label="Export" onClick={() => exportDialog(all, everything, people.values(), boardTitle)} tooltip="CSV or backup" />
-        <Btn label="Import" onClick={importBackup} tooltip="Restore a backup" />
+        <Btn label="Sync" onClick={refresh} />
+        <Btn label="Export" onClick={() => exportDialog(all, everything, people.values(), boardTitle)} />
+        <Btn label="Import" onClick={importBackup} />
       </AutoLayout>
 
       {filtersOpen ? <FilterPanel /> : null}
