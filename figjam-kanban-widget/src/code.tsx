@@ -379,6 +379,7 @@ const STATE_KEYS = [
   'openId',
   'freshId',
   'confirmDeleteId',
+  'confirmRemoveId',
   'filters',
   'filtersOpen',
   'search',
@@ -547,6 +548,8 @@ function Widget() {
   /** A task created with "Add task" is pinned to the top of its column until it is closed. */
   const [freshId, setFreshId] = useSyncedState<string | null>('freshId', null)
   const [confirmDeleteId, setConfirmDeleteId] = useSyncedState<string | null>('confirmDeleteId', null)
+  /** On a personal board, removing yourself from a task takes two clicks; this is the task waiting for the second. */
+  const [confirmRemoveId, setConfirmRemoveId] = useSyncedState<string | null>('confirmRemoveId', null)
   const [filters, setFilters] = useSyncedState<Filters>('filters', EMPTY_FILTERS)
   const [filtersOpen, setFiltersOpen] = useSyncedState<boolean>('filtersOpen', false)
   const [search, setSearch] = useSyncedState<string>('search', '')
@@ -604,7 +607,8 @@ function Widget() {
 
   const everything = tasks.values()
   /** Personal boards only show tasks assigned to their owner; the store still holds everything. */
-  const all = owner ? everything.filter((t) => isAssigned(t, owner)) : everything
+  /** The open card is kept even when it no longer matches, so it cannot vanish mid-edit; it leaves when closed. */
+  const all = owner ? everything.filter((t) => isAssigned(t, owner) || t.id === openId) : everything
   const live = all.filter((t) => !t.archived)
   const active = live.filter((t) => t.status !== 'done')
   const done = live.filter((t) => t.status === 'done')
@@ -974,7 +978,7 @@ function Widget() {
     writeTask(next)
     if (owner && isAssigned(t, owner) && !isAssigned(next, owner)) {
       const names = assigneesOf(next)
-      toast(names.length ? `Moved to ${names[0]}'s board` : 'Unassigned — now only on the team board')
+      toast(names.length ? `Now on ${names[0]}'s board — this card stays until you close it` : 'Unassigned — only on the team board now; this card stays until you close it')
     }
     commit()
   }
@@ -997,6 +1001,20 @@ function Widget() {
     if (!t || !name) return
     const names = assigneesOf(t)
     setAssignees(id, names.indexOf(name) >= 0 ? names.filter((n) => n !== name) : names.concat(name))
+  }
+  /** Same as toggleAssignee, but on your own board taking yourself off needs a second click. */
+  const toggleAssigneeGuarded = (id: string, name: string) => {
+    const t = tasks.get(id)
+    if (!t || !name) return
+    if (owner && name === owner && isAssigned(t, name)) {
+      if (confirmRemoveId !== id) {
+        setConfirmRemoveId(id)
+        toast('Click again to take yourself off this task')
+        return
+      }
+      setConfirmRemoveId(null)
+    }
+    toggleAssignee(id, name)
   }
   const addAssignee = (id: string, name: string) => {
     const t = tasks.get(id)
@@ -1053,6 +1071,7 @@ function Widget() {
   const openCard = (id: string) => {
     if (freshId && freshId !== id) discardIfBlank(freshId)
     setOpenId(id)
+    if (confirmRemoveId) setConfirmRemoveId(null)
     const t = tasks.get(id)
     if (people.size === 0 || (t && assigneesOf(t).some((n) => !photoOf(n)))) syncPeople() // only when it can add a photo
     commit()
@@ -1064,6 +1083,7 @@ function Widget() {
       discardIfBlank(openId)
     }
     setOpenId(null)
+    if (confirmRemoveId) setConfirmRemoveId(null)
     commit()
   }
   /** "Add task": reuse an existing blank card (fresh, or an orphan) rather than stacking another; the map is live, so this holds for a double click too. */
@@ -1473,12 +1493,13 @@ function Widget() {
     )
   }
 
-  function PersonChip({ name, onClick, active, tooltip }: { name: string; onClick: Click; active?: boolean; tooltip?: string }) {
+  function PersonChip({ name, onClick, active, tooltip, label, danger }: { name: string; onClick: Click; active?: boolean; tooltip?: string; label?: string; danger?: boolean }) {
+    const fg = danger ? C.danger : active ? C.accent : C.text
     return (
-      <AutoLayout direction="horizontal" spacing={px(5)} padding={{ top: px(2), bottom: px(2), left: px(2), right: px(8) }} cornerRadius={px(999)} fill={active ? C.accentSoft : C.bg} stroke={active ? C.accent : C.border} verticalAlignItems="center" onClick={onClick} hoverStyle={{ fill: C.accentSoft, stroke: C.accent }} tooltip={tooltip}>
+      <AutoLayout direction="horizontal" spacing={px(5)} padding={{ top: px(2), bottom: px(2), left: px(2), right: px(8) }} cornerRadius={px(999)} fill={danger ? C.dangerSoft : active ? C.accentSoft : C.bg} stroke={danger ? C.danger : active ? C.accent : C.border} verticalAlignItems="center" onClick={onClick} hoverStyle={danger ? { fill: C.dangerSoft, stroke: C.danger } : { fill: C.accentSoft, stroke: C.accent }} tooltip={tooltip}>
         <Avatar name={name} photo={photoOf(name)} size={16} />
-        <Label size={10} weight={600} color={active ? C.accent : C.text}>
-          {shortName(name, 18)}
+        <Label size={10} weight={600} color={fg}>
+          {label ?? shortName(name, 18)}
         </Label>
       </AutoLayout>
     )
@@ -1653,6 +1674,8 @@ function Widget() {
     const late = isLate(task)
     const links = linksIn(task.description || '')
     const assigned = assigneesOf(task)
+    const confirmingSelf = confirmRemoveId === task.id
+    const offMyBoard = !!owner && !isAssigned(task, owner)
     const others = knownAssignees.filter((a) => assigned.indexOf(a) < 0)
     const peopleRow = assigned.concat(others.slice(0, Math.max(0, 8 - assigned.length)))
     const peopleHidden = assigned.length + others.length - peopleRow.length
@@ -1711,6 +1734,16 @@ function Widget() {
         </PropRow>
 
         <PropRow label="Assigned to" stack>
+          {offMyBoard ? (
+            <AutoLayout direction="horizontal" spacing={px(6)} wrap verticalAlignItems="center" width="fill-parent" padding={{ vertical: px(4), horizontal: px(8) }} cornerRadius={px(8)} fill={C.warnSoft}>
+              <Label size={10} weight={600} color={C.warn} width="fill-parent">
+                Not on your board any more — it leaves when you close this card.
+              </Label>
+              <Label size={10} weight={700} color={C.accentText} hover={C.accent} onClick={() => addAssignee(task.id, owner as string)}>
+                Add me back
+              </Label>
+            </AutoLayout>
+          ) : null}
           <AutoLayout direction="horizontal" spacing={px(6)} verticalAlignItems="center" width="fill-parent">
             <AvatarStack task={task} size={22} />
             <Input
@@ -1731,11 +1764,13 @@ function Widget() {
             />
             <Chip
               small
-              label="Me"
+              label={confirmingSelf && owner && !peopleRow.some((a) => a === owner) ? 'Remove me?' : 'Me'}
+              color={confirmingSelf ? C.danger : undefined}
+              soft={confirmingSelf ? C.dangerSoft : undefined}
               tooltip="Assign to me / remove me"
               onClick={() => {
                 const name = myName()
-                if (name) toggleAssignee(task.id, name)
+                if (name) toggleAssigneeGuarded(task.id, name)
               }}
             />
             <IconBtn icon="users" tooltip="Find teammates" onClick={findTeammates} />
@@ -1743,7 +1778,7 @@ function Widget() {
           {peopleRow.length ? (
             <AutoLayout direction="horizontal" spacing={px(4)} wrap width="fill-parent" verticalAlignItems="center">
               {peopleRow.map((a) => (
-                <PersonChip key={a} name={a} active={assigned.indexOf(a) >= 0} onClick={() => toggleAssignee(task.id, a)} />
+                <PersonChip key={a} name={a} active={assigned.indexOf(a) >= 0} label={confirmingSelf && a === owner ? 'Remove me?' : undefined} danger={confirmingSelf && a === owner} onClick={() => toggleAssigneeGuarded(task.id, a)} />
               ))}
               {peopleHidden > 0 ? (
                 <Label size={9} color={C.faint}>
