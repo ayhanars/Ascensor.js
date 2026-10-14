@@ -78,6 +78,38 @@ const linkText = (u: string): string => {
   const full = host + path
   return full.length > 40 ? full.slice(0, 39) + '…' : full
 }
+
+// ---------------------------------------------------------------------------
+// Stickies → tasks
+// ---------------------------------------------------------------------------
+type StickyPick = { node: SceneNode; text: string; x: number; y: number; sectionName: string | null }
+/** Text-bearing nodes in a selection (stickies, shapes with text, text), looking inside sections, groups and frames. Reading order: rows top to bottom, then left to right. */
+function collectStickies(nodes: readonly SceneNode[]): StickyPick[] {
+  const out: StickyPick[] = []
+  const visit = (n: SceneNode, depth: number) => {
+    let text = ''
+    if (n.type === 'STICKY' || n.type === 'SHAPE_WITH_TEXT') text = n.text.characters
+    else if (n.type === 'TEXT') text = n.characters
+    else if (depth < 4 && 'children' in n) {
+      for (const c of n.children) visit(c, depth + 1)
+      return
+    }
+    text = text.trim()
+    if (!text) return
+    const box = n.absoluteBoundingBox
+    const parent = n.parent
+    out.push({ node: n, text, x: box ? box.x : n.x, y: box ? box.y : n.y, sectionName: parent && parent.type === 'SECTION' ? parent.name : null })
+  }
+  for (const n of nodes) visit(n, 0)
+  out.sort((a, b) => {
+    const ra = Math.round(a.y / 60)
+    const rb = Math.round(b.y / 60)
+    return ra !== rb ? ra - rb : a.x - b.x
+  })
+  return out
+}
+const firstLine = (s: string): string => s.split('\n')[0].trim()
+const restLines = (s: string): string => s.split('\n').slice(1).join('\n').trim()
 /** Everyone assigned: the owner (first) plus co-assignees, deduplicated. */
 const assigneesOf = (t: Task): string[] => {
   const out: string[] = t.assignee ? [t.assignee] : []
@@ -879,6 +911,57 @@ function Widget() {
       }
     })
 
+  /** Turn the stickies selected on the canvas into tasks: one each, or one task with a subtask per sticky. */
+  const importStickies = (): Promise<void> => {
+    const picks = collectStickies(figma.currentPage.selection)
+    if (!picks.length) {
+      toast('Select stickies on this page first (drag them here from other files), then press “From stickies”')
+      return Promise.resolve()
+    }
+    const shared = picks[0].sectionName
+    const suggested = shared && picks.every((p) => p.sectionName === shared) ? shared : firstLine(picks[0].text)
+    const finish = (mode: 'separate' | 'one', title: string, remove: boolean) => {
+      const now = Date.now()
+      let created: Task
+      if (mode === 'one') {
+        created = buildTask(title || suggested, { subtasks: picks.map((p, i) => ({ id: uid() + i, title: firstLine(p.text), done: false })) }, now)
+        writeTask(created)
+      } else {
+        created = buildTask(firstLine(picks[0].text), { id: uid() + '0', description: restLines(picks[0].text) }, now)
+        writeTask(created)
+        picks.slice(1).forEach((p, i) => writeTask(buildTask(firstLine(p.text), { id: uid() + (i + 1), description: restLines(p.text) }, now + i + 1)))
+      }
+      if (remove) {
+        for (const p of picks) {
+          try {
+            p.node.remove()
+          } catch (_) {}
+        }
+      }
+      syncPeople()
+      if (view !== 'board') setView('board')
+      if (collapsed.todo) setCollapsed({ ...collapsed, todo: false })
+      if (mode === 'one' || picks.length === 1) setOpenId(created.id)
+      commit()
+      toast(mode === 'one' ? `Added “${created.title}” with ${picks.length} subtasks` : picks.length === 1 ? `Added “${created.title}”` : `Added ${picks.length} tasks from stickies`)
+    }
+    if (picks.length === 1) {
+      finish('separate', '', false)
+      return Promise.resolve()
+    }
+    return new Promise<void>((resolve) => {
+      figma.showUI(__html__, { width: 440, height: 372, title: 'Stickies → tasks' })
+      figma.ui.postMessage({ type: 'stickies-init', count: picks.length, titles: picks.slice(0, 8).map((p) => firstLine(p.text)), suggested })
+      figma.ui.onmessage = (msg: { type: string; mode?: string; title?: string; remove?: boolean }) => {
+        if (msg && msg.type === 'stickies') finish(msg.mode === 'one' ? 'one' : 'separate', (msg.title ?? '').trim(), !!msg.remove)
+        if (msg && (msg.type === 'stickies' || msg.type === 'cancel')) {
+          figma.closePlugin()
+          resolve()
+        }
+      }
+    })
+  }
+
   // ------------------------------------------------------------- mutations
   const patch = (id: string, p: Partial<Task>) => {
     const t = tasks.get(id)
@@ -917,13 +1000,11 @@ function Widget() {
     setAssignees(id, assigneesOf(t).concat(name))
   }
 
-  const createTask = (title: string, extra: Partial<Task> = {}, allowEmpty = false): string | null => {
-    const clean = title.trim()
-    if (!clean && !allowEmpty) return null
-    const now = Date.now()
+  /** A new task with this board's defaults (owner on a personal board), not yet written. */
+  const buildTask = (title: string, extra: Partial<Task> = {}, now = Date.now()): Task => {
     const t: Task = {
       id: uid(),
-      title: clean,
+      title: title.trim(),
       description: '',
       status: 'todo',
       assignee: '',
@@ -939,6 +1020,12 @@ function Widget() {
     }
     if (owner && !t.assignee) t.assignee = owner
     if (t.status === 'done') t.completedAt = now
+    return t
+  }
+  const createTask = (title: string, extra: Partial<Task> = {}, allowEmpty = false): string | null => {
+    const clean = title.trim()
+    if (!clean && !allowEmpty) return null
+    const t = buildTask(clean, extra)
     if (!clean && allowEmpty) {
       tasks.set(t.id, t) // blank card: local only until it gets content (patch writes it to the store)
       return t.id
@@ -1227,6 +1314,7 @@ function Widget() {
       { itemType: 'toggle', propertyName: 'live', tooltip: 'Live sync between boards', isToggled: liveSync },
       { itemType: 'action', propertyName: 'export', tooltip: 'Export CSV / backup' },
       { itemType: 'action', propertyName: 'import', tooltip: 'Import backup' },
+      { itemType: 'action', propertyName: 'stickies', tooltip: 'Selected stickies → tasks' },
       { itemType: 'action', propertyName: 'agenda', tooltip: 'Create sync agenda on canvas' },
       { itemType: 'action', propertyName: 'expandAll', tooltip: 'Expand all columns' },
       { itemType: 'action', propertyName: 'collapseAll', tooltip: 'Collapse all columns' },
@@ -1268,6 +1356,9 @@ function Widget() {
           break
         case 'samples':
           addSamples()
+          break
+        case 'stickies':
+          importStickies()
           break
       }
     },
@@ -1765,7 +1856,13 @@ function Widget() {
     if (total <= CARD_CAP) return null
     return <Btn small tone="ghost" label={expanded ? 'Show less' : `Show ${total - CARD_CAP} more`} onClick={() => setShowAll({ ...showAll, [keyName]: !expanded })} />
   }
-  const capped = (list: Task[], keyName: string) => (showAll[keyName] || list.length <= CARD_CAP ? list : list.slice(0, CARD_CAP))
+  /** First CARD_CAP cards, plus the open card if it would otherwise be hidden behind "Show more". */
+  const capped = (list: Task[], keyName: string): Task[] => {
+    if (showAll[keyName] || list.length <= CARD_CAP) return list
+    const head = list.slice(0, CARD_CAP)
+    const hidden = openId ? list.slice(CARD_CAP).find((t) => t.id === openId) : undefined
+    return hidden ? head.concat(hidden) : head
+  }
 
   function Column({ status }: { status: Status }) {
     const isCollapsed = !!collapsed[status]
@@ -2309,6 +2406,7 @@ function Widget() {
         <Btn label="Sync" onClick={refresh} />
         <Btn label="Export" onClick={() => exportDialog(all, everything, people.values(), boardTitle)} />
         <Btn label="Import" onClick={importBackup} />
+        <Btn label="From stickies" onClick={importStickies} />
       </AutoLayout>
 
       {filtersOpen ? <FilterPanel /> : null}

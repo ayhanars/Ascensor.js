@@ -27,6 +27,11 @@
   .drop label { color: #4f46e5; font-weight: 600; cursor: pointer; }
   .status { font-size: 11px; color: #374151; margin-bottom: 10px; min-height: 16px; }
   .status.err { color: #dc2626; }
+  .preview { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; max-height: 84px; overflow: auto; color: #374151; }
+  .preview div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .opt { display: flex; gap: 6px; align-items: baseline; margin: 0 0 6px; cursor: pointer; }
+  .opt span { color: #6b7280; }
+  input[type=text] { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid #cbd0d8; border-radius: 8px; margin: 2px 0 10px; color: #111827; }
 </style>
 </head>
 <body>
@@ -79,6 +84,21 @@
     </div>
   </div>
 
+  <!-- Stickies → tasks -->
+  <div id="stickies-mode" class="hidden">
+    <div class="task" id="stickies-title">Stickies → tasks</div>
+    <div class="preview" id="stickies-preview"></div>
+    <label class="opt"><input type="radio" name="smode" value="separate" checked /><div><b>One task per sticky</b> <span>— first line becomes the title, the rest the description</span></div></label>
+    <label class="opt"><input type="radio" name="smode" value="one" /><div><b>One task, a subtask per sticky</b></div></label>
+    <input type="text" id="stickies-name" placeholder="Title for the task" class="hidden" />
+    <label class="opt"><input type="checkbox" id="stickies-remove" /><div>Remove the stickies from the canvas afterwards</div></label>
+    <div class="row">
+      <span class="spacer"></span>
+      <button id="stickies-cancel">Cancel</button>
+      <button class="primary" id="stickies-go">Create tasks</button>
+    </div>
+  </div>
+
 <script>
   const pad = (n) => (n < 10 ? '0' + n : '' + n)
   const iso = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
@@ -106,6 +126,14 @@
     }
     if (m.type === 'import-init') {
       $('import-mode').classList.remove('hidden')
+    }
+    if (m.type === 'stickies-init') {
+      $('stickies-mode').classList.remove('hidden')
+      stickyCount = m.count
+      $('stickies-title').innerHTML = 'Stickies → tasks <span>· ' + m.count + ' selected</span>'
+      $('stickies-preview').innerHTML = (m.titles || []).map((t) => '<div>• ' + escapeHtml(t) + '</div>').join('') + (m.count > (m.titles || []).length ? '<div>… and ' + (m.count - m.titles.length) + ' more</div>' : '')
+      $('stickies-name').value = m.suggested || ''
+      updateStickies()
     }
   }
 
@@ -155,6 +183,18 @@
   $('paste').addEventListener('input', () => tryParse($('paste').value))
   $('import-go').onclick = () => { if (parsed) send({ type: 'import', tasks: parsed.tasks, people: parsed.people }) }
   $('import-cancel').onclick = () => send({ type: 'cancel' })
+  // --- stickies
+  let stickyCount = 0
+  const stickyMode = () => document.querySelector('input[name=smode]:checked').value
+  const updateStickies = () => {
+    const one = stickyMode() === 'one'
+    $('stickies-name').classList.toggle('hidden', !one)
+    $('stickies-go').textContent = one ? 'Create 1 task · ' + stickyCount + ' subtasks' : 'Create ' + stickyCount + ' tasks'
+  }
+  document.querySelectorAll('input[name=smode]').forEach((r) => (r.onchange = updateStickies))
+  $('stickies-go').onclick = () => send({ type: 'stickies', mode: stickyMode(), title: $('stickies-name').value, remove: $('stickies-remove').checked })
+  $('stickies-cancel').onclick = () => send({ type: 'cancel' })
+  $('stickies-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('stickies-go').click() })
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') send({ type: 'cancel' }) })
 </script>
 </body>
