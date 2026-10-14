@@ -138,3 +138,12 @@ export function weekKeysInMonth(monthKey: string): string[] {
   }
   return out
 }
+/** The ISO week period for a stored key like 2026-W42. */
+export function weekPeriod(key: string): Period {
+  const year = parseInt(key.slice(0, 4), 10)
+  const week = parseInt(key.slice(6, 8), 10)
+  const jan4 = new Date(year, 0, 4)
+  const monday = new Date(jan4)
+  monday.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7) + (week - 1) * 7)
+  return periodFor('week', 0, monday)
+}

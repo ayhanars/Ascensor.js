@@ -16,7 +16,7 @@ import {
   Task,
   View,
 } from './types'
-import { addDaysISO, ageInDays, dayIndex, fromTimestamp, monthKeyOf, parseISO, periodFor, todayISO, toISO, weekdayDate, weekKeysInMonth } from './dates'
+import { Period, addDaysISO, ageInDays, dayIndex, fromTimestamp, parseISO, periodFor, todayISO, toISO, weekPeriod, weekdayDate, weekKeysInMonth } from './dates'
 import {
   C,
   PRIORITY_COLOR,
@@ -2249,51 +2249,50 @@ function Widget() {
     )
   }
 
-  /** Personal boards only: hours per task for one submission period (ISO week or month), ready to paste into the timesheet tool. */
+  /** Personal boards only: hours per task per ISO week; the month view lists the month's weeks one after another. */
   function HoursView() {
     const person = owner as string
     const period = periodFor(hoursPeriod.kind, hoursPeriod.offset)
-    const inPeriod = (ts: number | null) => {
+    const weeks: Period[] = period.kind === 'week' ? [period] : weekKeysInMonth(period.key).map(weekPeriod).filter((w) => w.start <= today)
+    const inRange = (ts: number | null, w: Period) => {
       if (!ts) return false
       const iso = toISO(new Date(ts))
-      return iso >= period.start && iso <= period.end
+      return iso >= w.start && iso <= w.end
     }
-    const rows = everything
-      .filter((t) => isAssigned(t, person) && (hoursOf(t, person, period.key) > 0 || (!t.archived && (t.status !== 'done' || inPeriod(t.completedAt)))))
-      .sort((a, b) => (labelsOf(a)[0] || '~').localeCompare(labelsOf(b)[0] || '~') || a.title.localeCompare(b.title))
+    const rowsFor = (w: Period) =>
+      everything
+        .filter((t) => isAssigned(t, person) && (hoursOf(t, person, w.key) > 0 || (!t.archived && (t.status !== 'done' || inRange(t.completedAt, w)))))
+        .sort((a, b) => (labelsOf(a)[0] || '~').localeCompare(labelsOf(b)[0] || '~') || a.title.localeCompare(b.title))
+    const sections = weeks.map((w) => {
+      const rows = rowsFor(w)
+      let sum = 0
+      for (const t of rows) sum += hoursOf(t, person, w.key)
+      return { week: w, rows, sum }
+    })
     let total = 0
     const byLabel: Record<string, number> = {}
-    for (const t of rows) {
-      const h = hoursOf(t, person, period.key)
-      if (!h) continue
-      total += h
-      const l = labelsOf(t)[0] || 'No label'
-      byLabel[l] = (byLabel[l] || 0) + h
-    }
-    // the other cadence, for people who switch: weekly entries inside this month, or the monthly entry around this week
-    let otherNote = ''
-    if (period.kind === 'month') {
-      const keys = weekKeysInMonth(period.key)
-      let wk = 0
-      for (const t of everything) for (const k of keys) wk += hoursOf(t, person, k)
-      if (wk) otherNote = `Also ${fmtHours(wk)}h logged as weekly entries in this month.`
-    } else {
-      const mk = monthKeyOf(parseISO(addDaysISO(period.start, 3)))
-      let mo = 0
-      for (const t of everything) mo += hoursOf(t, person, mk)
-      if (mo) otherNote = `Also ${fmtHours(mo)}h logged as a monthly entry for ${periodFor('month', 0, parseISO(addDaysISO(period.start, 3))).label}.`
+    for (const sec of sections) {
+      total += sec.sum
+      for (const t of sec.rows) {
+        const h = hoursOf(t, person, sec.week.key)
+        if (!h) continue
+        const l = labelsOf(t)[0] || 'No label'
+        byLabel[l] = (byLabel[l] || 0) + h
+      }
     }
     const submittedAt = hoursSubmitted[period.key]
-    const shown = capped(rows, 'hours')
     const go = (kind: 'week' | 'month', offset: number) => setHoursPeriod({ kind, offset })
     const exportHours = (): Promise<void> => {
       const lines: string[] = []
-      const csv: string[] = ['period,start,end,person,label,task,hours']
-      for (const t of rows) {
-        const h = hoursOf(t, person, period.key)
-        if (!h) continue
-        lines.push(`${period.key}\t${labelsOf(t)[0] || ''}\t${t.title}\t${fmtHours(h)}`)
-        csv.push([period.key, period.start, period.end, person, labelsOf(t)[0] || '', t.title, fmtHours(h)].map(csvCell).join(','))
+      const csv: string[] = ['week,start,end,person,label,task,hours']
+      for (const sec of sections) {
+        for (const t of sec.rows) {
+          const h = hoursOf(t, person, sec.week.key)
+          if (!h) continue
+          lines.push(`${sec.week.key}\t${labelsOf(t)[0] || ''}\t${t.title}\t${fmtHours(h)}`)
+          csv.push([sec.week.key, sec.week.start, sec.week.end, person, labelsOf(t)[0] || '', t.title, fmtHours(h)].map(csvCell).join(','))
+        }
+        if (sections.length > 1 && sec.sum) lines.push(`${sec.week.key} total\t\t\t${fmtHours(sec.sum)}`)
       }
       lines.push(`Total\t\t\t${fmtHours(total)}`)
       const safe = person.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'hours'
@@ -2309,6 +2308,7 @@ function Widget() {
         }
       })
     }
+    const dates = (t: Task) => `Created ${fromTimestamp(t.createdAt)}${t.completedAt ? ` · Completed ${fromTimestamp(t.completedAt)}` : ''}`
 
     return (
       <AutoLayout direction="vertical" spacing={px(8)} width={BOARD_W}>
@@ -2334,51 +2334,73 @@ function Widget() {
                 {`${person.split(/[\s|]+/)[0]}’s hours`}
               </Label>
               <Label size={10} weight={600} color={C.muted}>
-                {`${rows.length} task${rows.length === 1 ? '' : 's'} · ${fmtHours(total)}h`}
+                {`${fmtHours(total)}h`}
               </Label>
             </AutoLayout>
-            {shown.map((t) => {
-              const h = hoursOf(t, person, period.key)
-              const label = labelsOf(t)[0]
+            {sections.map((sec) => {
+              const shown = capped(sec.rows, 'hours:' + sec.week.key)
               return (
-                <AutoLayout key={t.id} direction="horizontal" width="fill-parent" spacing={px(8)} verticalAlignItems="center" padding={{ vertical: px(3) }}>
-                  <StatusGlyph status={t.status} size={12} />
-                  <Label size={11} weight={500} width="fill-parent" truncate strike={t.status === 'done'} color={t.status === 'done' ? C.muted : C.text}>
-                    {t.title || 'Untitled'}
-                  </Label>
-                  {label ? <LabelPill name={label} quiet /> : null}
-                  <AutoLayout direction="horizontal" spacing={px(3)} verticalAlignItems="center" padding={{ vertical: px(2), horizontal: px(6) }} fill={h ? C.accentSoft : C.bg} stroke={h ? C.accent : C.border} cornerRadius={px(6)}>
-                    <Input
-                      value={h ? fmtHours(h) : null}
-                      placeholder="0"
-                      onTextEditEnd={(e) => {
-                        const v = parseFloat(e.characters.replace(',', '.'))
-                        const next = isFinite(v) && v > 0 ? v : 0
-                        if (next !== h) setTaskHours(t.id, person, period.key, next)
-                      }}
-                      fontFamily={FONT}
-                      fontSize={px(11)}
-                      fontWeight={700}
-                      fill={h ? C.accent : C.text}
-                      placeholderProps={{ fill: C.faint, fontWeight: 400 }}
-                      width={px(34)}
-                      horizontalAlignText="right"
-                      inputBehavior="truncate"
-                      inputFrameProps={{ padding: 0 }}
-                    />
-                    <Label size={10} weight={600} color={h ? C.accent : C.faint}>
-                      h
+                <AutoLayout key={sec.week.key} direction="vertical" width="fill-parent" spacing={px(2)}>
+                  {sections.length > 1 ? (
+                    <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center" padding={{ top: px(8), bottom: px(2) }}>
+                      <Label size={11} weight={700} color={C.accentText} width="fill-parent">
+                        {sec.week.label}
+                      </Label>
+                      <Label size={10} weight={700} color={sec.sum ? C.accentText : C.faint}>
+                        {`${fmtHours(sec.sum)}h`}
+                      </Label>
+                    </AutoLayout>
+                  ) : null}
+                  {shown.map((t) => {
+                    const h = hoursOf(t, person, sec.week.key)
+                    const label = labelsOf(t)[0]
+                    return (
+                      <AutoLayout key={t.id} direction="horizontal" width="fill-parent" spacing={px(8)} verticalAlignItems="center" padding={{ vertical: px(3) }}>
+                        <StatusGlyph status={t.status} size={12} />
+                        <AutoLayout direction="vertical" width="fill-parent" spacing={px(1)}>
+                          <Label size={11} weight={500} width="fill-parent" truncate>
+                            {t.title || 'Untitled'}
+                          </Label>
+                          <Label size={9} color={C.faint} width="fill-parent" truncate>
+                            {dates(t)}
+                          </Label>
+                        </AutoLayout>
+                        {label ? <LabelPill name={label} quiet /> : null}
+                        <AutoLayout direction="horizontal" spacing={px(3)} verticalAlignItems="center" padding={{ vertical: px(2), horizontal: px(6) }} fill={h ? C.accentSoft : C.bg} stroke={h ? C.accent : C.border} cornerRadius={px(6)}>
+                          <Input
+                            value={h ? fmtHours(h) : null}
+                            placeholder="0"
+                            onTextEditEnd={(e) => {
+                              const v = parseFloat(e.characters.replace(',', '.'))
+                              const next = isFinite(v) && v > 0 ? v : 0
+                              if (next !== h) setTaskHours(t.id, person, sec.week.key, next)
+                            }}
+                            fontFamily={FONT}
+                            fontSize={px(11)}
+                            fontWeight={700}
+                            fill={h ? C.accent : C.text}
+                            placeholderProps={{ fill: C.faint, fontWeight: 400 }}
+                            width={px(34)}
+                            horizontalAlignText="right"
+                            inputBehavior="truncate"
+                            inputFrameProps={{ padding: 0 }}
+                          />
+                          <Label size={10} weight={600} color={h ? C.accent : C.faint}>
+                            h
+                          </Label>
+                        </AutoLayout>
+                      </AutoLayout>
+                    )
+                  })}
+                  <ShowMore keyName={'hours:' + sec.week.key} total={sec.rows.length} />
+                  {sec.rows.length === 0 ? (
+                    <Label size={10} color={C.faint} italic>
+                      No tasks of yours this week.
                     </Label>
-                  </AutoLayout>
+                  ) : null}
                 </AutoLayout>
               )
             })}
-            <ShowMore keyName="hours" total={rows.length} />
-            {rows.length === 0 ? (
-              <Label size={10} color={C.faint} italic>
-                No tasks of yours in this period — active tasks, tasks completed in the period and tasks with hours show here.
-              </Label>
-            ) : null}
             <Divider />
             <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} verticalAlignItems="center" wrap>
               {Object.keys(byLabel)
@@ -2393,11 +2415,6 @@ function Widget() {
                 {`Total ${fmtHours(total)}h`}
               </Label>
             </AutoLayout>
-            {otherNote ? (
-              <Label size={10} color={C.muted} italic>
-                {otherNote}
-              </Label>
-            ) : null}
             <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
               <AutoLayout width="fill-parent" height={px(1)} />
               <Btn
