@@ -54,6 +54,7 @@ const CARD_CAP = 10
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 const toast = (msg: string) => figma.notify(msg, { timeout: 1400 })
+const CHEERS = ['Nice one', 'Done and dusted', 'Shipped', 'Boom', 'That’s the way', 'Another one down', 'Clean finish', 'Crushed it', 'Good stuff', 'Onwards']
 const shortName = (s: string, n = 14) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
 const subtasksOf = (t: Task): Subtask[] => t.subtasks ?? []
 const labelsOf = (t: Task): string[] => t.labels ?? []
@@ -391,6 +392,8 @@ const STATE_KEYS = [
   'storeVersion',
   'lastSyncedVersion',
   'liveSync',
+  'justDone',
+  'celebrate',
 ]
 function storeRead<T>(key: string): T | null {
   const raw = figma.root.getSharedPluginData(NS, key)
@@ -426,6 +429,8 @@ const storeWrite = (key: string, value: unknown | null) => {
  */
 let dirty = false
 let touched: Set<string> | null = new Set<string>()
+/** Set by complete() so the commit it triggers keeps the just-completed card lingering. */
+let keepLinger = false
 const markTouched = (...names: Array<string | undefined | null>) => {
   if (!touched) return
   for (const n of names) if (n) touched.add(n)
@@ -555,6 +560,10 @@ function Widget() {
   const [boardTitle, setBoardTitle] = useSyncedState<string>('boardTitle', 'Team tasks')
   const [uiSize, setUiSize] = useSyncedState<string>('uiSize', 'comfortable')
   const [scope, setScope] = useSyncedState<Scope>('scope', { kind: 'team' })
+  /** The card completed by the last click: it lingers, green, in its old column until the next click. */
+  const [justDone, setJustDone] = useSyncedState<{ id: string; from: Status } | null>('justDone', null)
+  /** Opt-in confetti popup on completion (heavier: opens the iframe for a second). */
+  const [celebrate, setCelebrate] = useSyncedState<boolean>('celebrate', false)
   /** Bumped by other boards on this page when they write, which re-renders this one. */
   const [storeVersion] = useSyncedState<number>('storeVersion', 0)
   /** The store version this instance has already merged; renders skip the merge while it matches. */
@@ -681,6 +690,8 @@ function Widget() {
     const scope = touched
     dirty = false
     touched = new Set<string>()
+    if (justDone && !keepLinger) setJustDone(null)
+    keepLinger = false
     if (!wasDirty) return
     const v = bumpStoreVersion()
     notifyOtherBoards(false, scope, v)
@@ -1086,7 +1097,7 @@ function Widget() {
     if (anyFilter) clearFilters()
   }
 
-  const complete = (id: string) => {
+  const complete = (id: string): Promise<void> | void => {
     const t = tasks.get(id)
     if (!t || t.status === 'done') return
     if (id === freshId && !t.title.trim()) {
@@ -1094,10 +1105,50 @@ function Widget() {
       return
     }
     if (id === freshId) setFreshId(null)
-    patch(id, { status: 'done', completedAt: Date.now() })
+    const now = Date.now()
+    keepLinger = true
+    setJustDone({ id, from: t.status })
+    patch(id, { status: 'done', completedAt: now })
     if (openId === id) setOpenId(null)
-    toast('✓ Completed — find it in Done')
+    const msg = cheerFor(t, now)
+    figma.notify(msg, { timeout: 2400 })
+    if (celebrate) return confettiPopup(msg)
   }
+  /** Click the box of a lingering card again: back to the column it came from. */
+  const undoComplete = (id: string) => {
+    const from: Status = justDone && justDone.id === id ? justDone.from : 'todo'
+    patch(id, { status: from, completedAt: null, archived: false })
+    toast(`Back in ${STATUS_LABEL[from]}`)
+  }
+  /** A short, personal completion message; milestones first, then a rotating cheer with today's count. */
+  const cheerFor = (t: Task, now: number): string => {
+    let first = ''
+    try {
+      first = (figma.currentUser?.name ?? '').split(' ')[0]
+    } catch (_) {}
+    const you = first ? `, ${first}` : ''
+    const dayStart = new Date(now)
+    dayStart.setHours(0, 0, 0, 0)
+    const todayCount = all.filter((x) => x.id !== t.id && x.status === 'done' && x.completedAt && x.completedAt >= dayStart.getTime()).length + 1
+    const me = first ? assigneesOf(t).find((n) => n.split(' ')[0] === first) : undefined
+    const mineLeft = me ? active.filter((x) => x.id !== t.id && isAssigned(x, me)).length : -1
+    if (mineLeft === 0) return `🏆 Your board is clear${you}. Nothing left to do.`
+    if (t.status === 'blocked' && active.filter((x) => x.id !== t.id && x.status === 'blocked').length === 0) return `🔓 Blocked is empty — nothing in the way${you}.`
+    if (todayCount === 1) return `☀️ First one done today — good start${you}.`
+    if (todayCount % 10 === 0) return `🔥 ${todayCount} done today — on a roll.`
+    const cheer = CHEERS[(t.id.charCodeAt(t.id.length - 1) + todayCount) % CHEERS.length]
+    return `${cheer}${you} ✓ ${todayCount} done today`
+  }
+  /** Opt-in: a one-second confetti burst in the widget's iframe window, which closes itself. */
+  const confettiPopup = (message: string): Promise<void> =>
+    new Promise<void>((resolve) => {
+      figma.showUI(__html__, { width: 320, height: 200, title: 'Done!' })
+      figma.ui.postMessage({ type: 'confetti-init', message, ms: 1300 })
+      figma.ui.onmessage = () => {
+        figma.closePlugin()
+        resolve()
+      }
+    })
   const setStatus = (id: string, status: Status) => {
     const t = tasks.get(id)
     if (!t || t.status === status) return
@@ -1254,6 +1305,12 @@ function Widget() {
   const overdueCount = active.filter(isLate).length
   const blockedCount = active.filter((t) => t.status === 'blocked').length
   const unassignedCount = active.filter((t) => assigneesOf(t).length === 0).length
+  const dayStartMs = (() => {
+    const d = new Date()
+    d.setHours(0, 0, 0, 0)
+    return d.getTime()
+  })()
+  const doneToday = all.filter((t) => t.status === 'done' && t.completedAt && t.completedAt >= dayStartMs).length
   const staleCount = active.filter(isStale).length
   const agendaCount = live.filter((t) => t.discuss).length
 
@@ -1312,6 +1369,7 @@ function Widget() {
       },
       { itemType: 'separator' },
       { itemType: 'toggle', propertyName: 'live', tooltip: 'Live sync between boards', isToggled: liveSync },
+      { itemType: 'toggle', propertyName: 'celebrate', tooltip: 'Confetti on completion', isToggled: celebrate },
       { itemType: 'action', propertyName: 'export', tooltip: 'Export CSV / backup' },
       { itemType: 'action', propertyName: 'import', tooltip: 'Import backup' },
       { itemType: 'action', propertyName: 'stickies', tooltip: 'Selected stickies → tasks' },
@@ -1335,6 +1393,10 @@ function Widget() {
           break
         case 'live':
           setLive(!liveSync)
+          break
+        case 'celebrate':
+          setCelebrate(!celebrate)
+          toast(celebrate ? 'Confetti off' : 'Confetti on — a short popup on every completion')
           break
         case 'export':
           return exportDialog(all, everything, people.values(), boardTitle)
@@ -1482,14 +1544,14 @@ function Widget() {
         width={width}
         spacing={px(5)}
         padding={{ vertical: px(7), horizontal: px(9) }}
-        fill={C.bg}
+        fill={isDone ? C.successSoft : C.bg}
         cornerRadius={px(8)}
-        stroke={open ? C.accent : task.status === 'blocked' ? STATUS_COLOR.blocked : late ? C.danger : C.border}
-        strokeWidth={open ? 2 : task.status === 'blocked' || late ? 1.5 : 1}
+        stroke={isDone ? C.success : open ? C.accent : task.status === 'blocked' ? STATUS_COLOR.blocked : late ? C.danger : C.border}
+        strokeWidth={isDone || open ? 2 : task.status === 'blocked' || late ? 1.5 : 1}
       >
         {/* Row 1: done circle, title, priority, close */}
         <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="start">
-          <AutoLayout width={px(16)} height={px(16)} cornerRadius={px(4)} fill={isDone ? C.success : undefined} stroke={isDone ? undefined : C.borderStrong} strokeWidth={1.5} horizontalAlignItems="center" verticalAlignItems="center" onClick={() => complete(task.id)} hoverStyle={{ fill: isDone ? C.success : C.successSoft, stroke: C.success }}>
+          <AutoLayout width={px(16)} height={px(16)} cornerRadius={px(4)} fill={isDone ? C.success : undefined} stroke={isDone ? undefined : C.borderStrong} strokeWidth={1.5} horizontalAlignItems="center" verticalAlignItems="center" onClick={() => (isDone ? undoComplete(task.id) : complete(task.id))} hoverStyle={{ fill: isDone ? C.success : C.successSoft, stroke: C.success }}>
             {isDone ? (
               <Text fontFamily={FONT} fontSize={px(10)} fontWeight={700} fill="#FFFFFF" lineHeight={px(16)}>
                 ✓
@@ -1573,7 +1635,13 @@ function Widget() {
               Sync
             </Label>
           ) : null}
-          <StatusControl task={task} showLabel={showStatus} />
+          {isDone ? (
+            <Label size={10} weight={700} color={C.success}>
+              ✓ Done · box again to undo
+            </Label>
+          ) : (
+            <StatusControl task={task} showLabel={showStatus} />
+          )}
         </AutoLayout>
 
         {open ? <Editor task={task} /> : null}
@@ -1866,7 +1934,9 @@ function Widget() {
 
   function Column({ status }: { status: Status }) {
     const isCollapsed = !!collapsed[status]
-    const items = live.filter((t) => t.status === status)
+    const lingerId = justDone ? justDone.id : null
+    const linger = justDone && justDone.from === status ? live.find((t) => t.id === lingerId && t.status === 'done') : undefined
+    const items = status === 'done' ? live.filter((t) => t.status === 'done' && t.id !== lingerId) : live.filter((t) => t.status === status).concat(linger ? [linger] : [])
     // Done column: most recently completed first; other columns use the chosen sort.
     const visible = status === 'done' ? items.filter(matches).sort((a, b) => (b.completedAt ?? b.updatedAt) - (a.completedAt ?? a.updatedAt)) : sortTasks(items.filter(matches))
     const color = STATUS_COLOR[status]
@@ -2335,7 +2405,10 @@ function Widget() {
   function ViewTab({ id, label, count }: { id: View; label: string; count?: number }) {
     const on = view === id
     return (
-      <AutoLayout direction="horizontal" spacing={px(5)} padding={{ vertical: px(5), horizontal: px(12) }} cornerRadius={px(7)} fill={on ? C.bg : undefined} stroke={on ? C.border : undefined} verticalAlignItems="center" onClick={() => setView(id)} hoverStyle={{ fill: on ? C.bg : C.surfaceAlt }}>
+      <AutoLayout direction="horizontal" spacing={px(5)} padding={{ vertical: px(5), horizontal: px(12) }} cornerRadius={px(7)} fill={on ? C.bg : undefined} stroke={on ? C.border : undefined} verticalAlignItems="center" onClick={() => {
+        setView(id)
+        if (justDone) setJustDone(null)
+      }} hoverStyle={{ fill: on ? C.bg : C.surfaceAlt }}>
         <Label size={11} weight={on ? 700 : 500} color={on ? C.text : C.muted}>
           {label}
         </Label>
@@ -2369,6 +2442,7 @@ function Widget() {
           <Pill text={owner ? 'My board' : 'Team board'} color={owner ? C.accent : C.muted} fill={owner ? C.accentSoft : C.surface} size={10} />
           <Pill text={liveSync ? 'Live sync' : 'Manual sync'} color={liveSync ? C.success : C.muted} fill={liveSync ? C.successSoft : C.surface} size={10} onClick={() => setLive(!liveSync)} tooltip={liveSync ? 'Switch to manual sync' : 'Switch to live sync'} />
           <Pill text={`${active.length} active`} color={C.muted} fill={C.surface} size={10} />
+          {doneToday ? <Pill text={`✓ ${doneToday} done today`} color={C.success} fill={C.successSoft} size={10} onClick={() => setView('done')} /> : null}
           {overdueCount ? <Pill text={`${overdueCount} overdue`} color={C.danger} fill={C.dangerSoft} size={10} onClick={() => setFilter('due', filters.due === 'overdue' ? null : 'overdue')} /> : null}
           {blockedCount ? <Pill text={`${blockedCount} blocked`} color={STATUS_COLOR.blocked} fill={STATUS_SOFT.blocked} size={10} /> : null}
           {unassignedCount ? <Pill text={`${unassignedCount} unassigned`} color={C.muted} fill={C.surface} size={10} onClick={() => setFilter('assignee', filters.assignee === '__none__' ? null : '__none__')} /> : null}
