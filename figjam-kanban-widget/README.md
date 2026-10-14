@@ -16,7 +16,7 @@ figjam-kanban-widget/
 │   ├── code.tsx         ← widget UI + logic (Figma Widget API, JSX)
 │   ├── types.ts         ← Task / Filter types and status/priority constants
 │   ├── dates.ts         ← date helpers (today, tomorrow, next Monday, overdue…)
-│   ├── theme.ts         ← colours and inline SVG icons
+│   ├── theme.ts         ← colours, status/priority glyphs, avatar palette
 │   └── ui.html          ← source of the date-picker iframe
 ├── build.mjs            ← esbuild bundler script
 ├── package.json
@@ -53,7 +53,7 @@ on the next widget interaction (or re-import the manifest).
 
 | Brief section | Where it lives |
 | --- | --- |
-| 1 Core layout | Four columns (To Do / In Progress / Blocked / Done), 248px wide, hug-height so there are never empty gaps. Chevron collapses a column to a 36px strip that still shows its count. Counts in every header. Done column is collapsed by default and shows the 4 most recent completions when expanded. |
+| 1 Core layout | Four columns (To Do / In Progress / Blocked / Done), 248px wide, hug-height so there are never empty gaps. Chevron collapses a column to a 36px strip that still shows its count. Counts in every header. Done column is expanded by default and shows the 5 most recent completions as compact rows; the rest live in the Done tab. |
 | Task details (editor) | Clicking a card title **expands the card in place**, inside its own column. The compact row (owner · due · subtasks · status control) stays as the single set of controls — nothing is shown twice — and the editor adds description, due quick picks, owner (photo/initials avatar, name field with prefix matching, **Me**, chips for every known person), priority, labels, team sync and a subtask checklist with progress bar, plus archive/delete. Works the same in Week view and on rows in the Done and Sync views. It holds title, description, status, due date (current value + quick picks), owner (photo/initials avatar, name field, **Me**, one-click avatars of known people), priority, **labels**, and a **subtask checklist** with progress bar. |
 | Labels & subtasks | Tasks can carry project labels (free text, colour derived from the name, consistent across the board). Cards show up to three label pills; clicking one filters the board by that label. Subtasks show as a `2/5` progress pill on the card; the inspector lets you add, rename, tick and remove them. Search covers labels and subtask titles. |
 | Team sync agenda | Any task can be flagged **Discuss in team sync** (in the expanded card) with an optional talking point. Flagged cards show a "Sync" pill, and the **Sync** tab lists the agenda with status, owner, due date, labels and the note. **Create agenda on canvas** creates a dated section (`Team sync · Tue, Oct 13`) to the right of the widget with one FigJam sticky per flagged task, colour-coded by status, so the meeting can run on the canvas. Ticking an agenda row removes it after it has been discussed; "Clear agenda" resets everything for the next meeting. |
@@ -80,15 +80,15 @@ document data. Place as many instances as you like:
   moves it to their board; assigning a task to you on the team board makes it
   appear on yours.
 - All instances write every change straight to the store. Per-task "newest edit
-  wins", deletions use tombstones, and the people directory (names + photos) is
+  wins", deletions use tombstones (pruned after 30 days), and the people directory (names + photos) is
   shared too, so a teammate found on one board is known on all of them.
 - The store carries a version stamp. A render costs one read of that stamp and
   skips the merge entirely while it matches what the board last merged; only a
   write from another board triggers a full merge. Pushes carry the stamp too, so
   a board that just received a push does not re-merge.
 - **Manual sync (default) vs. Live sync.** In manual mode a board merges
-  changes from the others the moment you touch it (any click). **Refresh**
-  (circular arrow) goes further: it merges this board and then pushes the
+  changes from the others the moment you touch it (any click). The **Sync**
+  button goes further: it merges this board and then pushes the
   result into every other board on the page, so one click brings the whole
   page up to date. In live mode every write also pushes straight into every other
   board on the page, which re-renders all of them on each click — instant, but
@@ -107,8 +107,8 @@ external backend, which this prototype deliberately avoids.
 ## Size, export and other controls
 
 - **Widget size** — property menu → *Size: compact / comfortable / large*. Comfortable (default) is sized to sit well next to FigJam sticky notes; compact is the original dense layout; large is for presenting. Every dimension scales together, so nothing wraps differently.
-- **Export / backup** — the download icon next to *Filters*, or property menu → *Export CSV / backup*. The dialog offers **Download .csv** (this board's scope, for spreadsheets) and **Download backup .json** (every task in the file plus the people directory, full fidelity).
-- **Import backup** — the upload icon next to Export, or property menu → *Import backup*. Drop or choose a `.json` backup (or paste JSON). Tasks are matched by id: a newer edit in the file wins, unknown ids are added, nothing is deleted, so a restore after an accident or a move to a fresh file is one click. A plain JSON array of `{title, status, assignee, due, priority, labels}` objects also imports.
+- **Export / backup** — the **Export** button next to *Filters*, or property menu → *Export CSV / backup*. The dialog offers **Download .csv** (this board's scope, for spreadsheets) and **Download backup .json** (every task in the file plus the people directory, full fidelity).
+- **Import backup** — the **Import** button next to Export, or property menu → *Import backup*. Drop or choose a `.json` backup (or paste JSON). Tasks are matched by id: a newer edit in the file wins, unknown ids are added, nothing is deleted, so a restore after an accident or a move to a fresh file is one click. A plain JSON array of `{title, status, assignee, due, priority, labels}` objects also imports.
 - **Property menu** is kept short: Sort, Stale threshold, Size, the Live-sync toggle, and actions (export, import, agenda, expand/collapse all, clear filters, archive old, sample tasks). Scope and view are switched in the header. The CSV has one row per task (active, completed and archived) with: id, title, description, status, assignee, due, priority, labels, subtasks done/total, subtask list, created/updated/completed timestamps (ISO 8601), archived. Values are RFC 4180 quoted, UTF-8 with BOM so Excel opens it cleanly.
 - **Tooltips** always render below the hovered element; the Widget API only takes a tooltip string and Figma decides the placement. They are kept to one or two words, labelled buttons have none, and the status control has none, so they cover as little as possible.
 - **Teammate discovery** happens when someone opens a card, creates a task, uses **Me**, or presses the people icon — not on every click, to keep interactions cheap.
@@ -123,14 +123,17 @@ blurs/shadows and complex SVG as the expensive rendering features, and
 `documentAccess: "dynamic-page"` as required to avoid loading the whole file.
 The widget is built around that:
 
-- **No shadows, no clipping on cards, no SVG below the header.** Every per-card
-  glyph is a frame, ellipse or text; the only SVGs on a board are the search,
-  refresh and export icons (3). Open/blocked/overdue state is a border colour.
+- **No shadows, no clipping on cards, no SVG anywhere on the board.** Every
+  glyph is a frame, ellipse or text — the header actions are text buttons
+  (Sync / Export / Import) and the only SVG left in the whole widget is the
+  people icon inside an open card's Owner row (1 node, only while a card is
+  open). Open/blocked/overdue state is a border colour.
 - **Fewest nodes that still look right.** A compact card is ~18 sublayers (was
   ~31): the status control is three glyph buttons that are their own hit
   targets, pills on cards are plain coloured text, clickable text carries its own
-  click handler instead of a wrapper frame. Board with 8 tasks: 231 sublayers
-  (was 316); with 30 tasks: 625 (was 977); Week view with 30 tasks: 645 (was 1084).
+  click handler instead of a wrapper frame. Board with 8 tasks: 222 sublayers
+  (was 316); with 30 tasks: 616 (was 977); Week view with 30 tasks: 643 (was 1084);
+  one card open on an 8-task board: 313.
 - **One commit per click.** A handler writes once to the store and bumps one
   version stamp at the end, pushes to other boards at most once (live mode only,
   and only to boards that can see the change), and no longer re-reads
@@ -163,7 +166,7 @@ publish per-node costs, so treat them as a proxy and judge the feel in FigJam.
 - **"Today" is each viewer's local date.** Overdue markers are computed on render with the viewer's clock.
 - **Keyboard focus can't be moved programmatically**, so after adding a task the next click lands you back in the input. Still one click + typing per task.
 - **The `id` in `manifest.json` is a placeholder.** Figma assigns a real one when you publish; for local development any numeric string works.
-- No external network access is used (`networkAccess.allowedDomains: ["none"]`); no backend, no Outlook, no COCO sync.
+- The only network access is Figma's own CDN for profile photos (`networkAccess.allowedDomains` in the manifest); no backend, no Outlook, no COCO sync.
 
 ## Data model
 

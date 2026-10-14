@@ -96,7 +96,7 @@ function StatusGlyph(props: { status: Status; size?: number; color?: string; mut
       cornerRadius={r}
       fill={props.fill}
       stroke={c}
-      strokeWidth={1.5}
+      strokeWidth={props.fill ? 2 : 1.5}
       horizontalAlignItems="center"
       verticalAlignItems="center"
       onClick={props.onClick}
@@ -199,7 +199,7 @@ function GlyphBtn({ glyph, onClick, tooltip, size = 20, color }: { glyph: string
   const s = px(size)
   return (
     <AutoLayout width={s} height={s} cornerRadius={px(6)} horizontalAlignItems="center" verticalAlignItems="center" onClick={onClick} hoverStyle={{ fill: C.surfaceAlt }} tooltip={tooltip}>
-      <Text fontFamily={FONT} fontSize={Math.round(s * 0.7)} fontWeight={600} fill={color ?? C.muted} lineHeight={s}>
+      <Text fontFamily={FONT} fontSize={Math.round(s * (glyph === '›' ? 0.95 : 0.7))} fontWeight={600} fill={color ?? C.muted} lineHeight={s}>
         {glyph}
       </Text>
     </AutoLayout>
@@ -558,11 +558,19 @@ function Widget() {
     dirty = true
   }
   const deleteTask = (id: string) => {
+    const before = tasks.get(id)
     tasks.delete(id)
-    storeWrite('task:' + id, null)
-    storeWrite('deleted:' + id, { at: Date.now() })
-    touched = null // deletes are pushed to every board
-    dirty = true
+    let stored = true
+    try {
+      stored = !!figma.root.getSharedPluginData(NS, 'task:' + id)
+    } catch (_) {}
+    if (stored) {
+      storeWrite('task:' + id, null)
+      storeWrite('deleted:' + id, { at: Date.now() })
+      markTouched(before?.assignee)
+      if (!before) touched = null
+      dirty = true
+    }
   }
 
   /**
@@ -570,7 +578,7 @@ function Widget() {
    * forced by Refresh). Setting another instance's synced state re-renders it,
    * so this is skipped for personal boards that cannot see the change.
    */
-  const notifyOtherBoards = (force = false): number => {
+  const notifyOtherBoards = (force = false, scope: Set<string> | null = null, version?: number): number => {
     if (!liveSync && !force) return 0
     try {
       if (!figma.widgetId) return 0
@@ -580,16 +588,16 @@ function Widget() {
       const personMap: Record<string, Person> = {}
       for (const t of tasks.values()) taskMap[t.id] = t
       for (const p of people.values()) personMap[p.name] = p
-      const version = readStoreVersion()
+      const ver = version ?? readStoreVersion()
       let pushed = 0
       for (const n of others) {
         const prev = (n.widgetSyncedState || {}) as Record<string, unknown>
         const sc = prev.scope as Scope | undefined
-        if (!force && touched && sc && sc.kind === 'personal' && !touched.has(sc.name)) continue
+        if (!force && scope && sc && sc.kind === 'personal' && !scope.has(sc.name)) continue
         const next: Record<string, unknown> = {}
         for (const k of STATE_KEYS) if (k in prev) next[k] = prev[k]
-        next.storeVersion = version
-        next.lastSyncedVersion = version
+        next.storeVersion = ver
+        next.lastSyncedVersion = ver
         n.setWidgetSyncedState(next, { tasks: taskMap, people: personMap })
         pushed++
       }
@@ -601,11 +609,13 @@ function Widget() {
 
   /** Flush this handler's writes: one version bump and (in live mode) one push. */
   const commit = () => {
-    if (!dirty) return
+    const wasDirty = dirty
+    const scope = touched
     dirty = false
-    bumpStoreVersion()
-    notifyOtherBoards()
     touched = new Set<string>()
+    if (!wasDirty) return
+    const v = bumpStoreVersion()
+    notifyOtherBoards(false, scope, v)
   }
 
   /**
@@ -626,11 +636,16 @@ function Widget() {
     const storePeople = new Map<string, Person>()
     const live = keys.indexOf('live') >= 0 && figma.root.getSharedPluginData(NS, 'live') === '"1"'
     if (live !== liveSync) setLiveSync(live)
+    const tombMax = Date.now() - 30 * 86400000
     for (const k of keys) {
       if (k.startsWith('task:')) {
         const v = storeRead<Task>(k)
         if (v && v.id) storeTasks.set(v.id, v)
-      } else if (k.startsWith('deleted:')) tomb.add(k.slice(8))
+      } else if (k.startsWith('deleted:')) {
+        const d = storeRead<{ at: number }>(k)
+        if (d && typeof d.at === 'number' && d.at < tombMax && !tasks.get(k.slice(8))) storeWrite(k, null) // prune old tombstones
+        else tomb.add(k.slice(8))
+      }
       else if (k.startsWith('person:')) {
         const v = storeRead<Person>(k)
         if (v && v.name) storePeople.set(v.name, v)
@@ -707,6 +722,7 @@ function Widget() {
   }
   const myName = (): string | null => {
     syncPeople()
+    commit()
     const name = figma.currentUser?.name
     if (!name) toast('Could not read your Figma name — type a name instead')
     return name ?? null
@@ -744,17 +760,23 @@ function Widget() {
   const setLive = (on: boolean) => {
     storeWrite('live', on ? '1' : null)
     setLiveSync(on)
+    syncWithStore() // make this cache the full store before pushing it around
     const v = bumpStoreVersion()
     try {
       if (figma.widgetId) {
+        const taskMap: Record<string, Task> = {}
+        const personMap: Record<string, Person> = {}
+        for (const t of tasks.values()) taskMap[t.id] = t
+        for (const p of people.values()) personMap[p.name] = p
         for (const n of figma.currentPage.findWidgetNodesByWidgetId(figma.widgetId)) {
           if (n.id === widgetId) continue
           const prev = (n.widgetSyncedState || {}) as Record<string, unknown>
           const next: Record<string, unknown> = {}
           for (const k of STATE_KEYS) if (k in prev) next[k] = prev[k]
           next.liveSync = on
+          next.storeVersion = v
           next.lastSyncedVersion = v
-          n.setWidgetSyncedState(next)
+          n.setWidgetSyncedState(next, { tasks: taskMap, people: personMap })
         }
       }
     } catch (_) {}
@@ -861,6 +883,10 @@ function Widget() {
     }
     if (owner && !t.assignee) t.assignee = owner
     if (t.status === 'done') t.completedAt = now
+    if (!clean && allowEmpty) {
+      tasks.set(t.id, t) // blank card: local only until it gets content (patch writes it to the store)
+      return t.id
+    }
     writeTask(t)
     syncPeople()
     commit()
@@ -868,7 +894,9 @@ function Widget() {
   }
 
   /** "Add task": a blank card at the top of To Do, already open for editing. */
-  const isBlank = (t: Task) => !t.title.trim() && !t.description && !t.due && !t.priority && !labelsOf(t).length && !subtasksOf(t).length && !t.discuss
+  /** A card is blank only if the user has done nothing with it at all (title, fields, status, owner, completion). */
+  const isBlank = (t: Task) =>
+    !t.title.trim() && !t.description && !t.due && !t.priority && !labelsOf(t).length && !subtasksOf(t).length && !t.discuss && t.status === 'todo' && !t.completedAt && t.assignee === (owner ?? '')
   const discardIfBlank = (id: string | null) => {
     if (!id) return
     const t = tasks.get(id)
@@ -878,27 +906,51 @@ function Widget() {
   const openCard = (id: string) => {
     if (freshId && freshId !== id) discardIfBlank(freshId)
     setOpenId(id)
-    syncPeople() // deliberate moment to notice who is in the file (photos for the Owner row)
+    const t = tasks.get(id)
+    if (people.size === 0 || (t && t.assignee && !photoOf(t.assignee))) syncPeople() // only when it can add a photo
     commit()
   }
   const closeCard = () => {
-    if (openId && openId === freshId) discardIfBlank(openId)
+    if (openId && openId === freshId) {
+      const t = tasks.get(openId)
+      if (t && !isBlank(t) && t.title.trim()) toast(`Added “${shortName(t.title, 34)}”`)
+      discardIfBlank(openId)
+    }
     setOpenId(null)
     commit()
   }
+  /** "Add task": reuse an existing blank card (fresh, or an orphan) rather than stacking another; the map is live, so this holds for a double click too. */
   const addTask = () => {
-    if (freshId && freshId !== openId) discardIfBlank(freshId)
-    const id = createTask('', { status: 'todo' }, true)
+    let id: string | null = null
+    const f = freshId ? tasks.get(freshId) : undefined
+    if (f && isBlank(f)) id = f.id
+    else {
+      for (const t of tasks.values()) {
+        if (!t.archived && isBlank(t)) {
+          id = t.id
+          break
+        }
+      }
+    }
+    if (freshId && freshId !== id) discardIfBlank(freshId)
+    if (!id) id = createTask('', { status: 'todo' }, true)
     if (!id) return
     setFreshId(id)
     setOpenId(id)
     if (collapsed.todo) setCollapsed({ ...collapsed, todo: false })
-    if (view === 'done' || view === 'sync') setView('board')
+    if (view !== 'board') setView('board')
+    if (anyFilter) toast('Filters cleared so the new card is visible')
+    if (anyFilter) clearFilters()
   }
 
   const complete = (id: string) => {
     const t = tasks.get(id)
     if (!t || t.status === 'done') return
+    if (id === freshId && !t.title.trim()) {
+      toast('Give the task a title first')
+      return
+    }
+    if (id === freshId) setFreshId(null)
     patch(id, { status: 'done', completedAt: Date.now() })
     if (openId === id) setOpenId(null)
     toast('✓ Completed — find it in Done')
@@ -953,9 +1005,8 @@ function Widget() {
       toast('Flag tasks with “Discuss in team sync” first')
       return
     }
-    await figma.loadFontAsync({ family: 'Inter', style: 'Medium' })
     const me = await figma.getNodeByIdAsync(widgetId)
-    const anchor = me && 'x' in me ? (me as SceneNode) : null
+    const anchor = me && 'absoluteBoundingBox' in me ? (me as SceneNode).absoluteBoundingBox : null
     const section = figma.createSection()
     section.name = `Team sync · ${weekdayDate(today)}`
     section.fills = [{ type: 'SOLID', color: hexToRgb('#EEF2FF') }]
@@ -963,8 +1014,11 @@ function Widget() {
     const cols = 3
     let w = 0
     let h = 0
+    const stickies = flagged.map(() => figma.createSticky())
+    const fontName = stickies[0].text.fontName
+    await figma.loadFontAsync(fontName as FontName)
     flagged.forEach((t, i) => {
-      const sticky = figma.createSticky()
+      const sticky = stickies[i]
       const lines = [t.title || 'Untitled']
       const meta = [t.assignee ? `@${t.assignee}` : 'Unassigned', STATUS_LABEL[t.status], t.due ? `due ${dueInfo(t.due).label}` : null].filter(Boolean).join(' · ')
       lines.push('', meta)
@@ -1003,6 +1057,7 @@ function Widget() {
 
   const q = search.trim().toLowerCase()
   const matches = (t: Task): boolean => {
+    if (t.id === freshId || t.id === openId) return true
     if (q) {
       const hay = `${t.title} ${t.description} ${t.assignee} ${labelsOf(t).join(' ')} ${subtasksOf(t).map((s) => s.title).join(' ')}`.toLowerCase()
       if (!hay.includes(q)) return false
@@ -1216,7 +1271,7 @@ function Widget() {
       <AutoLayout direction="horizontal" spacing={px(3)} padding={px(2)} cornerRadius={px(999)} fill={C.surface} verticalAlignItems="center">
         {ACTIVE_STATUSES.map((s) => {
           const current = task.status === s
-          return <StatusGlyph key={s} status={s} size={16} muted={!current} fill={current ? C.bg : undefined} hoverFill={current ? undefined : STATUS_SOFT[s]} onClick={() => setStatus(task.id, s)} />
+          return <StatusGlyph key={s} status={s} size={16} muted={!current} fill={current ? STATUS_SOFT[s] : undefined} hoverFill={current ? undefined : STATUS_SOFT[s]} onClick={() => setStatus(task.id, s)} />
         })}
         {showLabel ? (
           <AutoLayout padding={{ left: px(2), right: px(5) }}>
@@ -1262,7 +1317,7 @@ function Widget() {
         fill={C.bg}
         cornerRadius={px(8)}
         stroke={open ? C.accent : task.status === 'blocked' ? STATUS_COLOR.blocked : late ? C.danger : C.border}
-        strokeWidth={open ? 2 : 1}
+        strokeWidth={open ? 2 : task.status === 'blocked' || late ? 1.5 : 1}
       >
         {/* Row 1: done circle, title, priority, close */}
         <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="start">
@@ -1291,12 +1346,12 @@ function Widget() {
               inputFrameProps={{ padding: 0 }}
             />
           ) : (
-            <Label size={12} weight={600} width="fill-parent" truncate={2} strike={isDone} color={isDone ? C.muted : task.title ? C.text : C.faint} italic={!task.title} onClick={openMe}>
+            <Label size={12} weight={600} width="fill-parent" truncate={2} strike={isDone} color={isDone ? C.muted : task.title ? C.text : C.faint} italic={!task.title} onClick={openMe} hover={C.accent}>
               {task.title || 'Untitled'}
             </Label>
           )}
           {task.priority ? (
-            <Label size={10} weight={700} color={PRIORITY_COLOR[task.priority]} onClick={open ? closeCard : openMe}>
+            <Label size={10} weight={700} color={PRIORITY_COLOR[task.priority]} onClick={open ? undefined : openMe}>
               {PRIORITY_GLYPH[task.priority]}
             </Label>
           ) : null}
@@ -1305,9 +1360,9 @@ function Widget() {
 
         {/* Labels (closed cards; the editor lists them when open) */}
         {!open && labels.length ? (
-          <AutoLayout direction="horizontal" spacing={px(4)} wrap width="fill-parent">
+          <AutoLayout direction="horizontal" spacing={px(4)} width="fill-parent">
             {labels.slice(0, 3).map((l) => (
-              <LabelPill key={l} name={l} quiet onClick={() => setFilter('label', filters.label === l ? null : l)} />
+              <LabelPill key={l} name={shortName(l, 14)} quiet onClick={() => setFilter('label', filters.label === l ? null : l)} />
             ))}
             {labels.length > 3 ? (
               <Label size={9} color={C.faint}>
@@ -1318,24 +1373,24 @@ function Widget() {
         ) : null}
 
         {/* Row 2: owner, due, subtasks, stale, sync, status — the single control row, also when open */}
-        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center" wrap>
-          <Avatar name={task.assignee} photo={photoOf(task.assignee)} onClick={openMe} tooltip={task.assignee || undefined} />
+        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} verticalAlignItems="center" wrap>
+          <Avatar name={task.assignee} photo={photoOf(task.assignee)} onClick={open ? undefined : openMe} tooltip={task.assignee || undefined} />
           {task.assignee ? null : (
-            <Label size={10} weight={500} color={C.faint} italic onClick={openMe}>
+            <Label size={10} weight={500} color={C.faint} italic onClick={open ? undefined : openMe}>
               Unassigned
             </Label>
           )}
           {due ? (
-            <Label size={10} weight={late || due.diff === 0 ? 700 : 500} color={late ? C.danger : due.diff === 0 ? C.accentText : C.muted} onClick={openMe} tooltip={due.weekday}>
+            <Label size={10} weight={late || due.diff === 0 ? 700 : 500} color={late ? C.danger : due.diff === 0 ? C.accentText : C.muted} onClick={open ? undefined : openMe} tooltip={due.weekday}>
               {late ? `Overdue · ${due.label}` : due.label}
             </Label>
-          ) : (
+          ) : open ? null : (
             <Label size={10} weight={500} color={C.faint} onClick={() => setDue(task.id, today)} hover={C.accentText} tooltip="Set due today">
               + date
             </Label>
           )}
-          {subs.length ? <Progress done={subsDone} total={subs.length} width={22} onClick={openMe} /> : null}
-          {subs.length ? (
+          {subs.length && !open ? <Progress done={subsDone} total={subs.length} width={22} onClick={openMe} /> : null}
+          {subs.length && !open ? (
             <Label size={10} weight={600} color={subsDone === subs.length ? C.success : C.muted} onClick={openMe}>
               {`${subsDone}/${subs.length}`}
             </Label>
@@ -1345,7 +1400,7 @@ function Widget() {
               {`${ageInDays(task.createdAt)}d old`}
             </Label>
           ) : null}
-          {task.discuss ? (
+          {task.discuss && !open ? (
             <Label size={10} weight={700} color={C.accentText} onClick={() => setView('sync')} tooltip="Open agenda">
               Sync
             </Label>
@@ -1385,7 +1440,10 @@ function Widget() {
     const subs = subtasksOf(task)
     const subsDone = subs.filter((s) => s.done).length
     const labels = labelsOf(task)
-    const peopleRow = knownAssignees.filter((a) => a !== task.assignee)
+    const late = isLate(task)
+    const peopleAll = knownAssignees.filter((a) => a !== task.assignee)
+    const peopleRow = peopleAll.slice(0, 8)
+    const labelsShown = knownLabels.slice(0, 12)
 
     return (
       <AutoLayout direction="vertical" width="fill-parent" spacing={px(10)} padding={inset ? { top: px(4), bottom: px(8), left: px(10), right: px(10) } : { top: px(4) }}>
@@ -1415,8 +1473,19 @@ function Widget() {
           <Chip small label="Today" active={task.due === today} onClick={() => setDue(task.id, today)} />
           <Chip small label="Tomorrow" active={task.due === tomorrow} onClick={() => setDue(task.id, tomorrow)} />
           <Chip small label="Next week" active={task.due === nextWeek} onClick={() => setDue(task.id, nextWeek)} />
-          <Chip small label={customDue ? weekdayDate(task.due as string) : 'Pick date…'} active={customDue} onClick={() => pickDate(task.title, task.due, (iso) => setDue(task.id, iso))} />
-          {task.due ? <Chip small label="Clear" onClick={() => setDue(task.id, null)} /> : null}
+          <Chip
+            small
+            label={customDue ? (late ? `Overdue · ${weekdayDate(task.due as string)}` : weekdayDate(task.due as string)) : 'Pick date…'}
+            active={customDue}
+            color={late && customDue ? C.danger : undefined}
+            soft={late && customDue ? C.dangerSoft : undefined}
+            onClick={() => pickDate(task.title, task.due, (iso) => setDue(task.id, iso))}
+          />
+          {task.due ? (
+            <Label size={10} weight={600} color={C.muted} hover={C.danger} tooltip="Remove due date" onClick={() => setDue(task.id, null)}>
+              × Clear
+            </Label>
+          ) : null}
         </PropRow>
 
         <PropRow label="Owner" stack>
@@ -1454,6 +1523,11 @@ function Widget() {
               {peopleRow.map((a) => (
                 <PersonChip key={a} name={a} onClick={() => patch(task.id, { assignee: a })} />
               ))}
+              {peopleAll.length > peopleRow.length ? (
+                <Label size={9} color={C.faint}>
+                  {`+${peopleAll.length - peopleRow.length} more — type a name`}
+                </Label>
+              ) : null}
             </AutoLayout>
           ) : (
             <Label size={9} color={C.faint} width="fill-parent">
@@ -1469,11 +1543,16 @@ function Widget() {
         </PropRow>
 
         <PropRow label="Labels" stack>
-          {knownLabels.length ? (
+          {labelsShown.length ? (
             <AutoLayout direction="horizontal" width="fill-parent" spacing={px(4)} wrap verticalAlignItems="center">
-              {knownLabels.map((l) => (
+              {labelsShown.map((l) => (
                 <LabelPill key={l} name={l} size={10} active={labels.includes(l)} onClick={() => toggleLabel(task.id, l)} />
               ))}
+              {knownLabels.length > labelsShown.length ? (
+                <Label size={9} color={C.faint}>
+                  {`+${knownLabels.length - labelsShown.length} more — type to add`}
+                </Label>
+              ) : null}
             </AutoLayout>
           ) : null}
           <Input
@@ -1631,9 +1710,12 @@ function Widget() {
               {STATUS_LABEL[status]}
             </Label>
             <Pill text={String(visible.length)} color={color} solid size={10} />
-            <Label size={9} color={C.faint} width="fill-parent">
-              {hiddenByFilter > 0 ? `+${hiddenByFilter} filtered` : ''}
-            </Label>
+            {hiddenByFilter > 0 ? (
+              <Label size={9} color={C.faint}>
+                {`+${hiddenByFilter} filtered`}
+              </Label>
+            ) : null}
+            <AutoLayout width="fill-parent" height={px(1)} />
             <GlyphBtn glyph="−" tooltip="Collapse" onClick={() => setCollapsed({ ...collapsed, [status]: true })} />
           </AutoLayout>
 
@@ -1685,10 +1767,18 @@ function Widget() {
     const open = openId === task.id
     const toggle = () => (open ? closeCard() : openCard(task.id))
     const frame = { fill: C.bg, cornerRadius: px(8), stroke: open ? C.accent : C.border, strokeWidth: open ? 2 : 1 }
+    if (compact && !open) {
+      // One node per recent completion; click to open (reopen/archive live in the editor).
+      return (
+        <Label key={task.id} size={11} weight={500} color={C.muted} strike width="fill-parent" truncate onClick={toggle} hover={C.accent} tooltip={task.completedAt ? `Completed ${fromTimestamp(task.completedAt)}` : undefined}>
+          {`✓ ${task.title || 'Untitled'}${task.completedAt ? `  ·  ${fromTimestamp(task.completedAt)}` : ''}`}
+        </Label>
+      )
+    }
     const row = (
-      <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} padding={{ vertical: px(5), horizontal: px(8) }} verticalAlignItems="center" {...(open ? {} : frame)}>
+      <AutoLayout key={task.id} direction="horizontal" width="fill-parent" spacing={px(8)} padding={{ vertical: px(5), horizontal: px(8) }} verticalAlignItems="center" {...(open ? {} : frame)}>
         <Label size={12} weight={700} color={task.archived ? C.faint : C.success}>
-          {task.archived ? '▣' : '✓'}
+          {task.archived ? '■' : '✓'}
         </Label>
         {compact ? (
           <Label size={11} weight={500} color={C.muted} strike={!task.archived} width="fill-parent" truncate onClick={toggle}>
@@ -1931,7 +2021,7 @@ function Widget() {
     const toggle = () => (open ? closeCard() : openCard(task.id))
     const frame = { fill: C.bg, cornerRadius: px(8), stroke: open ? C.accent : C.border, strokeWidth: open ? 2 : 1 }
     const row = (
-      <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} padding={{ vertical: px(6), horizontal: px(8) }} verticalAlignItems="start" {...(open ? {} : frame)}>
+      <AutoLayout key={task.id} direction="horizontal" width="fill-parent" spacing={px(8)} padding={{ vertical: px(6), horizontal: px(8) }} verticalAlignItems="start" {...(open ? {} : frame)}>
         <AutoLayout width={px(16)} height={px(16)} cornerRadius={px(4)} stroke={C.accent} strokeWidth={1.5} onClick={() => setDiscuss(task.id, false)} hoverStyle={{ fill: C.accentSoft }} tooltip="Discussed" />
         <AutoLayout direction="vertical" width="fill-parent" spacing={px(3)}>
           <Label size={12} weight={600} width="fill-parent" truncate={2} onClick={toggle}>
@@ -2104,7 +2194,6 @@ function Widget() {
         </AutoLayout>
         <AutoLayout width="fill-parent" height={px(1)} />
         <AutoLayout direction="horizontal" spacing={px(6)} verticalAlignItems="center" padding={{ vertical: px(6), horizontal: px(10) }} fill={C.surface} stroke={search ? C.accent : undefined} cornerRadius={px(8)} width={px(220)}>
-          <Icon name="search" color={search ? C.accent : C.faint} size={12} />
           <Input
             value={search || null}
             placeholder="Search tasks, labels, people…"
@@ -2120,9 +2209,9 @@ function Widget() {
           {search ? <GlyphBtn glyph="×" size={16} tooltip="Clear" onClick={() => setSearch('')} /> : null}
         </AutoLayout>
         <Btn label={activeFilterCount ? `Filters · ${activeFilterCount}` : 'Filters'} tone={filtersOpen || activeFilterCount ? 'primary' : 'default'} onClick={() => setFiltersOpen(!filtersOpen)} />
-        <Btn icon="refresh" onClick={refresh} tooltip="Sync all boards" />
-        <Btn icon="download" onClick={() => exportDialog(all, everything, people.values(), boardTitle)} tooltip="Export CSV / backup" />
-        <Btn icon="upload" onClick={importBackup} tooltip="Import backup" />
+        <Btn label="Sync" onClick={refresh} tooltip="Sync all boards" />
+        <Btn label="Export" onClick={() => exportDialog(all, everything, people.values(), boardTitle)} tooltip="CSV or backup" />
+        <Btn label="Import" onClick={importBackup} tooltip="Restore a backup" />
       </AutoLayout>
 
       {filtersOpen ? <FilterPanel /> : null}

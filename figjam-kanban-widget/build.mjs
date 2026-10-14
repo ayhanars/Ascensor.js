@@ -7,7 +7,9 @@ const options = {
   bundle: true,
   outfile: 'dist/code.js',
   target: 'es2017',
-  minify: true,
+  minifyWhitespace: true,
+  minifySyntax: true,
+  minifyIdentifiers: false, // keep names readable in Figma's console errors
   jsxFactory: 'figma.widget.h',
   jsxFragment: 'figma.widget.Fragment',
   logLevel: 'info',
