@@ -77,3 +77,64 @@ export function fromTimestamp(ts: number): string {
 export function ageInDays(ts: number): number {
   return Math.floor((Date.now() - ts) / 86400000)
 }
+
+// --- submission periods (ISO weeks, calendar months)
+export type PeriodKind = 'week' | 'month'
+export interface Period {
+  kind: PeriodKind
+  /** Storage key: 2026-W42 or 2026-10 */
+  key: string
+  start: string
+  end: string
+  label: string
+}
+const pad2 = (n: number) => (n < 10 ? '0' + n : '' + n)
+/** ISO week of a date: Monday start, week 1 holds January 4th. */
+export function isoWeek(d: Date): { year: number; week: number; monday: Date } {
+  const t = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  const monday = new Date(t)
+  monday.setDate(t.getDate() - ((t.getDay() + 6) % 7))
+  const thursday = new Date(monday)
+  thursday.setDate(monday.getDate() + 3)
+  const year = thursday.getFullYear()
+  const jan4 = new Date(year, 0, 4)
+  const week1Monday = new Date(jan4)
+  week1Monday.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7))
+  const week = Math.round((monday.getTime() - week1Monday.getTime()) / (7 * 86400000)) + 1
+  return { year, week, monday }
+}
+export function weekKeyOf(d: Date): string {
+  const w = isoWeek(d)
+  return `${w.year}-W${pad2(w.week)}`
+}
+export function monthKeyOf(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`
+}
+/** The period `offset` steps away from the current one (0 = this week / this month, -1 = last). */
+export function periodFor(kind: PeriodKind, offset: number, now: Date = new Date()): Period {
+  if (kind === 'week') {
+    const d = new Date(now)
+    d.setDate(d.getDate() + offset * 7)
+    const w = isoWeek(d)
+    const sunday = new Date(w.monday)
+    sunday.setDate(w.monday.getDate() + 6)
+    const start = toISO(w.monday)
+    const end = toISO(sunday)
+    return { kind, key: `${w.year}-W${pad2(w.week)}`, start, end, label: `Week ${w.week} · ${shortDate(start)} – ${shortDate(end)}` }
+  }
+  const first = new Date(now.getFullYear(), now.getMonth() + offset, 1)
+  const last = new Date(first.getFullYear(), first.getMonth() + 1, 0)
+  return { kind, key: monthKeyOf(first), start: toISO(first), end: toISO(last), label: `${MONTHS[first.getMonth()]} ${first.getFullYear()}` }
+}
+/** ISO weeks that belong to a month (the week's Thursday falls in it). */
+export function weekKeysInMonth(monthKey: string): string[] {
+  const y = parseInt(monthKey.slice(0, 4), 10)
+  const m = parseInt(monthKey.slice(5, 7), 10) - 1
+  const out: string[] = []
+  for (let day = 1; day <= 31; day++) {
+    const d = new Date(y, m, day)
+    if (d.getMonth() !== m) break
+    if (d.getDay() === 4) out.push(weekKeyOf(d))
+  }
+  return out
+}

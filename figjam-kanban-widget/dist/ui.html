@@ -116,7 +116,7 @@
   const $ = (id) => document.getElementById(id)
   const send = (msg) => parent.postMessage({ pluginMessage: msg }, '*')
   const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
-  let exportBase = 'tasks', exportJson = ''
+  let exportBase = 'tasks', exportJson = '', exportCsv = ''
   let parsed = null
 
   window.onmessage = (e) => {
@@ -132,8 +132,13 @@
       $('export-mode').classList.remove('hidden')
       exportBase = m.filename || 'tasks'
       exportJson = m.json || ''
-      $('export-title').innerHTML = escapeHtml(exportBase) + ' <span>· ' + m.count + ' task' + (m.count === 1 ? '' : 's') + ' in CSV · ' + m.total + ' in backup</span>'
-      $('csv').value = m.csv
+      exportCsv = m.csv || ''
+      if (m.title) $('export-title').textContent = m.title
+      else $('export-title').innerHTML = escapeHtml(exportBase) + ' <span>· ' + m.count + ' task' + (m.count === 1 ? '' : 's') + ' in CSV · ' + m.total + ' in backup</span>'
+      if (m.hint) document.querySelector('#export-mode .hint').textContent = m.hint
+      $('download-json').classList.toggle('hidden', !!m.hideJson)
+      $('copy').textContent = m.text ? 'Copy lines' : 'Copy CSV'
+      $('csv').value = m.text || m.csv
     }
     if (m.type === 'import-init') {
       $('import-mode').classList.remove('hidden')
@@ -171,7 +176,7 @@
     document.body.appendChild(a); a.click(); a.remove()
     setTimeout(() => URL.revokeObjectURL(url), 500)
   }
-  $('download').onclick = () => { download($('csv').value, exportBase + '.csv', 'text/csv;charset=utf-8'); setTimeout(() => send({ type: 'saved', what: 'csv' }), 300) }
+  $('download').onclick = () => { download(exportCsv || $('csv').value, exportBase + '.csv', 'text/csv;charset=utf-8'); setTimeout(() => send({ type: 'saved', what: 'csv' }), 300) }
   $('download-json').onclick = () => { download(exportJson, exportBase + '-backup.json', 'application/json;charset=utf-8'); setTimeout(() => send({ type: 'saved', what: 'json' }), 300) }
   $('copy').onclick = async () => { try { await navigator.clipboard.writeText($('csv').value) } catch (_) { $('csv').select(); document.execCommand('copy') } $('copy').textContent = 'Copied ✓' }
   $('export-cancel').onclick = () => send({ type: 'cancel' })

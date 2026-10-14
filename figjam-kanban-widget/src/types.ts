@@ -1,6 +1,6 @@
 export type Status = 'todo' | 'inprogress' | 'blocked' | 'done'
 export type Priority = 'low' | 'medium' | 'high'
-export type View = 'board' | 'week' | 'done' | 'sync' | 'people'
+export type View = 'board' | 'week' | 'done' | 'sync' | 'people' | 'hours'
 export type SortMode = 'due' | 'priority' | 'created'
 export type DueFilter = 'overdue' | 'today' | 'week' | 'none'
 
@@ -19,6 +19,8 @@ export interface Task {
   assignee: string
   /** Everyone else working on the task with the owner. */
   coassignees?: string[]
+  /** Hours per person per submission period, e.g. hours["Jon Park"]["2026-W42"] = 6 or ["2026-10"] = 20. */
+  hours?: Record<string, Record<string, number>>
   /** ISO date string YYYY-MM-DD or null */
   due: string | null
   priority: Priority | null

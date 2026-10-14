@@ -16,7 +16,7 @@ import {
   Task,
   View,
 } from './types'
-import { addDaysISO, ageInDays, dayIndex, fromTimestamp, parseISO, todayISO, weekdayDate } from './dates'
+import { addDaysISO, ageInDays, dayIndex, fromTimestamp, monthKeyOf, parseISO, periodFor, todayISO, toISO, weekdayDate, weekKeysInMonth } from './dates'
 import {
   C,
   PRIORITY_COLOR,
@@ -118,6 +118,8 @@ const assigneesOf = (t: Task): string[] => {
   return out
 }
 const isAssigned = (t: Task, name: string): boolean => assigneesOf(t).indexOf(name) >= 0
+const hoursOf = (t: Task, person: string, key: string): number => (t.hours && t.hours[person] && t.hours[person][key]) || 0
+const fmtHours = (h: number): string => (Math.round(h * 100) / 100).toString()
 const hexToRgb = (hex: string): RGB => ({ r: parseInt(hex.slice(1, 3), 16) / 255, g: parseInt(hex.slice(3, 5), 16) / 255, b: parseInt(hex.slice(5, 7), 16) / 255 })
 
 // ---------------------------------------------------------------------------
@@ -380,6 +382,8 @@ const STATE_KEYS = [
   'freshId',
   'confirmDeleteId',
   'confirmRemoveId',
+  'hoursPeriod',
+  'hoursSubmitted',
   'filters',
   'filtersOpen',
   'search',
@@ -443,8 +447,15 @@ const csvCell = (v: string | number | boolean | null | undefined): string => {
 }
 const isoDateTime = (ts: number | null) => (ts ? new Date(ts).toISOString() : '')
 
+/** "Jon Park 2026-W42=6; Jon Park 2026-10=20" */
+const hoursText = (t: Task): string => {
+  const parts: string[] = []
+  const h = t.hours || {}
+  for (const person of Object.keys(h)) for (const key of Object.keys(h[person])) parts.push(`${person} ${key}=${fmtHours(h[person][key])}`)
+  return parts.join('; ')
+}
 function tasksToCsv(list: Task[]): string {
-  const header = ['id', 'title', 'description', 'status', 'assignee', 'co_assignees', 'due', 'priority', 'labels', 'subtasks_done', 'subtasks_total', 'subtasks', 'created_at', 'updated_at', 'completed_at', 'archived']
+  const header = ['id', 'title', 'description', 'status', 'assignee', 'co_assignees', 'hours', 'due', 'priority', 'labels', 'subtasks_done', 'subtasks_total', 'subtasks', 'created_at', 'updated_at', 'completed_at', 'archived']
   const rows = list.map((t) => {
     const subs = subtasksOf(t)
     return [
@@ -454,6 +465,7 @@ function tasksToCsv(list: Task[]): string {
       STATUS_LABEL[t.status],
       t.assignee,
       assigneesOf(t).slice(1).join('; '),
+      hoursText(t),
       t.due ?? '',
       t.priority ? PRIORITY_LABEL[t.priority] : '',
       labelsOf(t).join('; '),
@@ -500,6 +512,20 @@ function exportDialog(list: Task[], everything: Task[], peopleList: Person[], bo
 }
 
 const VALID_STATUS: Record<string, true> = { todo: true, inprogress: true, blocked: true, done: true }
+/** person → period key → hours; anything malformed is dropped. */
+function coerceHours(raw: any): Record<string, Record<string, number>> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const out: Record<string, Record<string, number>> = {}
+  for (const person of Object.keys(raw)) {
+    const per = raw[person]
+    if (!person || !per || typeof per !== 'object') continue
+    for (const key of Object.keys(per)) {
+      const h = per[key]
+      if (typeof h === 'number' && isFinite(h) && h > 0 && /^\d{4}-(W\d{2}|\d{2})$/.test(key)) (out[person] = out[person] || {})[key] = h
+    }
+  }
+  return Object.keys(out).length ? out : undefined
+}
 /** Coerce one record from a backup (or any JSON) into a Task, or null if unusable. */
 function coerceTask(raw: any): Task | null {
   if (!raw || typeof raw !== 'object') return null
@@ -520,6 +546,7 @@ function coerceTask(raw: any): Task | null {
     status,
     assignee,
     coassignees: Array.isArray(raw.coassignees) ? raw.coassignees.filter((n: any) => typeof n === 'string' && n && n !== assignee).slice(0, 10) : [],
+    hours: coerceHours(raw.hours),
     due: typeof raw.due === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.due) ? raw.due : null,
     priority,
     labels: Array.isArray(raw.labels) ? raw.labels.filter((l: any) => typeof l === 'string' && l).slice(0, 20) : [],
@@ -550,6 +577,9 @@ function Widget() {
   const [confirmDeleteId, setConfirmDeleteId] = useSyncedState<string | null>('confirmDeleteId', null)
   /** On a personal board, removing yourself from a task takes two clicks; this is the task waiting for the second. */
   const [confirmRemoveId, setConfirmRemoveId] = useSyncedState<string | null>('confirmRemoveId', null)
+  /** Hours tab (personal boards): which submission period is shown, and which periods were marked as submitted. */
+  const [hoursPeriod, setHoursPeriod] = useSyncedState<{ kind: 'week' | 'month'; offset: number }>('hoursPeriod', { kind: 'week', offset: 0 })
+  const [hoursSubmitted, setHoursSubmitted] = useSyncedState<Record<string, number>>('hoursSubmitted', {})
   const [filters, setFilters] = useSyncedState<Filters>('filters', EMPTY_FILTERS)
   const [filtersOpen, setFiltersOpen] = useSyncedState<boolean>('filtersOpen', false)
   const [search, setSearch] = useSyncedState<string>('search', '')
@@ -828,6 +858,7 @@ function Widget() {
   }
   const makeTeam = () => {
     setScope({ kind: 'team' })
+    if (view === 'hours') setView('board')
     if (/’s tasks$/.test(boardTitle)) setBoardTitle('Team tasks')
     toast('This is now the team board — every task in the file')
   }
@@ -1015,6 +1046,19 @@ function Widget() {
       setConfirmRemoveId(null)
     }
     toggleAssignee(id, name)
+  }
+  /** Hours for one person and one submission period; 0 clears the entry. */
+  const setTaskHours = (id: string, person: string, key: string, h: number) => {
+    const t = tasks.get(id)
+    if (!t) return
+    const all: Record<string, Record<string, number>> = {}
+    for (const p of Object.keys(t.hours || {})) all[p] = { ...(t.hours as Record<string, Record<string, number>>)[p] }
+    const mine = { ...(all[person] || {}) }
+    if (h > 0) mine[key] = Math.min(999, Math.round(h * 100) / 100)
+    else delete mine[key]
+    if (Object.keys(mine).length) all[person] = mine
+    else delete all[person]
+    patch(id, { hours: Object.keys(all).length ? all : undefined })
   }
   const addAssignee = (id: string, name: string) => {
     const t = tasks.get(id)
@@ -2205,6 +2249,176 @@ function Widget() {
     )
   }
 
+  /** Personal boards only: hours per task for one submission period (ISO week or month), ready to paste into the timesheet tool. */
+  function HoursView() {
+    const person = owner as string
+    const period = periodFor(hoursPeriod.kind, hoursPeriod.offset)
+    const inPeriod = (ts: number | null) => {
+      if (!ts) return false
+      const iso = toISO(new Date(ts))
+      return iso >= period.start && iso <= period.end
+    }
+    const rows = everything
+      .filter((t) => isAssigned(t, person) && (hoursOf(t, person, period.key) > 0 || (!t.archived && (t.status !== 'done' || inPeriod(t.completedAt)))))
+      .sort((a, b) => (labelsOf(a)[0] || '~').localeCompare(labelsOf(b)[0] || '~') || a.title.localeCompare(b.title))
+    let total = 0
+    const byLabel: Record<string, number> = {}
+    for (const t of rows) {
+      const h = hoursOf(t, person, period.key)
+      if (!h) continue
+      total += h
+      const l = labelsOf(t)[0] || 'No label'
+      byLabel[l] = (byLabel[l] || 0) + h
+    }
+    // the other cadence, for people who switch: weekly entries inside this month, or the monthly entry around this week
+    let otherNote = ''
+    if (period.kind === 'month') {
+      const keys = weekKeysInMonth(period.key)
+      let wk = 0
+      for (const t of everything) for (const k of keys) wk += hoursOf(t, person, k)
+      if (wk) otherNote = `Also ${fmtHours(wk)}h logged as weekly entries in this month.`
+    } else {
+      const mk = monthKeyOf(parseISO(addDaysISO(period.start, 3)))
+      let mo = 0
+      for (const t of everything) mo += hoursOf(t, person, mk)
+      if (mo) otherNote = `Also ${fmtHours(mo)}h logged as a monthly entry for ${periodFor('month', 0, parseISO(addDaysISO(period.start, 3))).label}.`
+    }
+    const submittedAt = hoursSubmitted[period.key]
+    const shown = capped(rows, 'hours')
+    const go = (kind: 'week' | 'month', offset: number) => setHoursPeriod({ kind, offset })
+    const exportHours = (): Promise<void> => {
+      const lines: string[] = []
+      const csv: string[] = ['period,start,end,person,label,task,hours']
+      for (const t of rows) {
+        const h = hoursOf(t, person, period.key)
+        if (!h) continue
+        lines.push(`${period.key}\t${labelsOf(t)[0] || ''}\t${t.title}\t${fmtHours(h)}`)
+        csv.push([period.key, period.start, period.end, person, labelsOf(t)[0] || '', t.title, fmtHours(h)].map(csvCell).join(','))
+      }
+      lines.push(`Total\t\t\t${fmtHours(total)}`)
+      const safe = person.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'hours'
+      return new Promise<void>((resolve) => {
+        figma.showUI(__html__, { width: 440, height: 330, title: 'Hours for your timesheet' })
+        figma.ui.postMessage({ type: 'export', text: lines.join('\n'), csv: csv.join('\r\n'), filename: `hours-${safe}-${period.key}`, title: `${period.label} · ${fmtHours(total)}h`, hint: 'Tab-separated lines: copy and paste them into your timesheet tool, or download the CSV.', hideJson: true })
+        figma.ui.onmessage = (msg: { type: string }) => {
+          if (msg && msg.type === 'saved') toast('Hours exported')
+          if (msg && (msg.type === 'saved' || msg.type === 'cancel')) {
+            figma.closePlugin()
+            resolve()
+          }
+        }
+      })
+    }
+
+    return (
+      <AutoLayout direction="vertical" spacing={px(8)} width={BOARD_W}>
+        <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center" wrap>
+          <Chip small label="Week" active={period.kind === 'week'} onClick={() => go('week', 0)} />
+          <Chip small label="Month" active={period.kind === 'month'} onClick={() => go('month', 0)} />
+          <AutoLayout width={px(6)} height={px(1)} />
+          <GlyphBtn glyph="‹" onClick={() => go(period.kind, hoursPeriod.offset - 1)} />
+          <Label size={12} weight={700}>
+            {period.label}
+          </Label>
+          <GlyphBtn glyph="›" onClick={() => go(period.kind, hoursPeriod.offset + 1)} />
+          {hoursPeriod.offset !== 0 ? <Chip small label={period.kind === 'week' ? 'This week' : 'This month'} onClick={() => go(period.kind, 0)} /> : null}
+          <AutoLayout width="fill-parent" height={px(1)} />
+          {submittedAt ? <Pill text={`Submitted ${fromTimestamp(submittedAt)} ✓`} color={C.success} fill={C.successSoft} size={10} /> : null}
+        </AutoLayout>
+
+        <AutoLayout direction="vertical" width="fill-parent" spacing={0} fill={C.canvas} cornerRadius={px(12)} overflow="hidden" stroke={C.border}>
+          <Rectangle width="fill-parent" height={px(4)} fill={C.accent} />
+          <AutoLayout direction="vertical" width="fill-parent" spacing={px(4)} padding={{ top: px(8), bottom: px(10), left: px(10), right: px(10) }}>
+            <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
+              <Label size={12} weight={700} width="fill-parent">
+                {`${person.split(/[\s|]+/)[0]}’s hours`}
+              </Label>
+              <Label size={10} weight={600} color={C.muted}>
+                {`${rows.length} task${rows.length === 1 ? '' : 's'} · ${fmtHours(total)}h`}
+              </Label>
+            </AutoLayout>
+            {shown.map((t) => {
+              const h = hoursOf(t, person, period.key)
+              const label = labelsOf(t)[0]
+              return (
+                <AutoLayout key={t.id} direction="horizontal" width="fill-parent" spacing={px(8)} verticalAlignItems="center" padding={{ vertical: px(3) }}>
+                  <StatusGlyph status={t.status} size={12} />
+                  <Label size={11} weight={500} width="fill-parent" truncate strike={t.status === 'done'} color={t.status === 'done' ? C.muted : C.text}>
+                    {t.title || 'Untitled'}
+                  </Label>
+                  {label ? <LabelPill name={label} quiet /> : null}
+                  <AutoLayout direction="horizontal" spacing={px(3)} verticalAlignItems="center" padding={{ vertical: px(2), horizontal: px(6) }} fill={h ? C.accentSoft : C.bg} stroke={h ? C.accent : C.border} cornerRadius={px(6)}>
+                    <Input
+                      value={h ? fmtHours(h) : null}
+                      placeholder="0"
+                      onTextEditEnd={(e) => {
+                        const v = parseFloat(e.characters.replace(',', '.'))
+                        const next = isFinite(v) && v > 0 ? v : 0
+                        if (next !== h) setTaskHours(t.id, person, period.key, next)
+                      }}
+                      fontFamily={FONT}
+                      fontSize={px(11)}
+                      fontWeight={700}
+                      fill={h ? C.accent : C.text}
+                      placeholderProps={{ fill: C.faint, fontWeight: 400 }}
+                      width={px(34)}
+                      horizontalAlignText="right"
+                      inputBehavior="truncate"
+                      inputFrameProps={{ padding: 0 }}
+                    />
+                    <Label size={10} weight={600} color={h ? C.accent : C.faint}>
+                      h
+                    </Label>
+                  </AutoLayout>
+                </AutoLayout>
+              )
+            })}
+            <ShowMore keyName="hours" total={rows.length} />
+            {rows.length === 0 ? (
+              <Label size={10} color={C.faint} italic>
+                No tasks of yours in this period — active tasks, tasks completed in the period and tasks with hours show here.
+              </Label>
+            ) : null}
+            <Divider />
+            <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} verticalAlignItems="center" wrap>
+              {Object.keys(byLabel)
+                .sort()
+                .map((l) => (
+                  <Label key={l} size={10} weight={600} color={C.muted}>
+                    {`${l} ${fmtHours(byLabel[l])}h`}
+                  </Label>
+                ))}
+              <AutoLayout width="fill-parent" height={px(1)} />
+              <Label size={12} weight={700}>
+                {`Total ${fmtHours(total)}h`}
+              </Label>
+            </AutoLayout>
+            {otherNote ? (
+              <Label size={10} color={C.muted} italic>
+                {otherNote}
+              </Label>
+            ) : null}
+            <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
+              <AutoLayout width="fill-parent" height={px(1)} />
+              <Btn
+                small
+                tone={submittedAt ? 'ghost' : 'default'}
+                label={submittedAt ? 'Unmark submitted' : 'Mark as submitted'}
+                onClick={() => {
+                  const next = { ...hoursSubmitted }
+                  if (submittedAt) delete next[period.key]
+                  else next[period.key] = Date.now()
+                  setHoursSubmitted(next)
+                }}
+              />
+              <Btn small tone="primary" label="Copy for timesheet" onClick={exportHours} />
+            </AutoLayout>
+          </AutoLayout>
+        </AutoLayout>
+      </AutoLayout>
+    )
+  }
+
   function PeopleView() {
     const pool = active.filter(matches)
     const nameSet = new Set<string>()
@@ -2423,7 +2637,7 @@ function Widget() {
 
   // ----------------------------------------------------------------- header
   void storeVersion
-  const mainView = view === 'board' || (view === 'people' && owner) ? <BoardView /> : view === 'week' ? <WeekView /> : view === 'sync' ? <SyncView /> : view === 'people' ? <PeopleView /> : <DoneView />
+  const mainView = view === 'week' ? <WeekView /> : view === 'sync' ? <SyncView /> : view === 'people' && !owner ? <PeopleView /> : view === 'hours' && owner ? <HoursView /> : view === 'done' ? <DoneView /> : <BoardView />
 
   return (
     <AutoLayout direction="vertical" spacing={px(10)} padding={px(14)} fill={C.bg} cornerRadius={px(16)} stroke={C.border} strokeWidth={1} width="hug-contents">
@@ -2462,7 +2676,7 @@ function Widget() {
           <ViewTab id="week" label="Week" />
           <ViewTab id="done" label="Done" count={done.length} />
           <ViewTab id="sync" label="Sync" count={agendaCount} />
-          {owner ? null : <ViewTab id="people" label="People" />}
+          {owner ? <ViewTab id="hours" label="Hours" /> : <ViewTab id="people" label="People" />}
         </AutoLayout>
         <AutoLayout width="fill-parent" height={px(1)} />
         <AutoLayout direction="horizontal" spacing={px(6)} verticalAlignItems="center" padding={{ vertical: px(6), horizontal: px(10) }} fill={C.surface} stroke={search ? C.accent : undefined} cornerRadius={px(8)} width={px(220)}>
