@@ -174,6 +174,10 @@ publish per-node costs, so treat them as a proxy and judge the feel in FigJam.
 - **The `id` in `manifest.json` is a placeholder.** Figma assigns a real one when you publish; for local development any numeric string works.
 - The only network access is Figma's own CDN for profile photos (`networkAccess.allowedDomains` in the manifest); no backend, no Outlook, no COCO sync.
 
+## Cover and icon
+
+`assets/` holds publishing artwork: `cover-1920x960.png` (Figma Community cover), `thumbnail-960x480.png` (half-size preview), `icon-512.png` and `icon-128.png` (widget icon, transparent corners). They are rendered from plain HTML, so the wording and colours are easy to change.
+
 ## Data model
 
 ```ts
