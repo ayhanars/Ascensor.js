@@ -1,0 +1,21 @@
+{
+    "brand": "purple",
+    "updatedAt": "2026-10-09",
+    "platforms": {
+        "android": {
+          "StatusBarColorEffect": "n/a",  # Figma-ID: n/a, File: coco-ui/src/androidMain/kotlin/scaffold/CocoBottomSheetScaffold.android.kt
+        },
+        "ios": {
+          "StatusBarColorEffect": "n/a",  # Figma-ID: n/a, File: coco-ui/src/iosMain/kotlin/scaffold/CocoBottomSheetScaffold.ios.kt
+          "CocoBadge": "1.0.0",  # Figma-ID: 66:1117, File: coco-ui/src/iosMain/kotlin/atoms/CocoBadge.ios.kt
+        },
+        "generic": {
+          "CocoActionButtonIcon": "1.0.0",  # Figma-ID: 2:211, File: coco-ui/src/commonMain/kotlin/atoms/CocoActionMenu.kt
+          "CocoBadge": "1.1.1",  # Figma-ID: 66:1117, File: coco-ui/src/commonMain/kotlin/atoms/CocoBadge.kt
+          "CocoCheckbox": "1.0.0",  # Figma-ID: 2:177, File: coco-ui/src/commonMain/kotlin/atoms/CocoCheckbox.kt
+          "CocoRatingStars": "1.0.0",  # Figma-ID: 11114-4573, File: coco-ui/src/commonMain/kotlin/atoms/CocoRatingStars.kt
+          "PurpleHeroInput": "1.0.0",  # Figma-ID: 17700:12, File: coco-ui/src/commonMain/kotlin/atoms/PurpleHeroInput.kt
+          "CocoLargeTeaserCardIcon": "v1.0.1",  # Figma-ID: 9757-39570, File: coco-ui/src/commonMain/kotlin/teasers/CocoLargeTeaserCard.kt
+        }
+    }
+}

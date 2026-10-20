@@ -135,8 +135,23 @@ the same file:
 ```
 
 - `brand` must be `"coba"` or `"purple"` and must match the drop zone.
-- `platforms.ios` and `platforms.android` must be objects. Values are version
-  strings or `null`; `null` or a missing key means **Not Started**.
+- `platforms` holds `ios`, `android` and/or `generic` objects (at least one).
+  `generic` is for shared multiplatform code and applies to both platforms
+  unless an `ios` or `android` entry overrides the same name. Values are
+  version strings or `null`; `null` or a missing key means **Not Started**,
+  and `"n/a"` means **Not applicable** (shown with a dash).
+- The annotated export from the code base is accepted as is, comments and
+  trailing commas included:
+
+  ```
+  "CocoBadge": "1.1.1",  # Figma-ID: 66:1117, File: coco-ui/src/commonMain/kotlin/atoms/CocoBadge.kt
+  ```
+
+  The `Figma-ID` is a node id in a library file (`66:1117` or `66-1117`). It
+  is resolved against this file first, including ids that point at a variant
+  or a layer inside a component, then against linked files. A resolved id maps
+  the JSON name automatically and the row says "via Figma-ID"; an id nobody
+  has is reported as not found. The `File` path appears in the mapping CSV.
 - `updatedAt` is optional: the date the file's data was last updated, as
   `2026-10-03`, `03.10.2026` or a full ISO timestamp. It is shown in a caption
   above the table ("COBA · updated 03.10.2026") together with the generation
@@ -160,8 +175,9 @@ list; it is only about the JSON files.
 
 **Download mapping CSV** exports every JSON name with the library component it
 resolves to, for the dev team to align names later. Columns: JSON name,
-Library component, Match (`exact`, `manual` or `ignored`), Type, Library
-version, Location (file / page) and Used in (brand · platform).
+Library component, Match (`exact`, `figma-id`, `manual` or `ignored`), Figma
+ID, Code file, Type, Library version, Location (file / page) and Used in
+(brand · platform).
 
 **Import mapping CSV** reads such a file back (or any CSV with a "JSON name"
 and a "Library component" column, comma or semicolon separated) and applies it
@@ -180,6 +196,7 @@ Status per component × brand × platform:
 | Condition | Status |
 | --- | --- |
 | implemented is `null` or missing | ○ Not Started |
+| implemented is `"n/a"` | – Not applicable |
 | implemented equals the library version (or the library has no version) | ● Implemented |
 | anything else | ◐ Update available, with `on vX.Y.Z` underneath |
 
@@ -205,7 +222,8 @@ component-status/
 │   └── ui.html        plugin UI with inline CSS/JS
 ├── samples/
 │   ├── coba.json
-│   └── purple.json
+│   ├── purple.json
+│   └── purple-with-ids.json   annotated export with # Figma-ID comments
 └── dist/code.js       build output (generated, not committed)
 ```
 
@@ -213,5 +231,5 @@ component-status/
 
 | Direction | Message |
 | --- | --- |
-| main → UI | `init {token, remoteFiles}`, `scan-progress {count, scanned, total, pageName}`, `scan-done {components, skippedPages, mappings}`, `remote-done {key, fileName, components, skippedPages}`, `changelog {entries, rows, frames}`, `token-saved {hasToken}`, `generate-progress {done, total}`, `generate-done {count}`, `error {message}` |
-| UI → main | `generate {components, coba, purple, mappings, history, dates}`, `rescan`, `changelog-from-selection`, `changelog-find-in-file`, `changelog-clear`, `remote-parse {key, fileName, componentSets, components}`, `save-token {token}`, `save-files {files}`, `save-mappings {mappings}`, `close` |
+| main → UI | `init {token, remoteFiles}`, `scan-progress {count, scanned, total, pageName}`, `scan-done {components, skippedPages, mappings}`, `remote-done {key, fileName, components, skippedPages}`, `changelog {entries, rows, frames}`, `token-saved {hasToken}`, `ids-resolved {map}`, `generate-progress {done, total}`, `generate-done {count}`, `error {message}` |
+| UI → main | `generate {components, coba, purple, mappings, history, dates}`, `rescan`, `changelog-from-selection`, `changelog-find-in-file`, `changelog-clear`, `remote-parse {key, fileName, componentSets, components}`, `save-token {token}`, `save-files {files}`, `save-mappings {mappings}`, `resolve-ids {ids}`, `close` |

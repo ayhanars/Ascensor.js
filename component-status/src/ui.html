@@ -382,7 +382,7 @@
         </div>
       </div>
       <div class="summary hidden" id="summary"></div>
-      <div class="note">One file per brand with <span class="mono">platforms.ios</span> and <span class="mono">platforms.android</span>. Optional <span class="mono">updatedAt</span> is shown above the table.</div>
+      <div class="note">One file per brand with <span class="mono">platforms.ios</span>, <span class="mono">android</span> and/or <span class="mono">generic</span>. <span class="mono"># Figma-ID</span> comments are used to map automatically.</div>
     </div>
   </section>
 
@@ -434,9 +434,9 @@
 
   var $ = function (id) { return document.getElementById(id); };
   var BRAND_LABEL = { coba: "COBA", purple: "Purple" };
-  var PLATFORM_LABEL = { ios: "iOS", android: "Android" };
+  var PLATFORM_LABEL = { ios: "iOS", android: "Android", generic: "Generic" };
   var BRANDS = ["coba", "purple"];
-  var PLATFORMS = ["ios", "android"];
+  var PLATFORMS = ["ios", "android", "generic"];
 
   function normalizeName(name) { return String(name).trim().toLowerCase(); }
 
@@ -915,12 +915,46 @@
   // ---------------------------------------------------------------------
   // Step 2: files
   // ---------------------------------------------------------------------
+  /**
+   * Accepts strict JSON and the annotated export from the code base:
+   *   "CocoBadge": "1.1.1",  # Figma-ID: 66:1117, File: coco-ui/.../CocoBadge.kt
+   * Comments are read into `meta` (name -> { figmaId, file }) and stripped,
+   * trailing commas are removed, then the rest is parsed as JSON.
+   */
+  function parseAnnotatedJson(text) {
+    var meta = {};
+    var annotated = false;
+    var lines = String(text).replace(/^\uFEFF/, "").split(/\r?\n/);
+    var entryRe = /^(\s*"([^"]+)"\s*:\s*(?:"[^"]*"|null|true|false|-?\d[\d.]*)\s*,?)\s*#\s*(.*)$/;
+    var commentRe = /^(\s*(?:[{}\[\],]\s*)*)#.*$/;
+    var out = lines.map(function (line) {
+      var m = entryRe.exec(line);
+      if (m) {
+        annotated = true;
+        var info = {};
+        var idm = /Figma-?ID\s*[:=]\s*([^,]+)/i.exec(m[3]);
+        var fm = /File\s*[:=]\s*(\S+)/i.exec(m[3]);
+        if (idm) { var id = idm[1].trim(); if (id && !/^n\/?a$/i.test(id)) info.figmaId = id.replace("-", ":"); }
+        if (fm) info.file = fm[1].trim();
+        var key = normalizeName(m[2]);
+        meta[key] = Object.assign(meta[key] || {}, info);
+        return m[1];
+      }
+      var c = commentRe.exec(line);
+      if (c) { annotated = true; return c[1]; }
+      return line;
+    });
+    var cleaned = out.join("\n").replace(/,(\s*[}\]])/g, "$1");
+    return { data: JSON.parse(cleaned), meta: meta, annotated: annotated };
+  }
+
   function validateFile(text, expectedBrand) {
-    var data;
+    var data, parsed;
     try {
-      data = JSON.parse(text);
+      parsed = parseAnnotatedJson(text);
+      data = parsed.data;
     } catch (e) {
-      return { error: "Not valid JSON." };
+      return { error: "Not valid JSON (comments in the # Figma-ID style are fine)." };
     }
     if (!isObject(data)) return { error: "The top level must be an object." };
     if (data.brand !== "coba" && data.brand !== "purple") {
@@ -933,19 +967,23 @@
       return { error: '"updatedAt" must be a date such as "2026-10-03" or "03.10.2026".' };
     }
     if (!isObject(data.platforms)) return { error: '"platforms" must be an object.' };
+    var present = 0;
     for (var i = 0; i < PLATFORMS.length; i++) {
       var platform = PLATFORMS[i];
       var map = data.platforms[platform];
+      if (map === undefined) continue;
       if (!isObject(map)) return { error: '"platforms.' + platform + '" must be an object.' };
+      present++;
       var keys = Object.keys(map);
       for (var j = 0; j < keys.length; j++) {
         var value = map[keys[j]];
         if (value !== null && typeof value !== "string") {
-          return { error: '"platforms.' + platform + '.' + keys[j] + '" must be a version string or null.' };
+          return { error: '"platforms.' + platform + '.' + keys[j] + '" must be a version string, "n/a" or null.' };
         }
       }
     }
-    return { data: data };
+    if (present === 0) return { error: '"platforms" needs at least one of "ios", "android" or "generic".' };
+    return { data: data, meta: parsed.meta, annotated: parsed.annotated };
   }
 
   function setupDrop(zone) {
@@ -969,12 +1007,12 @@
       refresh();
     }
 
-    function setValid(name, data, lastModified) {
+    function setValid(name, data, lastModified, meta) {
       zone.classList.remove("err");
       zone.classList.add("ok");
       var explicit = parseDateInput(data.updatedAt);
       var fallback = parseDateInput(lastModified);
-      state.files[platform] = { name: name, data: data, updated: explicit || fallback || "", updatedSource: explicit ? "file" : (fallback ? "modified" : "none") };
+      state.files[platform] = { name: name, data: data, meta: meta || {}, updated: explicit || fallback || "", updatedSource: explicit ? "file" : (fallback ? "modified" : "none") };
       updatedRow.className = "updated" + (explicit ? "" : " warn");
       updatedRow.textContent = explicit ? "Updated " + explicit : (fallback ? "No updatedAt, using file date " + fallback : "No update date");
       show(updatedRow, true);
@@ -1006,7 +1044,7 @@
       reader.onload = function () {
         var result = validateFile(String(reader.result), platform);
         if (result.error) setError(result.error);
-        else setValid(file.name, result.data, file.lastModified);
+        else setValid(file.name, result.data, file.lastModified, result.meta);
       };
       reader.onerror = function () { setError("Could not read the file."); };
       reader.readAsText(file);
@@ -1044,7 +1082,9 @@
       var file = state.files[brand];
       if (!file) return;
       PLATFORMS.forEach(function (platform) {
-        Object.keys(file.data.platforms[platform]).forEach(function (name) {
+        var map = file.data.platforms[platform];
+        if (!map) return;
+        Object.keys(map).forEach(function (name) {
           var key = normalizeName(name);
           if (!jsonNames[key]) jsonNames[key] = { name: name.trim(), where: [] };
           jsonNames[key].where.push(BRAND_LABEL[brand] + " · " + PLATFORM_LABEL[platform]);
@@ -1063,6 +1103,50 @@
   }
   var suggestions = {};
   var mapUi = { open: null, scroll: 0 };   // user's open/closed state and scroll of the mapping list
+  var resolvedIds = {};                    // figma node id -> component id | null (asked from the main thread)
+  var pendingIds = {};
+
+  /** Figma-ID and code file for a JSON name, from the annotated files (last file wins). */
+  function metaFor(key) {
+    var out = {};
+    BRANDS.forEach(function (brand) {
+      var f = state.files[brand];
+      if (f && f.meta && f.meta[key]) Object.assign(out, f.meta[key]);
+    });
+    return out;
+  }
+
+  /** Library component for a Figma node id: this file first, then linked files (ids end with "/<node id>"). */
+  function componentForFigmaId(figmaId, jsonName) {
+    if (!figmaId) return null;
+    var id = figmaId.replace("-", ":");
+    var all = state.allComponents || [];
+    var local = resolvedIds[id];
+    var candidates = [];
+    all.forEach(function (c) {
+      if (c.id === id || (local && c.id === local) || (c.url && c.id.slice(c.id.indexOf("/") + 1) === id)) candidates.push(c);
+    });
+    if (candidates.length === 0) return null;
+    candidates.sort(function (a, b) {
+      var sa = similarity(jsonName, a.name), sb = similarity(jsonName, b.name);
+      if (sa !== sb) return sb - sa;
+      return (a.url ? 1 : 0) - (b.url ? 1 : 0);   // prefer this file on a tie
+    });
+    return candidates[0];
+  }
+
+  /** Ask the main thread to resolve ids that did not match a scanned component directly (variants, nested layers). */
+  function requestIdResolution(ids) {
+    var ask = ids.filter(function (id) { return !(id in resolvedIds) && !pendingIds[id]; });
+    if (ask.length === 0) return;
+    ask.forEach(function (id) { pendingIds[id] = true; });
+    postToPlugin({ type: "resolve-ids", ids: ask });
+  }
+
+  function onIdsResolved(map) {
+    Object.keys(map || {}).forEach(function (id) { resolvedIds[id] = map[id]; delete pendingIds[id]; });
+    renderSummary();
+  }
 
   function renderSummary() {
     var box = $("summary");
@@ -1088,10 +1172,24 @@
     var unmatchedSet = {};
     unmatched.forEach(function (k) { unmatchedSet[k] = true; });
     Object.keys(state.mappings).forEach(function (k) { if (!unmatchedSet[k]) delete state.mappings[k]; });
+    var idsToResolve = [];
     unmatched.forEach(function (k) {
-      if (!(k in suggestions)) suggestions[k] = suggestComponent(jsonNames[k].name, byLoose);
+      var meta = metaFor(k);
+      if (meta.figmaId) {
+        var viaId = componentForFigmaId(meta.figmaId, jsonNames[k].name);
+        if (viaId) {
+          suggestions[k] = { component: viaId, score: 1, exact: true, viaId: meta.figmaId };
+        } else {
+          if (!(meta.figmaId in resolvedIds)) idsToResolve.push(meta.figmaId);
+          if (!suggestions[k] || suggestions[k].viaId) suggestions[k] = suggestComponent(jsonNames[k].name, byLoose);
+          if (suggestions[k]) suggestions[k].idMissing = meta.figmaId;
+        }
+      } else if (!(k in suggestions)) {
+        suggestions[k] = suggestComponent(jsonNames[k].name, byLoose);
+      }
       if (!(k in state.mappings) && suggestions[k] && suggestions[k].exact) state.mappings[k] = suggestions[k].component.id;
     });
+    requestIdResolution(idsToResolve);
 
     // A component counts as matched by its own name or by a manual mapping.
     var mappedIds = {};
@@ -1099,7 +1197,8 @@
     var inFiles = {};
     BRANDS.forEach(function (brand) {
       PLATFORMS.forEach(function (platform) {
-        Object.keys(state.files[brand].data.platforms[platform]).forEach(function (n) { inFiles[normalizeName(n)] = true; });
+        var map = state.files[brand].data.platforms[platform];
+        if (map) Object.keys(map).forEach(function (n) { inFiles[normalizeName(n)] = true; });
       });
     });
     var matched = state.components.filter(function (c) {
@@ -1154,7 +1253,9 @@
           line.appendChild(apply);
           jname.appendChild(line);
         } else if (sug && sug.exact) {
-          jname.appendChild(el("span", "where", "1:1 match after cleaning"));
+          jname.appendChild(el("span", "where", sug.viaId ? "via Figma-ID " + sug.viaId : "1:1 match after cleaning"));
+        } else if (metaFor(k).figmaId) {
+          jname.appendChild(el("span", "where", "Figma-ID " + metaFor(k).figmaId + " not found in the loaded libraries"));
         } else if (hiddenByName[k] && state.hideNoVersion) {
           jname.appendChild(el("span", "where", "Library component hidden: no version"));
         }
@@ -1334,11 +1435,15 @@
       var exact = byName[k];
       var mapped = state.mappings[k] ? byId[state.mappings[k]] : null;
       var target = exact ? exact[0] : mapped;
-      var match = exact ? "exact" : (mapped ? "manual" : "ignored");
+      var sug = suggestions[k];
+      var match = exact ? "exact" : (mapped ? (sug && sug.viaId && sug.component.id === mapped.id ? "figma-id" : "manual") : "ignored");
+      var meta = metaFor(k);
       return {
         jsonName: entry.name,
         libraryName: target ? target.name : "",
         match: match,
+        figmaId: meta.figmaId || "",
+        codeFile: meta.file || "",
         type: target ? target.type : "",
         version: target ? (target.version || "") : "",
         location: target ? (target.source || "This file") + (target.pageName ? " / " + target.pageName : "") : "",
@@ -1349,9 +1454,9 @@
 
   function downloadMappingCsv() {
     var rows = buildMappingRows();
-    var header = ["JSON name", "Library component", "Match", "Type", "Library version", "Location", "Used in"];
+    var header = ["JSON name", "Library component", "Match", "Figma ID", "Code file", "Type", "Library version", "Location", "Used in"];
     var lines = [header.join(",")].concat(rows.map(function (r) {
-      return [r.jsonName, r.libraryName, r.match, r.type, r.version, r.location, r.usedIn].map(csvCell).join(",");
+      return [r.jsonName, r.libraryName, r.match, r.figmaId, r.codeFile, r.type, r.version, r.location, r.usedIn].map(csvCell).join(",");
     }));
     var content = "\uFEFF" + lines.join("\r\n") + "\r\n";
     var blob = new Blob([content], { type: "text/csv;charset=utf-8" });
@@ -1471,6 +1576,9 @@
         break;
       case "token-saved":
         renderRemote();
+        break;
+      case "ids-resolved":
+        onIdsResolved(msg.map);
         break;
       case "scan-progress":
         onScanProgress(msg);

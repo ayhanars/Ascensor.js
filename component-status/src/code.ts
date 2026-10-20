@@ -70,14 +70,18 @@ interface TableDates {
   generated: string;
 }
 
-/** One file per brand, both platforms inside. */
+/**
+ * One file per brand. `generic` holds shared (multiplatform) implementations
+ * and applies to both platforms unless an `ios` / `android` entry overrides it.
+ */
 interface BrandFile {
   brand: "coba" | "purple";
   /** Optional: when this file's data was last updated (any common date format). */
   updatedAt?: string;
   platforms: {
-    ios: Versions;
-    android: Versions;
+    ios?: Versions;
+    android?: Versions;
+    generic?: Versions;
   };
 }
 
@@ -102,6 +106,7 @@ type UIMessage =
   | { type: "changelog-clear" }
   | { type: "rescan" }
   | { type: "save-token"; token: string }
+  | { type: "resolve-ids"; ids: string[] }
   | { type: "save-mappings"; mappings: Mapping[] }
   | { type: "save-files"; files: RemoteFile[] }
   | {
@@ -951,7 +956,12 @@ function parseRemote(
 // Status logic
 // ---------------------------------------------------------------------------
 
-type StatusKind = "not-started" | "implemented" | "update";
+type StatusKind = "not-started" | "implemented" | "update" | "not-applicable";
+
+/** "n/a", "na", "not applicable", "-" mean the component does not exist on that platform. */
+function isNotApplicable(value: string): boolean {
+  return /^(n\/?a|not\s*applicable|-|—|none)$/i.test(value.trim());
+}
 
 interface Status {
   kind: StatusKind;
@@ -968,6 +978,16 @@ function computeStatus(libraryVersion: string | null, implemented: string | null
       kind: "not-started",
       glyph: "○",
       label: "Not Started",
+      color: "#A3A39D",
+      labelColor: "#8A8A84",
+      implementedVersion: null,
+    };
+  }
+  if (isNotApplicable(String(implemented))) {
+    return {
+      kind: "not-applicable",
+      glyph: "–",
+      label: "Not applicable",
       color: "#A3A39D",
       labelColor: "#8A8A84",
       implementedVersion: null,
@@ -1015,15 +1035,49 @@ function buildLookups(coba: BrandFile, purple: BrandFile): Lookups {
   const lookups = {} as Lookups;
   for (const brand of BRANDS) {
     const file = files[brand.key];
+    const platforms = (file && file.platforms) || {};
+    const generic = buildLookup(platforms.generic);
     const perPlatform = {} as { [P in PlatformKey]: Map<string, string | null> };
     for (const platform of PLATFORMS) {
-      perPlatform[platform.key] = buildLookup(
-        file && file.platforms ? file.platforms[platform.key] : undefined
-      );
+      // Platform-specific entries override the shared "generic" ones.
+      const merged = new Map(generic);
+      buildLookup(platforms[platform.key]).forEach((value, key) => merged.set(key, value));
+      perPlatform[platform.key] = merged;
     }
     lookups[brand.key] = perPlatform;
   }
   return lookups;
+}
+
+/**
+ * Resolve Figma node ids ("2:211" or "2-211") to the component or component
+ * set that contains them, so ids pointing at a variant or a nested layer map
+ * to the scanned component. Returns null for ids not in this file.
+ */
+async function resolveNodeIds(ids: string[]): Promise<{ [id: string]: string | null }> {
+  const out: { [id: string]: string | null } = {};
+  for (const raw of ids) {
+    const id = String(raw).trim().replace("-", ":");
+    let resolved: string | null = null;
+    try {
+      let node: BaseNode | null = await figma.getNodeByIdAsync(id);
+      while (node && node.type !== "PAGE" && node.type !== "DOCUMENT") {
+        if (node.type === "COMPONENT_SET") {
+          resolved = node.id;
+          break;
+        }
+        if (node.type === "COMPONENT") {
+          resolved = node.parent && node.parent.type === "COMPONENT_SET" ? node.parent.id : node.id;
+          break;
+        }
+        node = node.parent;
+      }
+    } catch (e) {
+      resolved = null;
+    }
+    out[raw] = resolved;
+  }
+  return out;
 }
 
 /** componentId -> extra JSON names (normalised) that map to it. */
@@ -1536,6 +1590,9 @@ figma.ui.onmessage = async (msg: UIMessage) => {
         break;
       case "save-mappings":
         saveMappings(Array.isArray(msg.mappings) ? msg.mappings : []);
+        break;
+      case "resolve-ids":
+        post({ type: "ids-resolved", map: await resolveNodeIds(Array.isArray(msg.ids) ? msg.ids : []) });
         break;
       case "save-token":
         await saveToken(msg.token || "");
