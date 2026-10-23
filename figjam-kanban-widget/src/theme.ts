@@ -10,6 +10,8 @@ export const C = {
   borderStrong: '#CBD0D8',
   text: '#111827',
   muted: '#6B7280',
+  /** For 9–10px chip text on grey: 7:1 on #F3F4F6. */
+  mutedStrong: '#4B5563',
   faint: '#9CA3AF',
   accent: '#4F46E5',
   accentHover: '#4338CA',

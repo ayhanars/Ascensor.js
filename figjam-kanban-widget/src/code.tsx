@@ -313,7 +313,7 @@ function Chip(props: { label: string; active?: boolean; onClick: Click; color?: 
 function Pill({ text, color, fill, size = 9, onClick, tooltip, solid }: { text: string; color: string; fill?: string; size?: number; onClick?: Click; tooltip?: string; solid?: boolean }) {
   return (
     <AutoLayout padding={{ vertical: px(1), horizontal: px(6) }} cornerRadius={px(999)} fill={solid ? color : fill ?? C.surface} verticalAlignItems="center" onClick={onClick} tooltip={tooltip}>
-      <Label size={size} weight={700} color={solid ? '#FFFFFF' : color}>
+      <Label size={size} weight={700} color={solid ? '#FFFFFF' : color === C.muted ? C.mutedStrong : color}>
         {text}
       </Label>
     </AutoLayout>
@@ -583,7 +583,7 @@ function Widget() {
   const [filters, setFilters] = useSyncedState<Filters>('filters', EMPTY_FILTERS)
   const [filtersOpen, setFiltersOpen] = useSyncedState<boolean>('filtersOpen', false)
   const [search, setSearch] = useSyncedState<string>('search', '')
-  const [sort, setSort] = useSyncedState<SortMode>('sort', 'due')
+  const [sort, setSort] = useSyncedState<SortMode>('sort', 'smart')
   const [showArchived, setShowArchived] = useSyncedState<boolean>('showArchived', false)
   const [doneSearch, setDoneSearch] = useSyncedState<string>('doneSearch', '')
   const [staleDays, setStaleDays] = useSyncedState<number>('staleDays', 7)
@@ -1245,13 +1245,13 @@ function Widget() {
   const createAgendaOnCanvas = async () => {
     const flagged = live.filter((t) => t.discuss)
     if (!flagged.length) {
-      toast('Flag tasks with “Discuss in team sync” first')
+      toast('Flag tasks with “Discuss in team huddle” first')
       return
     }
     const me = await figma.getNodeByIdAsync(widgetId)
     const anchor = me && 'absoluteBoundingBox' in me ? (me as SceneNode).absoluteBoundingBox : null
     const section = figma.createSection()
-    section.name = `Team sync · ${weekdayDate(today)}`
+    section.name = `Team huddle · ${weekdayDate(today)}`
     section.fills = [{ type: 'SOLID', color: hexToRgb('#EEF2FF') }]
     const gap = 24
     const cols = 3
@@ -1326,6 +1326,14 @@ function Widget() {
 
   const compare = (a: Task, b: Task): number => {
     if (sort === 'created') return b.createdAt - a.createdAt
+    if (sort === 'smart') {
+      // overdue or due today first, then priority, then due date (undated last), then oldest first
+      const ua = a.due && a.due <= today ? 0 : 1
+      const ub = b.due && b.due <= today ? 0 : 1
+      if (ua !== ub) return ua - ub
+      const pr = PRIORITY_RANK[a.priority ?? 'none'] - PRIORITY_RANK[b.priority ?? 'none']
+      if (pr !== 0) return pr
+    }
     if (sort === 'priority') {
       const pr = PRIORITY_RANK[a.priority ?? 'none'] - PRIORITY_RANK[b.priority ?? 'none']
       if (pr !== 0) return pr
@@ -1408,8 +1416,9 @@ function Widget() {
         tooltip: 'Sort cards',
         selectedOption: sort,
         options: [
+          { option: 'smart', label: 'Sort: priority, then due' },
           { option: 'due', label: 'Sort: due date' },
-          { option: 'priority', label: 'Sort: priority' },
+          { option: 'priority', label: 'Sort: priority only' },
           { option: 'created', label: 'Sort: newest' },
         ],
       },
@@ -1581,6 +1590,7 @@ function Widget() {
     const labels = labelsOf(task)
     const due = task.due ? dueInfo(task.due) : null
     const openMe = () => openCard(task.id)
+    const cardLink = open ? null : linksIn(`${task.title}\n${task.description || ''}`)[0] || null
 
     return (
       <AutoLayout
@@ -1615,7 +1625,7 @@ function Widget() {
               fontSize={px(13)}
               fontWeight={700}
               fill={C.text}
-              placeholderProps={{ fill: C.faint, fontWeight: 400 }}
+              placeholderProps={{ fill: C.muted, fontWeight: 400 }}
               width="fill-parent"
               inputBehavior="wrap"
               inputFrameProps={{ padding: 0 }}
@@ -1677,7 +1687,12 @@ function Widget() {
           ) : null}
           {task.discuss && !open ? (
             <Label size={10} weight={700} color={C.accentText} onClick={() => setView('sync')}>
-              Sync
+              Huddle
+            </Label>
+          ) : null}
+          {!open && cardLink ? (
+            <Label size={10} weight={600} color={C.accentText} underline href={cardLink} hover={C.accent}>
+              {`↗ ${linkText(cardLink).split('/')[0]}`}
             </Label>
           ) : null}
           <StatusControl task={task} showLabel={showStatus} />
@@ -1716,7 +1731,7 @@ function Widget() {
     const subsDone = subs.filter((s) => s.done).length
     const labels = labelsOf(task)
     const late = isLate(task)
-    const links = linksIn(task.description || '')
+    const links = linksIn(`${task.title}\n${task.description || ''}`)
     const assigned = assigneesOf(task)
     const confirmingSelf = confirmRemoveId === task.id
     const offMyBoard = !!owner && !isAssigned(task, owner)
@@ -1737,10 +1752,10 @@ function Widget() {
           fontFamily={FONT}
           fontSize={px(11)}
           fill={C.text}
-          placeholderProps={{ fill: C.faint }}
+          placeholderProps={{ fill: C.muted }}
           width="fill-parent"
           inputBehavior="multiline"
-          inputFrameProps={{ padding: { vertical: px(6), horizontal: px(8) }, fill: C.surface, cornerRadius: px(8) }}
+          inputFrameProps={{ padding: { vertical: px(6), horizontal: px(8) }, fill: C.bg, stroke: C.borderStrong, cornerRadius: px(8) }}
         />
         {links.length ? (
           <AutoLayout direction="horizontal" spacing={px(6)} wrap width="fill-parent" verticalAlignItems="center">
@@ -1801,10 +1816,10 @@ function Widget() {
               fontSize={px(11)}
               fontWeight={600}
               fill={C.text}
-              placeholderProps={{ fill: C.faint, fontWeight: 400, italic: true }}
+              placeholderProps={{ fill: C.muted, fontWeight: 400, italic: true }}
               width="fill-parent"
               inputBehavior="truncate"
-              inputFrameProps={{ padding: { vertical: px(4), horizontal: px(8) }, fill: C.surface, cornerRadius: px(8) }}
+              inputFrameProps={{ padding: { vertical: px(4), horizontal: px(8) }, fill: C.bg, stroke: C.borderStrong, cornerRadius: px(8) }}
             />
             <Chip
               small
@@ -1867,16 +1882,16 @@ function Widget() {
             fontSize={px(10)}
             fontWeight={600}
             fill={C.text}
-            placeholderProps={{ fill: C.faint, fontWeight: 400 }}
+            placeholderProps={{ fill: C.muted, fontWeight: 400 }}
             width="fill-parent"
             inputBehavior="truncate"
             inputFrameProps={{ padding: { vertical: px(4), horizontal: px(8) }, cornerRadius: px(6), fill: C.surface }}
           />
         </PropRow>
 
-        <PropRow label="Team sync" stack>
+        <PropRow label="Team huddle" stack>
           <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} verticalAlignItems="center">
-            <Chip small label={task.discuss ? 'On the agenda' : 'Discuss in team sync'} active={!!task.discuss} onClick={() => setDiscuss(task.id, !task.discuss)} />
+            <Chip small label={task.discuss ? 'On the agenda' : 'Discuss in team huddle'} active={!!task.discuss} onClick={() => setDiscuss(task.id, !task.discuss)} />
             {task.discuss ? (
               <Label size={10} weight={600} color={C.accent} onClick={() => setView('sync')} hover={C.accentHover}>
                 Open agenda ›
@@ -1893,7 +1908,7 @@ function Widget() {
               fontFamily={FONT}
               fontSize={px(11)}
               fill={C.text}
-              placeholderProps={{ fill: C.faint }}
+              placeholderProps={{ fill: C.muted }}
               width="fill-parent"
               inputBehavior="multiline"
               inputFrameProps={{ padding: { vertical: px(5), horizontal: px(7) }, fill: C.accentSoft, cornerRadius: px(6) }}
@@ -2036,7 +2051,7 @@ function Widget() {
                   Completed tasks land here.
                 </Label>
               ) : null}
-              <Btn label={visible.length > 5 ? `${visible.length - 5} more in Done view ›` : 'Open Done view ›'} tone="ghost" small onClick={() => setView('done')} />
+              <Btn label={visible.length > 5 ? `${visible.length - 5} more in Done tasks ›` : 'Open Done tasks ›'} tone="ghost" small onClick={() => setView('done')} />
             </AutoLayout>
           ) : (
             <AutoLayout direction="vertical" width="fill-parent" spacing={px(6)}>
@@ -2212,7 +2227,7 @@ function Widget() {
               fontFamily={FONT}
               fontSize={px(11)}
               fill={C.text}
-              placeholderProps={{ fill: C.faint }}
+              placeholderProps={{ fill: C.muted }}
               width="fill-parent"
               inputBehavior="truncate"
               inputFrameProps={{ padding: 0 }}
@@ -2379,7 +2394,7 @@ function Widget() {
                             fontSize={px(11)}
                             fontWeight={700}
                             fill={h ? C.accent : C.text}
-                            placeholderProps={{ fill: C.faint, fontWeight: 400 }}
+                            placeholderProps={{ fill: C.muted, fontWeight: 400 }}
                             width={px(34)}
                             horizontalAlignText="right"
                             inputBehavior="truncate"
@@ -2489,7 +2504,7 @@ function Widget() {
       <AutoLayout direction="vertical" spacing={px(8)} width={BOARD_W}>
         <AutoLayout direction="horizontal" width="fill-parent" spacing={px(8)} verticalAlignItems="center">
           <Label size={11} color={C.muted} width="fill-parent">
-            Flag any task with “Discuss in team sync”. Before the meeting, drop the agenda onto the canvas as stickies and work through it there.
+            Flag any task with “Discuss in team huddle”. Before the meeting, drop the agenda onto the canvas as stickies and work through it there.
           </Label>
           {agenda.length ? <Btn small tone="ghost" label="Clear agenda" onClick={() => patchMany(agenda.map((t) => t.id), { discuss: false })} /> : null}
           <Btn label="Create agenda on canvas" tone="primary" onClick={createAgendaOnCanvas} />
@@ -2499,7 +2514,7 @@ function Widget() {
           <AutoLayout direction="vertical" width="fill-parent" spacing={px(6)} padding={{ top: px(8), bottom: px(10), left: px(10), right: px(10) }}>
             <AutoLayout direction="horizontal" width="fill-parent" spacing={px(6)} verticalAlignItems="center">
               <Label size={12} weight={700}>
-                {`Team sync agenda · ${weekdayDate(today)}`}
+                {`Team huddle agenda · ${weekdayDate(today)}`}
               </Label>
               <Pill text={String(agenda.length)} color={C.accent} solid size={10} />
             </AutoLayout>
@@ -2507,7 +2522,7 @@ function Widget() {
               agenda.map((t) => <AgendaRow key={t.id} task={t} />)
             ) : (
               <Label size={10} color={C.faint} italic>
-                Nothing on the agenda yet — open a task and click “Discuss in team sync”.
+                Nothing on the agenda yet — open a task and click “Discuss in team huddle”.
               </Label>
             )}
           </AutoLayout>
@@ -2555,7 +2570,7 @@ function Widget() {
             fontFamily={FONT}
             fontSize={px(11)}
             fill={C.text}
-            placeholderProps={{ fill: C.faint }}
+            placeholderProps={{ fill: C.muted }}
             width="fill-parent"
             inputBehavior="multiline"
             inputFrameProps={{ padding: { vertical: px(4), horizontal: px(7) }, fill: C.surface, cornerRadius: px(6) }}
@@ -2658,8 +2673,8 @@ function Widget() {
 
   return (
     <AutoLayout direction="vertical" spacing={px(10)} padding={px(14)} fill={C.bg} cornerRadius={px(16)} stroke={C.border} strokeWidth={1} width="hug-contents">
-      {/* Row 1: identity + primary action */}
-      <AutoLayout direction="horizontal" width={BOARD_W} spacing={px(12)} verticalAlignItems="center">
+      {/* Row 1: identity + actions */}
+      <AutoLayout direction="horizontal" width={BOARD_W} spacing={px(8)} verticalAlignItems="center">
         {owner ? <Avatar name={owner} photo={scope.kind === 'personal' ? scope.photoUrl ?? photoOf(owner) : null} size={30} /> : null}
         <Input
           value={boardTitle}
@@ -2669,34 +2684,40 @@ function Widget() {
           fontSize={px(16)}
           fontWeight={700}
           fill={C.text}
-          width={px(220)}
+          width="fill-parent"
           inputBehavior="truncate"
           inputFrameProps={{ padding: 0 }}
         />
-        <AutoLayout direction="horizontal" spacing={px(4)} verticalAlignItems="center" width="fill-parent">
-          <Pill text={owner ? 'My board' : 'Team board'} color={owner ? C.accent : C.muted} fill={owner ? C.accentSoft : C.surface} size={10} />
-          <Pill text={liveSync ? 'Live sync' : 'Manual sync'} color={liveSync ? C.success : C.muted} fill={liveSync ? C.successSoft : C.surface} size={10} onClick={() => setLive(!liveSync)} tooltip={liveSync ? 'Switch to manual sync' : 'Switch to live sync'} />
-          <Pill text={`${active.length} active`} color={C.muted} fill={C.surface} size={10} />
-          {doneToday ? <TodayRing /> : null}
-          {overdueCount ? <Pill text={`${overdueCount} overdue`} color={C.danger} fill={C.dangerSoft} size={10} onClick={() => setFilter('due', filters.due === 'overdue' ? null : 'overdue')} /> : null}
-          {blockedCount ? <Pill text={`${blockedCount} blocked`} color={STATUS_COLOR.blocked} fill={STATUS_SOFT.blocked} size={10} /> : null}
-          {unassignedCount ? <Pill text={`${unassignedCount} unassigned`} color={C.muted} fill={C.surface} size={10} onClick={() => setFilter('assignee', filters.assignee === '__none__' ? null : '__none__')} /> : null}
-        </AutoLayout>
-        <Btn small tone="ghost" label={owner ? 'Switch to team board' : 'Make this my board'} onClick={owner ? makeTeam : makeMine} />
+        <Btn label="Sync" onClick={refresh} />
+        <Btn label="Export" onClick={() => exportDialog(all, everything, people.values(), boardTitle)} />
+        <Btn label="Import" onClick={importBackup} />
+        <Btn label="From stickies" onClick={importStickies} />
+        <Btn label={owner ? 'Switch to team board' : 'Make this my board'} onClick={owner ? makeTeam : makeMine} />
         <Btn label="+ Add task" tone="primary" onClick={addTask} />
       </AutoLayout>
 
-      {/* Row 2: navigation + search/filter */}
+      {/* Row 2: status line under the name */}
+      <AutoLayout direction="horizontal" width={BOARD_W} spacing={px(4)} verticalAlignItems="center" padding={{ left: owner ? px(38) : 0 }} wrap>
+        <Pill text={owner ? 'My board' : 'Team board'} color={owner ? C.accent : C.muted} fill={owner ? C.accentSoft : C.surface} size={10} />
+        <Pill text={liveSync ? 'Live sync' : 'Manual sync'} color={liveSync ? C.success : C.muted} fill={liveSync ? C.successSoft : C.surface} size={10} onClick={() => setLive(!liveSync)} tooltip={liveSync ? 'Switch to manual sync' : 'Switch to live sync'} />
+        <Pill text={`${active.length} active`} color={C.muted} fill={C.surface} size={10} />
+        {doneToday ? <TodayRing /> : null}
+        {overdueCount ? <Pill text={`${overdueCount} overdue`} color={C.danger} fill={C.dangerSoft} size={10} onClick={() => setFilter('due', filters.due === 'overdue' ? null : 'overdue')} /> : null}
+        {blockedCount ? <Pill text={`${blockedCount} blocked`} color={STATUS_COLOR.blocked} fill={STATUS_SOFT.blocked} size={10} /> : null}
+        {unassignedCount ? <Pill text={`${unassignedCount} unassigned`} color={C.muted} fill={C.surface} size={10} onClick={() => setFilter('assignee', filters.assignee === '__none__' ? null : '__none__')} /> : null}
+      </AutoLayout>
+
+      {/* Row 3: navigation + search/filter */}
       <AutoLayout direction="horizontal" width={BOARD_W} spacing={px(10)} verticalAlignItems="center">
         <AutoLayout direction="horizontal" spacing={px(2)} padding={px(3)} fill={C.surface} cornerRadius={px(9)}>
-          <ViewTab id="board" label="Board" />
-          <ViewTab id="week" label="Week" />
-          <ViewTab id="done" label="Done" count={done.length} />
-          <ViewTab id="sync" label="Sync" count={agendaCount} />
+          <ViewTab id="board" label="Kanban board" />
+          <ViewTab id="week" label="Task planner" />
+          <ViewTab id="done" label="Done tasks" count={done.length} />
+          <ViewTab id="sync" label="Team huddle" count={agendaCount} />
           {owner ? <ViewTab id="hours" label="Hours" /> : <ViewTab id="people" label="People" />}
         </AutoLayout>
         <AutoLayout width="fill-parent" height={px(1)} />
-        <AutoLayout direction="horizontal" spacing={px(6)} verticalAlignItems="center" padding={{ vertical: px(6), horizontal: px(10) }} fill={C.surface} stroke={search ? C.accent : undefined} cornerRadius={px(8)} width={px(220)}>
+        <AutoLayout direction="horizontal" spacing={px(6)} verticalAlignItems="center" padding={{ vertical: px(6), horizontal: px(10) }} fill={C.bg} stroke={search ? C.accent : C.borderStrong} cornerRadius={px(8)} width={px(240)}>
           <Input
             value={search || null}
             placeholder="Search tasks, labels, people…"
@@ -2704,7 +2725,7 @@ function Widget() {
             fontFamily={FONT}
             fontSize={px(11)}
             fill={C.text}
-            placeholderProps={{ fill: C.faint }}
+            placeholderProps={{ fill: C.muted }}
             width="fill-parent"
             inputBehavior="truncate"
             inputFrameProps={{ padding: 0 }}
@@ -2712,10 +2733,6 @@ function Widget() {
           {search ? <GlyphBtn glyph="×" size={16} onClick={() => setSearch('')} /> : null}
         </AutoLayout>
         <Btn label={activeFilterCount ? `Filters · ${activeFilterCount}` : 'Filters'} tone={filtersOpen || activeFilterCount ? 'primary' : 'default'} onClick={() => setFiltersOpen(!filtersOpen)} />
-        <Btn label="Sync" onClick={refresh} />
-        <Btn label="Export" onClick={() => exportDialog(all, everything, people.values(), boardTitle)} />
-        <Btn label="Import" onClick={importBackup} />
-        <Btn label="From stickies" onClick={importStickies} />
       </AutoLayout>
 
       {filtersOpen ? <FilterPanel /> : null}

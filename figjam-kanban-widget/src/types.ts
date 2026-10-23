@@ -1,7 +1,7 @@
 export type Status = 'todo' | 'inprogress' | 'blocked' | 'done'
 export type Priority = 'low' | 'medium' | 'high'
 export type View = 'board' | 'week' | 'done' | 'sync' | 'people' | 'hours'
-export type SortMode = 'due' | 'priority' | 'created'
+export type SortMode = 'smart' | 'due' | 'priority' | 'created'
 export type DueFilter = 'overdue' | 'today' | 'week' | 'none'
 
 export interface Subtask {
