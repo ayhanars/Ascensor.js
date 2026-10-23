@@ -140,18 +140,27 @@ the same file:
   unless an `ios` or `android` entry overrides the same name. Values are
   version strings or `null`; `null` or a missing key means **Not Started**,
   and `"n/a"` means **Not applicable** (shown with a dash).
-- The annotated export from the code base is accepted as is, comments and
-  trailing commas included:
+- The annotated exports from the code base are accepted as they are, comments
+  and trailing commas included, in both styles:
 
   ```
   "CocoBadge": "1.1.1",  # Figma-ID: 66:1117, File: coco-ui/src/commonMain/kotlin/atoms/CocoBadge.kt
+  "Badge": "v1.2.2", // Figma: 66:1117; APIs: CocoBadge; File Figma refs differ from metadata: 45:1018
+  "Card Two Line [Figma 5318:33842]": "v1.0.0", // Figma: 5318:33842; APIs: CocoCardTwoLineBadge
   ```
 
-  The `Figma-ID` is a node id in a library file (`66:1117` or `66-1117`). It
-  is resolved against this file first, including ids that point at a variant
-  or a layer inside a component, then against linked files. A resolved id maps
+  Full-line `//` or `#` comments are ignored. A Figma node id (`66:1117` or
+  `66-1117`) can come from a `Figma:` / `Figma-ID:` label or from a
+  `[Figma …]` suffix in the key; other ids in the comment (such as "File
+  Figma refs differ from metadata: 45:1018") are tried as fallbacks. Ids are
+  resolved against this file first, including ids that point at a variant or
+  a layer inside a component, then against linked files. A resolved id maps
   the JSON name automatically and the row says "via Figma-ID"; an id nobody
-  has is reported as not found. The `File` path appears in the mapping CSV.
+  has is reported as not found, and the usual similar-name suggestion and
+  manual dropdown remain. A key with a `[Figma …]` suffix keeps the suffix
+  as its identity (two entries can share a design name) but is compared to
+  library names without it. `APIs:` and `File:` values appear in the mapping
+  CSV.
 - `updatedAt` is optional: the date the file's data was last updated, as
   `2026-10-03`, `03.10.2026` or a full ISO timestamp. It is shown in a caption
   above the table ("COBA · updated 03.10.2026") together with the generation
@@ -176,8 +185,8 @@ list; it is only about the JSON files.
 **Download mapping CSV** exports every JSON name with the library component it
 resolves to, for the dev team to align names later. Columns: JSON name,
 Library component, Match (`exact`, `figma-id`, `manual` or `ignored`), Figma
-ID, Code file, Type, Library version, Location (file / page) and Used in
-(brand · platform).
+ID, Code APIs, Code file, Type, Library version, Location (file / page) and
+Used in (brand · platform).
 
 **Import mapping CSV** reads such a file back (or any CSV with a "JSON name"
 and a "Library component" column, comma or semicolon separated) and applies it

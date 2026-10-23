@@ -916,32 +916,55 @@
   // Step 2: files
   // ---------------------------------------------------------------------
   /**
-   * Accepts strict JSON and the annotated export from the code base:
+   * Accepts strict JSON and the annotated exports from the code base, in both
+   * comment styles:
    *   "CocoBadge": "1.1.1",  # Figma-ID: 66:1117, File: coco-ui/.../CocoBadge.kt
-   * Comments are read into `meta` (name -> { figmaId, file }) and stripped,
-   * trailing commas are removed, then the rest is parsed as JSON.
+   *   "Badge": "v1.2.2", // Figma: 66:1117; APIs: CocoBadge; File Figma refs differ from metadata: 45:1018
+   *   "Card Two Line [Figma 5318:33842]": "v1.0.0", // ...
+   * Full-line comments and trailing commas are removed. Per name, `meta`
+   * holds { figmaId, altIds, file, apis, cleanName }.
    */
   function parseAnnotatedJson(text) {
     var meta = {};
     var annotated = false;
     var lines = String(text).replace(/^\uFEFF/, "").split(/\r?\n/);
-    var entryRe = /^(\s*"([^"]+)"\s*:\s*(?:"[^"]*"|null|true|false|-?\d[\d.]*)\s*,?)\s*#\s*(.*)$/;
-    var commentRe = /^(\s*(?:[{}\[\],]\s*)*)#.*$/;
+    var entryRe = /^(\s*"([^"]+)"\s*:\s*(?:"[^"]*"|null|true|false|-?\d[\d.]*)\s*,?)\s*(?:#|\/\/)\s*(.*)$/;
+    var commentRe = /^(\s*(?:[{}\[\],]\s*)*)(?:#|\/\/).*$/;
+    var keyRe = /^(.*?)\s*\[\s*Figma\s*[:#-]?\s*([^\]]+)\]\s*$/i;
+    var nodeIdRe = /\b(\d+)[:\-](\d+)\b/g;
+    function recordKey(rawKey, comment) {
+      var info = {};
+      var km = keyRe.exec(rawKey);
+      if (km) {
+        info.cleanName = km[1].trim();
+        var kid = /(\d+)[:\-](\d+)/.exec(km[2]);
+        if (kid) info.figmaId = kid[1] + ":" + kid[2];
+      }
+      if (comment) {
+        var idm = /Figma(?:[\s-]*ID)?\s*[:=]\s*(\d+)[:\-](\d+)/i.exec(comment);
+        if (idm && !info.figmaId) info.figmaId = idm[1] + ":" + idm[2];
+        var fm = /\bFile\s*[:=]\s*(\S+)/i.exec(comment);
+        if (fm) info.file = fm[1].trim();
+        var am = /\bAPIs?\s*[:=]\s*([^;]+)/i.exec(comment);
+        if (am) info.apis = am[1].trim();
+        // Every other node id in the comment is a fallback (e.g. "File Figma refs differ from metadata: 191:3812").
+        var alt = [], mm;
+        while ((mm = nodeIdRe.exec(comment)) !== null) {
+          var cand = mm[1] + ":" + mm[2];
+          if (cand !== info.figmaId && alt.indexOf(cand) === -1) alt.push(cand);
+        }
+        if (alt.length) info.altIds = alt;
+      }
+      var key = normalizeName(rawKey);
+      meta[key] = Object.assign(meta[key] || {}, info);
+    }
     var out = lines.map(function (line) {
       var m = entryRe.exec(line);
-      if (m) {
-        annotated = true;
-        var info = {};
-        var idm = /Figma-?ID\s*[:=]\s*([^,]+)/i.exec(m[3]);
-        var fm = /File\s*[:=]\s*(\S+)/i.exec(m[3]);
-        if (idm) { var id = idm[1].trim(); if (id && !/^n\/?a$/i.test(id)) info.figmaId = id.replace("-", ":"); }
-        if (fm) info.file = fm[1].trim();
-        var key = normalizeName(m[2]);
-        meta[key] = Object.assign(meta[key] || {}, info);
-        return m[1];
-      }
+      if (m) { annotated = true; recordKey(m[2], m[3]); return m[1]; }
       var c = commentRe.exec(line);
       if (c) { annotated = true; return c[1]; }
+      var plain = /^\s*"([^"]+)"\s*:\s*(?:"[^"]*"|null)\s*,?\s*$/.exec(line);
+      if (plain && keyRe.test(plain[1])) recordKey(plain[1], "");
       return line;
     });
     var cleaned = out.join("\n").replace(/,(\s*[}\]])/g, "$1");
@@ -954,7 +977,7 @@
       parsed = parseAnnotatedJson(text);
       data = parsed.data;
     } catch (e) {
-      return { error: "Not valid JSON (comments in the # Figma-ID style are fine)." };
+      return { error: "Not valid JSON (// and # comments with Figma ids are fine)." };
     }
     if (!isObject(data)) return { error: "The top level must be an object." };
     if (data.brand !== "coba" && data.brand !== "purple") {
@@ -1106,7 +1129,7 @@
   var resolvedIds = {};                    // figma node id -> component id | null (asked from the main thread)
   var pendingIds = {};
 
-  /** Figma-ID and code file for a JSON name, from the annotated files (last file wins). */
+  /** Figma id(s), code file and APIs for a JSON name, from the annotated files (last file wins). */
   function metaFor(key) {
     var out = {};
     BRANDS.forEach(function (brand) {
@@ -1114,6 +1137,18 @@
       if (f && f.meta && f.meta[key]) Object.assign(out, f.meta[key]);
     });
     return out;
+  }
+  /** Primary id first, then the fallbacks mentioned in the comment. */
+  function idsFor(meta) {
+    var ids = [];
+    if (meta.figmaId) ids.push(meta.figmaId);
+    (meta.altIds || []).forEach(function (id) { if (ids.indexOf(id) === -1) ids.push(id); });
+    return ids;
+  }
+  /** Name used for similarity and 1:1 checks: the key without a "[Figma …]" suffix. */
+  function matchNameFor(key, fallback) {
+    var m = metaFor(key);
+    return m.cleanName || fallback;
   }
 
   /** Library component for a Figma node id: this file first, then linked files (ids end with "/<node id>"). */
@@ -1175,17 +1210,23 @@
     var idsToResolve = [];
     unmatched.forEach(function (k) {
       var meta = metaFor(k);
-      if (meta.figmaId) {
-        var viaId = componentForFigmaId(meta.figmaId, jsonNames[k].name);
+      var ids = idsFor(meta);
+      var matchName = matchNameFor(k, jsonNames[k].name);
+      if (ids.length) {
+        var viaId = null, usedId = "";
+        for (var i = 0; i < ids.length && !viaId; i++) {
+          viaId = componentForFigmaId(ids[i], matchName);
+          if (viaId) usedId = ids[i];
+          else if (!(ids[i] in resolvedIds)) idsToResolve.push(ids[i]);
+        }
         if (viaId) {
-          suggestions[k] = { component: viaId, score: 1, exact: true, viaId: meta.figmaId };
+          suggestions[k] = { component: viaId, score: 1, exact: true, viaId: usedId };
         } else {
-          if (!(meta.figmaId in resolvedIds)) idsToResolve.push(meta.figmaId);
-          if (!suggestions[k] || suggestions[k].viaId) suggestions[k] = suggestComponent(jsonNames[k].name, byLoose);
-          if (suggestions[k]) suggestions[k].idMissing = meta.figmaId;
+          if (!suggestions[k] || suggestions[k].viaId) suggestions[k] = suggestComponent(matchName, byLoose);
+          if (suggestions[k]) suggestions[k].idMissing = ids[0];
         }
       } else if (!(k in suggestions)) {
-        suggestions[k] = suggestComponent(jsonNames[k].name, byLoose);
+        suggestions[k] = suggestComponent(matchName, byLoose);
       }
       if (!(k in state.mappings) && suggestions[k] && suggestions[k].exact) state.mappings[k] = suggestions[k].component.id;
     });
@@ -1254,8 +1295,8 @@
           jname.appendChild(line);
         } else if (sug && sug.exact) {
           jname.appendChild(el("span", "where", sug.viaId ? "via Figma-ID " + sug.viaId : "1:1 match after cleaning"));
-        } else if (metaFor(k).figmaId) {
-          jname.appendChild(el("span", "where", "Figma-ID " + metaFor(k).figmaId + " not found in the loaded libraries"));
+        } else if (idsFor(metaFor(k)).length) {
+          jname.appendChild(el("span", "where", "Figma-ID " + idsFor(metaFor(k)).join(" / ") + " not found in the loaded libraries"));
         } else if (hiddenByName[k] && state.hideNoVersion) {
           jname.appendChild(el("span", "where", "Library component hidden: no version"));
         }
@@ -1444,6 +1485,7 @@
         match: match,
         figmaId: meta.figmaId || "",
         codeFile: meta.file || "",
+        apis: meta.apis || "",
         type: target ? target.type : "",
         version: target ? (target.version || "") : "",
         location: target ? (target.source || "This file") + (target.pageName ? " / " + target.pageName : "") : "",
@@ -1454,9 +1496,9 @@
 
   function downloadMappingCsv() {
     var rows = buildMappingRows();
-    var header = ["JSON name", "Library component", "Match", "Figma ID", "Code file", "Type", "Library version", "Location", "Used in"];
+    var header = ["JSON name", "Library component", "Match", "Figma ID", "Code APIs", "Code file", "Type", "Library version", "Location", "Used in"];
     var lines = [header.join(",")].concat(rows.map(function (r) {
-      return [r.jsonName, r.libraryName, r.match, r.figmaId, r.codeFile, r.type, r.version, r.location, r.usedIn].map(csvCell).join(",");
+      return [r.jsonName, r.libraryName, r.match, r.figmaId, r.apis, r.codeFile, r.type, r.version, r.location, r.usedIn].map(csvCell).join(",");
     }));
     var content = "\uFEFF" + lines.join("\r\n") + "\r\n";
     var blob = new Blob([content], { type: "text/csv;charset=utf-8" });
