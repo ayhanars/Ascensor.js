@@ -1666,7 +1666,12 @@ function Widget() {
       {
         itemType: 'action',
         propertyName: 'rebuild',
-        tooltip: `Rebuild board with latest code (v${VERSION})`,
+        tooltip: `Rebuild this board with latest code (v${VERSION})`,
+      },
+      {
+        itemType: 'action',
+        propertyName: 'rebuildAll',
+        tooltip: 'Rebuild every board on this page',
       },
     ],
     ({ propertyName, propertyValue }) => {
@@ -1692,6 +1697,8 @@ function Widget() {
           break
         case 'rebuild':
           return rebuildBoard()
+        case 'rebuildAll':
+          return rebuildAllBoards()
         case 'samples': // not in the menu; kept for the test harness
           addSamples()
           break
@@ -1700,20 +1707,35 @@ function Widget() {
   )
 
   /** Replace this widget node with a fresh clone that carries the same state and tasks: a clone always runs the widget code Figma currently has, so this is how an older board picks up a re-imported build. */
-  const rebuildBoard = async () => {
-    const node = (await figma.getNodeByIdAsync(widgetId)) as (SceneNode & { cloneWidget?: (s: Record<string, unknown>, m?: Record<string, unknown>) => SceneNode }) | null
-    if (!node || node.type !== 'WIDGET' || typeof node.cloneWidget !== 'function') {
-      toast('Could not rebuild this board here')
-      return
-    }
+  type Cloneable = SceneNode & { cloneWidget?: (s: Record<string, unknown>, m?: Record<string, unknown>) => SceneNode }
+  const cloneInPlace = (node: Cloneable): SceneNode | null => {
+    if (node.type !== 'WIDGET' || typeof node.cloneWidget !== 'function') return null
     const copy = node.cloneWidget({}, {})
     copy.x = node.x
     copy.y = node.y
     const parent = node.parent
     if (parent && 'insertChild' in parent) parent.insertChild(parent.children.indexOf(node) + 1, copy)
+    node.remove()
+    return copy
+  }
+  const rebuildBoard = async () => {
+    const node = (await figma.getNodeByIdAsync(widgetId)) as Cloneable | null
+    const copy = node ? cloneInPlace(node) : null
+    if (!copy) {
+      toast('Could not rebuild this board here')
+      return
+    }
     figma.currentPage.selection = [copy]
     figma.notify(`Board rebuilt — now running Kanban Lite v${VERSION}`)
-    node.remove()
+  }
+  /** Every board on this page, this one last (removing our own node ends the handler). */
+  const rebuildAllBoards = async () => {
+    const nodes = figma.currentPage.findWidgetNodesByWidgetId(figma.widgetId ?? "") as Cloneable[]
+    const others = nodes.filter((n) => n.id !== widgetId)
+    let done = 0
+    for (const n of others) if (cloneInPlace(n)) done++
+    figma.notify(`Rebuilt ${done + 1} board${done ? 's' : ''} on this page with Kanban Lite v${VERSION} — teammates see it after they reload the file`)
+    await rebuildBoard()
   }
   const archiveOld = () => {
     const old = done.filter((t) => t.completedAt && ageInDays(t.completedAt) >= 14).map((t) => t.id)
