@@ -108,6 +108,7 @@ type UIMessage =
   | { type: "save-token"; token: string }
   | { type: "resolve-ids"; ids: string[] }
   | { type: "save-mappings"; mappings: Mapping[] }
+  | { type: "save-excluded"; ids: string[] }
   | { type: "save-files"; files: RemoteFile[] }
   | {
       type: "remote-parse";
@@ -135,6 +136,7 @@ const CHANGELOG_ROW_RE = /change\s*log\s*row/i;
 const DATE_RE = /(\d{1,2})\.(\d{1,2})\.(\d{4})/;
 const SUBROW_FILL = "#FAFAF9";
 const TOKEN_KEY = "componentStatusFigmaToken";
+const EXCLUDED_KEY = "componentStatusExcluded";
 
 /**
  * Pages that never hold library components. Compared after stripping
@@ -385,6 +387,25 @@ function saveMappings(mappings: Mapping[]): void {
   }
 }
 
+/** Component ids the user unticked in the list; they stay out of the generated table. */
+function loadExcluded(): string[] {
+  try {
+    const raw = figma.root.getPluginData(EXCLUDED_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveExcluded(ids: string[]): void {
+  try {
+    figma.root.setPluginData(EXCLUDED_KEY, JSON.stringify(ids));
+  } catch (e) {
+    console.warn("Could not save excluded components: " + errorMessage(e));
+  }
+}
+
 function loadSavedFiles(): RemoteFile[] {
   try {
     const raw = figma.root.getPluginData(FILES_KEY);
@@ -577,7 +598,7 @@ async function scanComponents(): Promise<void> {
 
   components.sort(compareByName);
   post({ type: "scan-progress", count: components.length, scanned, total, pageName: "" });
-  post({ type: "scan-done", components, skippedPages, mappings: loadSavedMappings() });
+  post({ type: "scan-done", components, skippedPages, mappings: loadSavedMappings(), excluded: loadExcluded() });
 }
 
 // ---------------------------------------------------------------------------
@@ -1590,6 +1611,9 @@ figma.ui.onmessage = async (msg: UIMessage) => {
         break;
       case "save-mappings":
         saveMappings(Array.isArray(msg.mappings) ? msg.mappings : []);
+        break;
+      case "save-excluded":
+        saveExcluded(Array.isArray(msg.ids) ? msg.ids : []);
         break;
       case "resolve-ids":
         post({ type: "ids-resolved", map: await resolveNodeIds(Array.isArray(msg.ids) ? msg.ids : []) });

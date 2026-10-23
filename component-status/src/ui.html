@@ -180,6 +180,8 @@
     padding: 6px 10px; border-bottom: 1px solid var(--border-light);
   }
   .item:last-child { border-bottom: none; }
+  .item .inc { margin: 0; flex: none; cursor: pointer; }
+  .item.excluded .name, .item.excluded .type, .item.excluded .version { opacity: .45; text-decoration: line-through; text-decoration-color: var(--text-faint); }
   .item.purple { background: var(--purple-bg); }
   .item .name { font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .item .type { color: var(--text-faint); font-size: 11px; flex: none; width: 90px; }
@@ -321,6 +323,11 @@
         <span>Hide components without a version</span>
         <span class="muted" id="hidden-count"></span>
       </label>
+      <div class="filter hidden" id="exclude-row">
+        <span>Untick a component to leave it out of the table.</span>
+        <span class="muted" id="excluded-count"></span>
+        <button class="link hidden" id="include-all">Include all</button>
+      </div>
     </div>
 
     <div class="sub">
@@ -423,6 +430,7 @@
     remoteOrder: [],    // fileKeys in the order they were added
     token: "",
     hideNoVersion: true,
+    excluded: {},        // component id -> true when unticked in the list (left out of the table)
     allComponents: null, // merged local + remote list once scanned, before the filter
     components: null,   // the same after the "hide without version" filter
     files: { coba: null, purple: null }, // { name, data } once valid
@@ -544,6 +552,7 @@
     show($("count-badge"), false);
     show($("rescan-link"), false);
     show($("filter-row"), false);
+    show($("exclude-row"), false);
     show($("banner"), false);
     postToPlugin({ type: "rescan" });
     refresh();
@@ -561,9 +570,10 @@
 
   var savedMappings = [];
 
-  function onScanDone(components, skippedPages, mappings) {
+  function onScanDone(components, skippedPages, mappings, excluded) {
     state.scanning = false;
     state.local = components;
+    (excluded || []).forEach(function (id) { state.excluded[id] = true; });
     state.skippedPages = skippedPages || [];
     savedMappings = mappings || [];
     if (counter.timer) { clearInterval(counter.timer); counter.timer = null; }
@@ -620,7 +630,20 @@
       show($("empty"), false);
       show($("list"), true);
       components.forEach(function (c) {
-        var item = el("div", "item" + (/purple/i.test(c.name) ? " purple" : ""));
+        var item = el("div", "item" + (/purple/i.test(c.name) ? " purple" : "") + (state.excluded[c.id] ? " excluded" : ""));
+        var inc = el("input", "inc");
+        inc.type = "checkbox";
+        inc.checked = !state.excluded[c.id];
+        inc.title = inc.checked ? "Included in the table" : "Left out of the table";
+        inc.addEventListener("change", function () {
+          if (inc.checked) delete state.excluded[c.id]; else state.excluded[c.id] = true;
+          item.classList.toggle("excluded", !inc.checked);
+          inc.title = inc.checked ? "Included in the table" : "Left out of the table";
+          persistExcluded();
+          renderExcluded();
+          refresh();
+        });
+        item.appendChild(inc);
         item.title = (c.rawName && c.rawName !== c.name ? "Figma name: " + c.rawName + "\n" : "") + (c.pageName ? "Page: " + c.pageName : "");
         var name = el("span", "name", c.name);
         if (c.source) name.appendChild(el("span", "src", "· " + c.source));
@@ -637,10 +660,36 @@
 
     renderDuplicates(components);
     renderSkipped();
+    renderExcluded();
     renderChangelog();
     renderSummary();
     refresh();
   }
+
+  function includedComponents() {
+    return (state.components || []).filter(function (c) { return !state.excluded[c.id]; });
+  }
+
+  function excludedCount() {
+    return (state.components || []).filter(function (c) { return !!state.excluded[c.id]; }).length;
+  }
+
+  function persistExcluded() {
+    postToPlugin({ type: "save-excluded", ids: Object.keys(state.excluded) });
+  }
+
+  function renderExcluded() {
+    var n = excludedCount();
+    show($("exclude-row"), !!(state.components && state.components.length));
+    $("excluded-count").textContent = n ? n + " excluded" : "";
+    show($("include-all"), n > 0);
+  }
+
+  $("include-all").addEventListener("click", function () {
+    state.excluded = {};
+    persistExcluded();
+    applyComponents();
+  });
 
   function renderSkipped() {
     var box = $("skipped");
@@ -1544,7 +1593,7 @@
     show($("banner"), false);
     postToPlugin({
       type: "generate",
-      components: state.components,
+      components: includedComponents(),
       coba: state.files.coba.data,
       purple: state.files.purple.data,
       mappings: mappingsForPlugin(),
@@ -1580,7 +1629,7 @@
   // Step state
   // ---------------------------------------------------------------------
   function refresh() {
-    var step1Done = !!state.components && state.components.length > 0;
+    var step1Done = !!state.components && includedComponents().length > 0;
     var step2Done = step1Done && !!state.files.coba && !!state.files.purple;
 
     setStep($("step-1"), step1Done ? "done" : "active");
@@ -1626,7 +1675,7 @@
         onScanProgress(msg);
         break;
       case "scan-done":
-        onScanDone(msg.components || [], msg.skippedPages || [], msg.mappings || []);
+        onScanDone(msg.components || [], msg.skippedPages || [], msg.mappings || [], msg.excluded || []);
         break;
       case "generate-progress":
         onGenerateProgress(msg.done, msg.total);

@@ -71,6 +71,10 @@ any parent frame name contains "atom", otherwise a **Component**. Components
 with no version get a "no version" tag. Duplicate names are kept and listed as
 a warning. **Hide components without a version** (on by default) removes
 them from the list and from the generated table; untick it to include them.
+Every row has a checkbox on the left: untick a component to leave it out of
+the generated table (it stays available for mapping). The count of excluded
+components and an **Include all** link sit under the list, and the choice is
+saved on the Figma file.
 
 #### Other library files
 
@@ -240,5 +244,5 @@ component-status/
 
 | Direction | Message |
 | --- | --- |
-| main → UI | `init {token, remoteFiles}`, `scan-progress {count, scanned, total, pageName}`, `scan-done {components, skippedPages, mappings}`, `remote-done {key, fileName, components, skippedPages}`, `changelog {entries, rows, frames}`, `token-saved {hasToken}`, `ids-resolved {map}`, `generate-progress {done, total}`, `generate-done {count}`, `error {message}` |
-| UI → main | `generate {components, coba, purple, mappings, history, dates}`, `rescan`, `changelog-from-selection`, `changelog-find-in-file`, `changelog-clear`, `remote-parse {key, fileName, componentSets, components}`, `save-token {token}`, `save-files {files}`, `save-mappings {mappings}`, `resolve-ids {ids}`, `close` |
+| main → UI | `init {token, remoteFiles}`, `scan-progress {count, scanned, total, pageName}`, `scan-done {components, skippedPages, mappings, excluded}`, `remote-done {key, fileName, components, skippedPages}`, `changelog {entries, rows, frames}`, `token-saved {hasToken}`, `ids-resolved {map}`, `generate-progress {done, total}`, `generate-done {count}`, `error {message}` |
+| UI → main | `generate {components, coba, purple, mappings, history, dates}`, `rescan`, `changelog-from-selection`, `changelog-find-in-file`, `changelog-clear`, `remote-parse {key, fileName, componentSets, components}`, `save-token {token}`, `save-files {files}`, `save-mappings {mappings}`, `save-excluded {ids}`, `resolve-ids {ids}`, `close` |
