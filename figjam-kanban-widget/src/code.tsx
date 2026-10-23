@@ -441,7 +441,7 @@ function pickDate(title: string, current: string | null, onPick: (iso: string | 
 // Figma requires an alphanumeric namespace for shared plugin data.
 const NS = 'kanbanlite'
 /** Shown in the status row and in the Sync toast, so every board tells you which build it runs. */
-const VERSION = '9.15'
+const VERSION = '9.16'
 /** Every useSyncedState key this widget uses — preserved when pushing state into another instance. */
 const STATE_KEYS = [
   'view',
@@ -1666,7 +1666,7 @@ function Widget() {
       {
         itemType: 'action',
         propertyName: 'rebuildAll',
-        tooltip: `Rebuild all boards with latest code (v${VERSION})`,
+        tooltip: `Rebuild other boards as copies of this one (v${VERSION})`,
       },
     ],
     ({ propertyName, propertyValue }) => {
@@ -1711,12 +1711,24 @@ function Widget() {
     node.remove()
     return copy
   }
-  /** Every board in the file (all pages), this one last because removing our own node ends the handler. Reports n/total and any failure. */
+  /**
+   * Rebuild every other board in the file as a clone of THIS node. A clone runs the same build as its source, so
+   * cloning an old node (what the previous version did) just reproduced the old code; cloning this board — the one
+   * you re-imported — gives every board this build. Each clone keeps the other board's own settings (scope, title,
+   * view, filters…) and takes its tasks from the file store, which every board writes to on each change.
+   */
   const rebuildAllBoards = async () => {
     const api = figma as unknown as { loadAllPagesAsync?: () => Promise<void> }
     try {
       if (api.loadAllPagesAsync) await api.loadAllPagesAsync()
     } catch (_) {}
+    syncWithStore() // this board's maps = the whole file, so the clones start complete
+    commit()
+    const me = (await figma.getNodeByIdAsync(widgetId)) as Cloneable | null
+    if (!me || typeof me.cloneWidget !== 'function') {
+      toast('Could not reach this widget node')
+      return
+    }
     const all: Cloneable[] = []
     const seen: Record<string, true> = {}
     const pages = (figma.root.children as PageNode[]).length ? (figma.root.children as PageNode[]) : [figma.currentPage]
@@ -1727,26 +1739,35 @@ function Widget() {
       } catch (_) {}
       for (const n of found) if (!seen[n.id]) (seen[n.id] = true), all.push(n as Cloneable)
     }
-    const me = all.find((n) => n.id === widgetId) ?? ((await figma.getNodeByIdAsync(widgetId)) as Cloneable | null)
     const others = all.filter((n) => n.id !== widgetId)
-    const total = others.length + (me ? 1 : 0)
+    const total = others.length
+    if (!total) {
+      figma.notify(`No other boards found in this file — this one runs v${VERSION}`)
+      return
+    }
     let ok = 0
     const failed: string[] = []
     for (const n of others) {
       try {
-        if (cloneInPlace(n)) ok++
-        else failed.push(`${n.name || n.id}: not a widget`)
+        const prev = ((n as unknown as { widgetSyncedState?: Record<string, unknown> }).widgetSyncedState || {}) as Record<string, unknown>
+        const overrides: Record<string, unknown> = {}
+        for (const k of STATE_KEYS) if (k in prev) overrides[k] = prev[k]
+        overrides.lastSyncedVersion = lastSyncedVersion
+        const copy = me.cloneWidget(overrides, {})
+        const parent = n.parent
+        if (parent && 'insertChild' in parent) parent.insertChild(parent.children.indexOf(n) + 1, copy)
+        copy.x = n.x
+        copy.y = n.y
+        n.remove()
+        ok++
       } catch (e) {
         failed.push(`${n.name || n.id}: ${(e as Error).message || String(e)}`)
       }
       figma.notify(`Rebuilding boards… ${ok}/${total}`, { timeout: 450 })
     }
-    const summary = `Rebuilt ${ok + (me ? 1 : 0)}/${total} board${total === 1 ? '' : 's'} · Kanban Lite v${VERSION}${failed.length ? ` · failed: ${failed.join('; ')}` : ''} — teammates see it after they reload the file`
-    figma.notify(summary, { timeout: failed.length ? 9000 : 5000 })
-    if (!me) return
-    const copy = cloneInPlace(me)
-    if (copy) figma.currentPage.selection = [copy]
+    figma.notify(`Rebuilt ${ok}/${total} other board${total === 1 ? '' : 's'} as copies of this one · Kanban Lite v${VERSION}${failed.length ? ` · failed: ${failed.join('; ')}` : ''} — teammates see it after they reload the file`, { timeout: failed.length ? 9000 : 5000 })
   }
+
   const archiveOld = () => {
     const old = done.filter((t) => t.completedAt && ageInDays(t.completedAt) >= 14).map((t) => t.id)
     if (old.length) patchMany(old, { archived: true })
