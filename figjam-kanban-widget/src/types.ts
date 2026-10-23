@@ -26,6 +26,8 @@ export interface Task {
   priority: Priority | null
   /** Project / topic labels, free text, coloured deterministically. */
   labels?: string[]
+  /** Attached links (URL + optional title), added through the link dialog so pasted rich text keeps its URL. */
+  links?: Array<{ url: string; title?: string }>
   subtasks?: Subtask[]
   /** Flagged for the next team sync; optional talking point. */
   discuss?: boolean

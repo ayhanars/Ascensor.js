@@ -7,7 +7,8 @@ export const C = {
   surface: '#F3F4F6',
   surfaceAlt: '#E9EAEE',
   border: '#E5E7EB',
-  borderStrong: '#CBD0D8',
+  /** Control borders: ≈3:1 on white (chips, buttons, inputs, checkboxes). */
+  borderStrong: '#8B93A1',
   text: '#111827',
   muted: '#6B7280',
   /** For 9–10px chip text on grey: 7:1 on #F3F4F6. */
@@ -145,6 +146,8 @@ export type IconName =
   | 'users'
   | 'sticky'
   | 'refresh'
+  | 'link'
+  | 'swap'
 
 const PATHS: Record<IconName, string> = {
   plus: '<path d="M12 5v14M5 12h14"/>',
@@ -171,6 +174,8 @@ const PATHS: Record<IconName, string> = {
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-5-6.3"/>',
   sticky: '<path d="M4 4h16v10l-6 6H4z"/><path d="M14 20v-6h6"/>',
   refresh: '<path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5"/>',
+  swap: '<path d="M4 8h13M13 4l4 4-4 4"/><path d="M20 16H7M11 12l-4 4 4 4"/>',
   list: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/>',
 }
 

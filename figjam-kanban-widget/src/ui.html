@@ -104,6 +104,20 @@
     </div>
   </div>
 
+  <!-- Add a link -->
+  <div id="link-mode" class="hidden">
+    <div class="task" id="link-task">Add a link</div>
+    <p class="hint">Paste a link here (Teams, Slack, Jira, Figma…). Pasting into this window keeps the real address even when the clipboard carries the message title.</p>
+    <input type="text" id="link-url" placeholder="https://…" autocomplete="off" spellcheck="false" />
+    <input type="text" id="link-title" placeholder="Title (optional)" autocomplete="off" />
+    <div class="status" id="link-status"></div>
+    <div class="row">
+      <span class="spacer"></span>
+      <button id="link-cancel">Cancel</button>
+      <button class="primary" id="link-go" disabled>Attach link</button>
+    </div>
+  </div>
+
   <!-- Confetti -->
   <div id="confetti-mode" class="hidden">
     <canvas id="confetti" width="320" height="200"></canvas>
@@ -142,6 +156,11 @@
     }
     if (m.type === 'import-init') {
       $('import-mode').classList.remove('hidden')
+    }
+    if (m.type === 'link-init') {
+      $('link-mode').classList.remove('hidden')
+      $('link-task').innerHTML = (m.title ? escapeHtml(m.title) : 'New task') + ' <span>· add a link</span>'
+      $('link-url').focus()
     }
     if (m.type === 'confetti-init') {
       document.body.classList.add('confetti')
@@ -205,6 +224,36 @@
   $('paste').addEventListener('input', () => tryParse($('paste').value))
   $('import-go').onclick = () => { if (parsed) send({ type: 'import', tasks: parsed.tasks, people: parsed.people }) }
   $('import-cancel').onclick = () => send({ type: 'cancel' })
+  // --- link
+  const urlRe = /https?:\/\/[^\s<>"']+/i
+  const checkLink = () => {
+    const m = urlRe.exec($('link-url').value.trim())
+    $('link-go').disabled = !m
+    $('link-status').textContent = m ? 'Will attach: ' + m[0].slice(0, 70) + (m[0].length > 70 ? '…' : '') : ''
+  }
+  $('link-url').addEventListener('paste', (e) => {
+    const cd = e.clipboardData
+    if (!cd) return
+    const html = cd.getData('text/html') || ''
+    const plain = cd.getData('text/plain') || ''
+    let url = null, title = ''
+    const a = /<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(html)
+    if (a) { url = a[1].replace(/&amp;/g, '&'); title = a[2].replace(/<[^>]+>/g, '').trim() }
+    const p = urlRe.exec(plain)
+    if (!url && p) url = p[0]
+    if (!url) return
+    e.preventDefault()
+    $('link-url').value = url
+    if (title && title !== url && !$('link-title').value) $('link-title').value = title
+    checkLink()
+  })
+  $('link-url').addEventListener('input', checkLink)
+  const sendLink = () => { const m = urlRe.exec($('link-url').value.trim()); if (m) send({ type: 'link', url: m[0], title: $('link-title').value.trim() }) }
+  $('link-go').onclick = sendLink
+  $('link-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendLink() })
+  $('link-title').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendLink() })
+  $('link-cancel').onclick = () => send({ type: 'cancel' })
+
   // --- confetti
   const runConfetti = (ms) => {
     const cv = $('confetti'), ctx = cv.getContext('2d'), W = cv.width, H = cv.height

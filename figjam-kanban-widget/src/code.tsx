@@ -71,6 +71,33 @@ const linksIn = (text: string): string[] => {
   return out
 }
 /** Short, readable form of a URL for a link chip: host plus the start of the path. */
+/** Readable title for a URL: Teams links carry team/channel names, otherwise the host. */
+const titleForUrl = (u: string): string => {
+  const q = (name: string): string | null => {
+    const m = new RegExp('[?&]' + name + '=([^&#]*)').exec(u)
+    if (!m) return null
+    try {
+      return decodeURIComponent(m[1].replace(/\+/g, ' '))
+    } catch (_) {
+      return m[1]
+    }
+  }
+  const host = (/^https?:\/\/([^/?#]+)/i.exec(u) || [])[1] || u
+  if (/teams\.microsoft\.com/i.test(host)) {
+    const team = q('teamName')
+    const channel = q('channelName')
+    if (team || channel) return `Teams · ${[team, channel].filter(Boolean).join(' › ')}`
+    return 'Teams message'
+  }
+  return host.replace(/^www\./, '')
+}
+type TaskLink = { url: string; title?: string }
+const linksOf = (t: Task): TaskLink[] => {
+  const out: TaskLink[] = (t.links ?? []).slice()
+  for (const u of linksIn(`${t.title}\n${t.description || ''}`)) if (!out.some((l) => l.url === u)) out.push({ url: u })
+  return out
+}
+const linkLabel = (l: TaskLink): string => l.title || titleForUrl(l.url)
 const linkText = (u: string): string => {
   const m = /^https?:\/\/([^/?#]+)([^?#]*)/i.exec(u)
   if (!m) return u
@@ -251,13 +278,12 @@ function Btn(props: { label?: string; icon?: IconName; onClick: Click; tone?: 'd
   const hover = tone === 'primary' ? C.accentHover : tone === 'danger' ? '#FECACA' : tone === 'dangerGhost' ? C.dangerSoft : C.surfaceAlt
   const pad = props.small ? { vertical: px(3), horizontal: px(7) } : { vertical: px(6), horizontal: px(10) }
   return (
-    <AutoLayout direction="horizontal" padding={pad} cornerRadius={px(8)} fill={fill} stroke={tone === 'default' ? C.border : undefined} strokeWidth={1} verticalAlignItems="center" onClick={props.onClick} hoverStyle={{ fill: hover }} tooltip={props.tooltip}>
+    <AutoLayout direction="horizontal" spacing={px(5)} padding={pad} cornerRadius={px(8)} fill={fill} stroke={tone === 'default' ? C.borderStrong : undefined} strokeWidth={1} verticalAlignItems="center" onClick={props.onClick} hoverStyle={{ fill: hover }} tooltip={props.tooltip}>
+      {props.icon ? <Icon name={props.icon} color={color} size={props.small ? 11 : 13} /> : null}
       {props.label ? (
         <Label size={props.small ? 10 : 11} weight={600} color={color}>
           {props.label}
         </Label>
-      ) : props.icon ? (
-        <Icon name={props.icon} color={color} size={props.small ? 11 : 12} />
       ) : null}
     </AutoLayout>
   )
@@ -294,7 +320,7 @@ function Chip(props: { label: string; active?: boolean; onClick: Click; color?: 
       padding={props.small ? { vertical: px(2), horizontal: px(7) } : { vertical: px(3), horizontal: px(8) }}
       cornerRadius={px(999)}
       fill={active ? soft : C.bg}
-      stroke={active ? color : C.border}
+      stroke={active ? color : C.borderStrong}
       strokeWidth={1}
       strokeDashPattern={props.dashed && !active ? [3, 2] : undefined}
       verticalAlignItems="center"
@@ -356,6 +382,21 @@ function Progress({ done, total, width, onClick, tooltip }: { done: number; tota
 // ---------------------------------------------------------------------------
 // Date picker (iframe) – the only part that needs an iframe UI
 // ---------------------------------------------------------------------------
+/** Link dialog in the iframe: pasting there keeps the real URL even when the clipboard carries rich text (Teams, Slack, Jira…). */
+function pickLink(taskTitle: string, onPick: (url: string, title: string) => void): Promise<void> {
+  return new Promise<void>((resolve) => {
+    figma.showUI(__html__, { width: 440, height: 250, title: 'Add a link' })
+    figma.ui.postMessage({ type: 'link-init', title: taskTitle })
+    figma.ui.onmessage = (msg: { type: string; url?: string; title?: string }) => {
+      if (msg && msg.type === 'link' && msg.url) onPick(msg.url, (msg.title ?? '').trim())
+      if (msg && (msg.type === 'link' || msg.type === 'cancel')) {
+        figma.closePlugin()
+        resolve()
+      }
+    }
+  })
+}
+
 function pickDate(title: string, current: string | null, onPick: (iso: string | null) => void): Promise<void> {
   return new Promise<void>((resolve) => {
     figma.showUI(__html__, { width: 320, height: 236, title: 'Due date' })
@@ -455,7 +496,7 @@ const hoursText = (t: Task): string => {
   return parts.join('; ')
 }
 function tasksToCsv(list: Task[]): string {
-  const header = ['id', 'title', 'description', 'status', 'assignee', 'co_assignees', 'hours', 'due', 'priority', 'labels', 'subtasks_done', 'subtasks_total', 'subtasks', 'created_at', 'updated_at', 'completed_at', 'archived']
+  const header = ['id', 'title', 'description', 'status', 'assignee', 'co_assignees', 'hours', 'links', 'due', 'priority', 'labels', 'subtasks_done', 'subtasks_total', 'subtasks', 'created_at', 'updated_at', 'completed_at', 'archived']
   const rows = list.map((t) => {
     const subs = subtasksOf(t)
     return [
@@ -466,6 +507,7 @@ function tasksToCsv(list: Task[]): string {
       t.assignee,
       assigneesOf(t).slice(1).join('; '),
       hoursText(t),
+      linksOf(t).map((l) => (l.title ? `${l.title} <${l.url}>` : l.url)).join('; '),
       t.due ?? '',
       t.priority ? PRIORITY_LABEL[t.priority] : '',
       labelsOf(t).join('; '),
@@ -550,6 +592,7 @@ function coerceTask(raw: any): Task | null {
     due: typeof raw.due === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.due) ? raw.due : null,
     priority,
     labels: Array.isArray(raw.labels) ? raw.labels.filter((l: any) => typeof l === 'string' && l).slice(0, 20) : [],
+    links: Array.isArray(raw.links) ? raw.links.filter((l: any) => l && typeof l.url === 'string' && /^https?:\/\//i.test(l.url)).map((l: any) => ({ url: l.url, title: typeof l.title === 'string' && l.title ? l.title : undefined })).slice(0, 10) : [],
     subtasks: Array.isArray(raw.subtasks)
       ? raw.subtasks.filter((x: any) => x && typeof x.title === 'string').map((x: any) => ({ id: typeof x.id === 'string' ? x.id : uid(), title: x.title, done: !!x.done }))
       : [],
@@ -583,7 +626,7 @@ function Widget() {
   const [filters, setFilters] = useSyncedState<Filters>('filters', EMPTY_FILTERS)
   const [filtersOpen, setFiltersOpen] = useSyncedState<boolean>('filtersOpen', false)
   const [search, setSearch] = useSyncedState<string>('search', '')
-  const [sort, setSort] = useSyncedState<SortMode>('sort', 'smart')
+  const [sort, setSort] = useSyncedState<SortMode>('sort', 'priority')
   const [showArchived, setShowArchived] = useSyncedState<boolean>('showArchived', false)
   const [doneSearch, setDoneSearch] = useSyncedState<string>('doneSearch', '')
   const [staleDays, setStaleDays] = useSyncedState<number>('staleDays', 7)
@@ -1047,6 +1090,18 @@ function Widget() {
     }
     toggleAssignee(id, name)
   }
+  const addLink = (id: string, url: string, title: string) => {
+    const t = tasks.get(id)
+    if (!t) return
+    const cur = (t.links ?? []).filter((l) => l.url !== url)
+    patch(id, { links: cur.concat({ url, title: title || undefined }).slice(0, 10) })
+    toast('Link attached')
+  }
+  const removeLink = (id: string, url: string) => {
+    const t = tasks.get(id)
+    if (!t) return
+    patch(id, { links: (t.links ?? []).filter((l) => l.url !== url) })
+  }
   /** Hours for one person and one submission period; 0 clears the entry. */
   const setTaskHours = (id: string, person: string, key: string, h: number) => {
     const t = tasks.get(id)
@@ -1326,15 +1381,8 @@ function Widget() {
 
   const compare = (a: Task, b: Task): number => {
     if (sort === 'created') return b.createdAt - a.createdAt
-    if (sort === 'smart') {
-      // overdue or due today first, then priority, then due date (undated last), then oldest first
-      const ua = a.due && a.due <= today ? 0 : 1
-      const ub = b.due && b.due <= today ? 0 : 1
-      if (ua !== ub) return ua - ub
-      const pr = PRIORITY_RANK[a.priority ?? 'none'] - PRIORITY_RANK[b.priority ?? 'none']
-      if (pr !== 0) return pr
-    }
-    if (sort === 'priority') {
+    if (sort === 'priority' || sort === 'smart') {
+      // top priority first, always; due date (undated last) only breaks ties
       const pr = PRIORITY_RANK[a.priority ?? 'none'] - PRIORITY_RANK[b.priority ?? 'none']
       if (pr !== 0) return pr
     }
@@ -1414,11 +1462,10 @@ function Widget() {
         itemType: 'dropdown',
         propertyName: 'sort',
         tooltip: 'Sort cards',
-        selectedOption: sort,
+        selectedOption: sort === 'smart' ? 'priority' : sort,
         options: [
-          { option: 'smart', label: 'Sort: priority, then due' },
+          { option: 'priority', label: 'Sort: priority, then due' },
           { option: 'due', label: 'Sort: due date' },
-          { option: 'priority', label: 'Sort: priority only' },
           { option: 'created', label: 'Sort: newest' },
         ],
       },
@@ -1549,7 +1596,7 @@ function Widget() {
   function PersonChip({ name, onClick, active, tooltip, label, danger }: { name: string; onClick: Click; active?: boolean; tooltip?: string; label?: string; danger?: boolean }) {
     const fg = danger ? C.danger : active ? C.accent : C.text
     return (
-      <AutoLayout direction="horizontal" spacing={px(5)} padding={{ top: px(2), bottom: px(2), left: px(2), right: px(8) }} cornerRadius={px(999)} fill={danger ? C.dangerSoft : active ? C.accentSoft : C.bg} stroke={danger ? C.danger : active ? C.accent : C.border} verticalAlignItems="center" onClick={onClick} hoverStyle={danger ? { fill: C.dangerSoft, stroke: C.danger } : { fill: C.accentSoft, stroke: C.accent }} tooltip={tooltip}>
+      <AutoLayout direction="horizontal" spacing={px(5)} padding={{ top: px(2), bottom: px(2), left: px(2), right: px(8) }} cornerRadius={px(999)} fill={danger ? C.dangerSoft : active ? C.accentSoft : C.bg} stroke={danger ? C.danger : active ? C.accent : C.borderStrong} verticalAlignItems="center" onClick={onClick} hoverStyle={danger ? { fill: C.dangerSoft, stroke: C.danger } : { fill: C.accentSoft, stroke: C.accent }} tooltip={tooltip}>
         <Avatar name={name} photo={photoOf(name)} size={16} />
         <Label size={10} weight={600} color={fg}>
           {label ?? shortName(name, 18)}
@@ -1590,7 +1637,7 @@ function Widget() {
     const labels = labelsOf(task)
     const due = task.due ? dueInfo(task.due) : null
     const openMe = () => openCard(task.id)
-    const cardLink = open ? null : linksIn(`${task.title}\n${task.description || ''}`)[0] || null
+    const cardLink = open ? null : linksOf(task)[0] || null
 
     return (
       <AutoLayout
@@ -1691,8 +1738,8 @@ function Widget() {
             </Label>
           ) : null}
           {!open && cardLink ? (
-            <Label size={10} weight={600} color={C.accentText} underline href={cardLink} hover={C.accent}>
-              {`↗ ${linkText(cardLink).split('/')[0]}`}
+            <Label size={10} weight={600} color={C.accentText} underline href={cardLink.url} hover={C.accent}>
+              {`↗ ${shortName(linkLabel(cardLink), 28)}`}
             </Label>
           ) : null}
           <StatusControl task={task} showLabel={showStatus} />
@@ -1731,7 +1778,7 @@ function Widget() {
     const subsDone = subs.filter((s) => s.done).length
     const labels = labelsOf(task)
     const late = isLate(task)
-    const links = linksIn(`${task.title}\n${task.description || ''}`)
+    const links = linksOf(task)
     const assigned = assigneesOf(task)
     const confirmingSelf = confirmRemoveId === task.id
     const offMyBoard = !!owner && !isAssigned(task, owner)
@@ -1757,15 +1804,17 @@ function Widget() {
           inputBehavior="multiline"
           inputFrameProps={{ padding: { vertical: px(6), horizontal: px(8) }, fill: C.bg, stroke: C.borderStrong, cornerRadius: px(8) }}
         />
-        {links.length ? (
-          <AutoLayout direction="horizontal" spacing={px(6)} wrap width="fill-parent" verticalAlignItems="center">
-            {links.map((u) => (
-              <Label key={u} size={10} weight={600} color={C.accentText} underline href={u} hover={C.accent}>
-                {`↗ ${linkText(u)}`}
+        <AutoLayout direction="horizontal" spacing={px(6)} wrap width="fill-parent" verticalAlignItems="center">
+          {links.map((l) => (
+            <AutoLayout key={l.url} direction="horizontal" spacing={px(4)} verticalAlignItems="center" padding={{ vertical: px(2), left: px(7), right: px(4) }} cornerRadius={px(999)} fill={C.accentSoft}>
+              <Label size={10} weight={600} color={C.accentText} underline href={l.url} hover={C.accent} truncate width={Math.min(220, Math.max(60, linkLabel(l).length * 6))}>
+                {`↗ ${linkLabel(l)}`}
               </Label>
-            ))}
-          </AutoLayout>
-        ) : null}
+              {(task.links ?? []).some((x) => x.url === l.url) ? <GlyphBtn glyph="×" size={14} onClick={() => removeLink(task.id, l.url)} /> : null}
+            </AutoLayout>
+          ))}
+          <Chip small label="+ Add link" onClick={() => pickLink(task.title, (url, title) => addLink(task.id, url, title))} />
+        </AutoLayout>
 
         {showStatus ? (
           <PropRow label="Status">
@@ -2688,16 +2737,16 @@ function Widget() {
           inputBehavior="truncate"
           inputFrameProps={{ padding: 0 }}
         />
-        <Btn label="Sync" onClick={refresh} />
-        <Btn label="Export" onClick={() => exportDialog(all, everything, people.values(), boardTitle)} />
-        <Btn label="Import" onClick={importBackup} />
-        <Btn label="From stickies" onClick={importStickies} />
-        <Btn label={owner ? 'Switch to team board' : 'Make this my board'} onClick={owner ? makeTeam : makeMine} />
+        <Btn icon="refresh" label="Sync" onClick={refresh} />
+        <Btn icon="download" label="Export" onClick={() => exportDialog(all, everything, people.values(), boardTitle)} />
+        <Btn icon="upload" label="Import" onClick={importBackup} />
+        <Btn icon="sticky" label="From stickies" onClick={importStickies} />
+        <Btn icon={owner ? 'users' : 'user'} label={owner ? 'Switch to team board' : 'Make this my board'} onClick={owner ? makeTeam : makeMine} />
         <Btn label="+ Add task" tone="primary" onClick={addTask} />
       </AutoLayout>
 
       {/* Row 2: status line under the name */}
-      <AutoLayout direction="horizontal" width={BOARD_W} spacing={px(4)} verticalAlignItems="center" padding={{ left: owner ? px(38) : 0 }} wrap>
+      <AutoLayout direction="horizontal" width={BOARD_W} spacing={px(4)} verticalAlignItems="center" wrap>
         <Pill text={owner ? 'My board' : 'Team board'} color={owner ? C.accent : C.muted} fill={owner ? C.accentSoft : C.surface} size={10} />
         <Pill text={liveSync ? 'Live sync' : 'Manual sync'} color={liveSync ? C.success : C.muted} fill={liveSync ? C.successSoft : C.surface} size={10} onClick={() => setLive(!liveSync)} tooltip={liveSync ? 'Switch to manual sync' : 'Switch to live sync'} />
         <Pill text={`${active.length} active`} color={C.muted} fill={C.surface} size={10} />
