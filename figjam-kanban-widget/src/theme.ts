@@ -9,6 +9,8 @@ export const C = {
   border: '#E5E7EB',
   /** Control borders: ≈3:1 on white (chips, buttons, inputs, checkboxes). */
   borderStrong: '#8B93A1',
+  /** Chip borders: a step lighter than controls, still clearly visible on white. */
+  borderChip: '#B4BAC6',
   text: '#111827',
   muted: '#6B7280',
   /** For 9–10px chip text on grey: 7:1 on #F3F4F6. */

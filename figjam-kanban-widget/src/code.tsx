@@ -278,7 +278,7 @@ function Btn(props: { label?: string; icon?: IconName; onClick: Click; tone?: 'd
   const hover = tone === 'primary' ? C.accentHover : tone === 'danger' ? '#FECACA' : tone === 'dangerGhost' ? C.dangerSoft : C.surfaceAlt
   const pad = props.small ? { vertical: px(3), horizontal: px(7) } : { vertical: px(6), horizontal: px(10) }
   return (
-    <AutoLayout direction="horizontal" spacing={px(5)} padding={pad} cornerRadius={px(8)} fill={fill} stroke={tone === 'default' ? C.borderStrong : undefined} strokeWidth={1} verticalAlignItems="center" onClick={props.onClick} hoverStyle={{ fill: hover }} tooltip={props.tooltip}>
+    <AutoLayout direction="horizontal" spacing={px(5)} padding={pad} cornerRadius={px(8)} fill={fill} stroke={tone === 'default' ? C.border : undefined} strokeWidth={1} verticalAlignItems="center" onClick={props.onClick} hoverStyle={{ fill: hover }} tooltip={props.tooltip}>
       {props.icon ? <Icon name={props.icon} color={color} size={props.small ? 11 : 13} /> : null}
       {props.label ? (
         <Label size={props.small ? 10 : 11} weight={600} color={color}>
@@ -320,7 +320,7 @@ function Chip(props: { label: string; active?: boolean; onClick: Click; color?: 
       padding={props.small ? { vertical: px(2), horizontal: px(7) } : { vertical: px(3), horizontal: px(8) }}
       cornerRadius={px(999)}
       fill={active ? soft : C.bg}
-      stroke={active ? color : C.borderStrong}
+      stroke={active ? color : C.borderChip}
       strokeWidth={1}
       strokeDashPattern={props.dashed && !active ? [3, 2] : undefined}
       verticalAlignItems="center"
@@ -1596,7 +1596,7 @@ function Widget() {
   function PersonChip({ name, onClick, active, tooltip, label, danger }: { name: string; onClick: Click; active?: boolean; tooltip?: string; label?: string; danger?: boolean }) {
     const fg = danger ? C.danger : active ? C.accent : C.text
     return (
-      <AutoLayout direction="horizontal" spacing={px(5)} padding={{ top: px(2), bottom: px(2), left: px(2), right: px(8) }} cornerRadius={px(999)} fill={danger ? C.dangerSoft : active ? C.accentSoft : C.bg} stroke={danger ? C.danger : active ? C.accent : C.borderStrong} verticalAlignItems="center" onClick={onClick} hoverStyle={danger ? { fill: C.dangerSoft, stroke: C.danger } : { fill: C.accentSoft, stroke: C.accent }} tooltip={tooltip}>
+      <AutoLayout direction="horizontal" spacing={px(5)} padding={{ top: px(2), bottom: px(2), left: px(2), right: px(8) }} cornerRadius={px(999)} fill={danger ? C.dangerSoft : active ? C.accentSoft : C.bg} stroke={danger ? C.danger : active ? C.accent : C.borderChip} verticalAlignItems="center" onClick={onClick} hoverStyle={danger ? { fill: C.dangerSoft, stroke: C.danger } : { fill: C.accentSoft, stroke: C.accent }} tooltip={tooltip}>
         <Avatar name={name} photo={photoOf(name)} size={16} />
         <Label size={10} weight={600} color={fg}>
           {label ?? shortName(name, 18)}
