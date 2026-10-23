@@ -441,7 +441,7 @@ function pickDate(title: string, current: string | null, onPick: (iso: string | 
 // Figma requires an alphanumeric namespace for shared plugin data.
 const NS = 'kanbanlite'
 /** Shown in the status row and in the Sync toast, so every board tells you which build it runs. */
-const VERSION = '9.14'
+const VERSION = '9.15'
 /** Every useSyncedState key this widget uses — preserved when pushing state into another instance. */
 const STATE_KEYS = [
   'view',
@@ -1665,13 +1665,8 @@ function Widget() {
       },
       {
         itemType: 'action',
-        propertyName: 'rebuild',
-        tooltip: `Rebuild this board with latest code (v${VERSION})`,
-      },
-      {
-        itemType: 'action',
         propertyName: 'rebuildAll',
-        tooltip: 'Rebuild every board on this page',
+        tooltip: `Rebuild all boards with latest code (v${VERSION})`,
       },
     ],
     ({ propertyName, propertyValue }) => {
@@ -1695,8 +1690,6 @@ function Widget() {
         case 'archiveOld':
           archiveOld()
           break
-        case 'rebuild':
-          return rebuildBoard()
         case 'rebuildAll':
           return rebuildAllBoards()
         case 'samples': // not in the menu; kept for the test harness
@@ -1718,24 +1711,41 @@ function Widget() {
     node.remove()
     return copy
   }
-  const rebuildBoard = async () => {
-    const node = (await figma.getNodeByIdAsync(widgetId)) as Cloneable | null
-    const copy = node ? cloneInPlace(node) : null
-    if (!copy) {
-      toast('Could not rebuild this board here')
-      return
-    }
-    figma.currentPage.selection = [copy]
-    figma.notify(`Board rebuilt — now running Kanban Lite v${VERSION}`)
-  }
-  /** Every board on this page, this one last (removing our own node ends the handler). */
+  /** Every board in the file (all pages), this one last because removing our own node ends the handler. Reports n/total and any failure. */
   const rebuildAllBoards = async () => {
-    const nodes = figma.currentPage.findWidgetNodesByWidgetId(figma.widgetId ?? "") as Cloneable[]
-    const others = nodes.filter((n) => n.id !== widgetId)
-    let done = 0
-    for (const n of others) if (cloneInPlace(n)) done++
-    figma.notify(`Rebuilt ${done + 1} board${done ? 's' : ''} on this page with Kanban Lite v${VERSION} — teammates see it after they reload the file`)
-    await rebuildBoard()
+    const api = figma as unknown as { loadAllPagesAsync?: () => Promise<void> }
+    try {
+      if (api.loadAllPagesAsync) await api.loadAllPagesAsync()
+    } catch (_) {}
+    const all: Cloneable[] = []
+    const seen: Record<string, true> = {}
+    const pages = (figma.root.children as PageNode[]).length ? (figma.root.children as PageNode[]) : [figma.currentPage]
+    for (const page of pages) {
+      let found: SceneNode[] = []
+      try {
+        found = page.findWidgetNodesByWidgetId(figma.widgetId ?? '')
+      } catch (_) {}
+      for (const n of found) if (!seen[n.id]) (seen[n.id] = true), all.push(n as Cloneable)
+    }
+    const me = all.find((n) => n.id === widgetId) ?? ((await figma.getNodeByIdAsync(widgetId)) as Cloneable | null)
+    const others = all.filter((n) => n.id !== widgetId)
+    const total = others.length + (me ? 1 : 0)
+    let ok = 0
+    const failed: string[] = []
+    for (const n of others) {
+      try {
+        if (cloneInPlace(n)) ok++
+        else failed.push(`${n.name || n.id}: not a widget`)
+      } catch (e) {
+        failed.push(`${n.name || n.id}: ${(e as Error).message || String(e)}`)
+      }
+      figma.notify(`Rebuilding boards… ${ok}/${total}`, { timeout: 450 })
+    }
+    const summary = `Rebuilt ${ok + (me ? 1 : 0)}/${total} board${total === 1 ? '' : 's'} · Kanban Lite v${VERSION}${failed.length ? ` · failed: ${failed.join('; ')}` : ''} — teammates see it after they reload the file`
+    figma.notify(summary, { timeout: failed.length ? 9000 : 5000 })
+    if (!me) return
+    const copy = cloneInPlace(me)
+    if (copy) figma.currentPage.selection = [copy]
   }
   const archiveOld = () => {
     const old = done.filter((t) => t.completedAt && ageInDays(t.completedAt) >= 14).map((t) => t.id)
@@ -3264,7 +3274,7 @@ function Widget() {
         {blockedCount ? <Pill text={`${blockedCount} blocked`} color={STATUS_COLOR.blocked} fill={STATUS_SOFT.blocked} size={10} /> : null}
         {unassignedCount ? <Pill text={`${unassignedCount} unassigned`} color={C.muted} fill={C.surface} size={10} onClick={() => setFilter('assignee', filters.assignee === '__none__' ? null : '__none__')} /> : null}
         <AutoLayout width="fill-parent" height={px(1)} />
-        <Label size={9} color={C.faint} tooltip="Widget build. If another board shows an older number after you re-imported the manifest, reload the file or use property menu → Rebuild board.">
+        <Label size={9} color={C.faint} tooltip="Widget build. After re-importing the manifest, reload the file or use property menu → Rebuild all boards.">
           {`v${VERSION}`}
         </Label>
       </AutoLayout>
