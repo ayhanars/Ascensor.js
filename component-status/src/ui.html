@@ -172,7 +172,7 @@
   .skipped span { color: var(--text-muted); }
 
   .list {
-    max-height: 200px; overflow-y: auto;
+    max-height: 240px; overflow-y: auto;
     border: 1px solid var(--border-light); border-radius: var(--radius-sm);
   }
   .item {
@@ -182,7 +182,7 @@
   .item:last-child { border-bottom: none; }
   .item.purple { background: var(--purple-bg); }
   .item .name { font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .item .type { color: var(--text-faint); font-size: 11px; flex: none; width: 70px; }
+  .item .type { color: var(--text-faint); font-size: 11px; flex: none; width: 90px; }
   .item .version { font-size: 11px; color: var(--text-muted); flex: none; width: 66px; text-align: right; }
   .item .tag { width: 66px; text-align: center; }
   .tag {
@@ -235,7 +235,7 @@
   .summary li { margin: 2px 0; color: var(--text); }
   .summary li .where { color: var(--text-faint); }
   .map-row {
-    display: grid; grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr); align-items: center; gap: 6px;
+    display: grid; grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1.2fr); align-items: center; gap: 8px;
     padding: 5px 0; border-bottom: 1px solid var(--border-light);
   }
   .map-row:last-child { border-bottom: none; }
@@ -249,7 +249,7 @@
     padding: 0 6px;
   }
   .map-row select.mapped { border-color: var(--success); }
-  .map-list { margin-top: 6px; max-height: 220px; overflow-y: auto; }
+  .map-list { margin-top: 6px; max-height: 300px; overflow-y: auto; }
   .map-row.suggested { background: rgba(201, 147, 47, 0.08); border-radius: var(--radius-sm); padding-left: 4px; padding-right: 4px; }
   .map-row .suggest { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--warning); margin-top: 2px; }
   .map-row .suggest .link { color: var(--warning); font-weight: 600; font-size: 10px; }

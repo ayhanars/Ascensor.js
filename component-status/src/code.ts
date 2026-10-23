@@ -1570,7 +1570,7 @@ async function generateTable(
 // Plugin entry
 // ---------------------------------------------------------------------------
 
-figma.showUI(__html__, { width: 420, height: 560, themeColors: true });
+figma.showUI(__html__, { width: 600, height: 680, themeColors: true });
 
 figma.ui.onmessage = async (msg: UIMessage) => {
   try {
