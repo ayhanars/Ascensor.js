@@ -47,7 +47,7 @@ npm run typecheck
 ```
 
 Requires Node 18+. After rebuilding, Figma picks up the new `dist/code.js` automatically
-on the next widget interaction (or re-import the manifest).
+on the next widget interaction (or re-import the manifest). **Boards that were already on the canvas keep running the code they were created with until the file is reloaded** — after re-importing, press reload in the browser (or reopen the file) and every board picks up the new build. If one still shows an older number in the `v9.x` label of its status row, use property menu → **Rebuild board with latest code**: it clones the board with all its tasks and settings into a fresh widget node (fresh nodes always run the current code) and removes the old one.
 
 ## How it maps to the brief
 
