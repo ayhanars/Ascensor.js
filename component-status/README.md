@@ -153,10 +153,18 @@ the same file:
   "Card Two Line [Figma 5318:33842]": "v1.0.0", // Figma: 5318:33842; APIs: CocoCardTwoLineBadge
   ```
 
-  Full-line `//` or `#` comments are ignored. A Figma node id (`66:1117` or
+  Entries may also be objects, as in the export from the code base:
+
+  ```json
+  "Badge": { "version": "v1.0.0", "componentId": "66:1117", "api": "CocoBadge" }
+  ```
+
+  All three shapes can be mixed, even inside one file. Full-line `//` or `#`
+  comments are ignored. A Figma node id (`66:1117` or
   `66-1117`) can come from a `Figma:` / `Figma-ID:` label or from a
-  `[Figma …]` suffix in the key; other ids in the comment (such as "File
-  Figma refs differ from metadata: 45:1018") are tried as fallbacks. Ids are
+  `[Figma …]` suffix in the key or a `componentId` field; other ids for the
+  same name (the other platform's `componentId`, or "File Figma refs differ
+  from metadata: 45:1018" in a comment) are tried as fallbacks. Ids are
   resolved against this file first, including ids that point at a variant or
   a layer inside a component, then against linked files. A resolved id maps
   the JSON name automatically and the row says "via Figma-ID"; an id nobody
@@ -236,7 +244,8 @@ component-status/
 ├── samples/
 │   ├── coba.json
 │   ├── purple.json
-│   └── purple-with-ids.json   annotated export with # Figma-ID comments
+│   ├── purple-with-ids.json   annotated export with # Figma-ID comments
+│   └── coba-objects.json      export with { version, componentId, api } entries
 └── dist/code.js       build output (generated, not committed)
 ```
 

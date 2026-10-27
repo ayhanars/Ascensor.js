@@ -389,7 +389,7 @@
         </div>
       </div>
       <div class="summary hidden" id="summary"></div>
-      <div class="note">One file per brand with <span class="mono">platforms.ios</span>, <span class="mono">android</span> and/or <span class="mono">generic</span>. <span class="mono"># Figma-ID</span> comments are used to map automatically.</div>
+      <div class="note">One file per brand with <span class="mono">platforms.ios</span>, <span class="mono">android</span> and/or <span class="mono">generic</span>. Figma ids from comments or <span class="mono">componentId</span> fields map automatically.</div>
     </div>
   </section>
 
@@ -984,28 +984,23 @@
     function recordKey(rawKey, comment) {
       var info = {};
       var km = keyRe.exec(rawKey);
+      var key = normalizeName(rawKey);
+      var info = meta[key] || (meta[key] = {});
       if (km) {
         info.cleanName = km[1].trim();
-        var kid = /(\d+)[:\-](\d+)/.exec(km[2]);
-        if (kid) info.figmaId = kid[1] + ":" + kid[2];
+        addFigmaId(info, normalizeNodeId(km[2]));
       }
       if (comment) {
         var idm = /Figma(?:[\s-]*ID)?\s*[:=]\s*(\d+)[:\-](\d+)/i.exec(comment);
-        if (idm && !info.figmaId) info.figmaId = idm[1] + ":" + idm[2];
+        if (idm) addFigmaId(info, idm[1] + ":" + idm[2]);
         var fm = /\bFile\s*[:=]\s*(\S+)/i.exec(comment);
         if (fm) info.file = fm[1].trim();
         var am = /\bAPIs?\s*[:=]\s*([^;]+)/i.exec(comment);
         if (am) info.apis = am[1].trim();
         // Every other node id in the comment is a fallback (e.g. "File Figma refs differ from metadata: 191:3812").
-        var alt = [], mm;
-        while ((mm = nodeIdRe.exec(comment)) !== null) {
-          var cand = mm[1] + ":" + mm[2];
-          if (cand !== info.figmaId && alt.indexOf(cand) === -1) alt.push(cand);
-        }
-        if (alt.length) info.altIds = alt;
+        var mm;
+        while ((mm = nodeIdRe.exec(comment)) !== null) addFigmaId(info, mm[1] + ":" + mm[2]);
       }
-      var key = normalizeName(rawKey);
-      meta[key] = Object.assign(meta[key] || {}, info);
     }
     var out = lines.map(function (line) {
       var m = entryRe.exec(line);
@@ -1017,7 +1012,53 @@
       return line;
     });
     var cleaned = out.join("\n").replace(/,(\s*[}\]])/g, "$1");
-    return { data: JSON.parse(cleaned), meta: meta, annotated: annotated };
+    var data = JSON.parse(cleaned);
+    if (flattenEntryObjects(data, meta)) annotated = true;
+    return { data: data, meta: meta, annotated: annotated };
+  }
+
+  function normalizeNodeId(value) {
+    var m = /(\d+)[:\-](\d+)/.exec(String(value || ""));
+    return m ? m[1] + ":" + m[2] : "";
+  }
+
+  /** Record a Figma id for a name; a second, different id (e.g. from the other platform) becomes a fallback. */
+  function addFigmaId(info, id) {
+    if (!id) return;
+    if (!info.figmaId) { info.figmaId = id; return; }
+    if (info.figmaId === id) return;
+    info.altIds = info.altIds || [];
+    if (info.altIds.indexOf(id) === -1) info.altIds.push(id);
+  }
+
+  /**
+   * Third shape: entries as objects.
+   *   "Badge": { "version": "v1.0.0", "componentId": "66:1117", "api": "CocoBadge" }
+   * The id and api go into `meta`; the value is replaced by the version string
+   * (or null) so the rest of the plugin sees the plain format. Returns true
+   * when any entry was an object.
+   */
+  function flattenEntryObjects(data, meta) {
+    var found = false;
+    if (!isObject(data) || !isObject(data.platforms)) return false;
+    Object.keys(data.platforms).forEach(function (platform) {
+      var map = data.platforms[platform];
+      if (!isObject(map)) return;
+      Object.keys(map).forEach(function (name) {
+        var value = map[name];
+        if (!isObject(value)) return;
+        found = true;
+        var key = normalizeName(name);
+        var info = meta[key] || (meta[key] = {});
+        addFigmaId(info, normalizeNodeId(value.componentId || value.figmaId || value.figmaID || value.nodeId));
+        var api = value.api || value.apis || value.API;
+        if (api) info.apis = info.apis ? (info.apis.indexOf(api) === -1 ? info.apis + ", " + api : info.apis) : String(api);
+        if (value.file) info.file = String(value.file);
+        var version = value.version !== undefined ? value.version : null;
+        map[name] = version === null || typeof version === "string" ? version : String(version);
+      });
+    });
+    return found;
   }
 
   function validateFile(text, expectedBrand) {
@@ -1026,7 +1067,7 @@
       parsed = parseAnnotatedJson(text);
       data = parsed.data;
     } catch (e) {
-      return { error: "Not valid JSON (// and # comments with Figma ids are fine)." };
+      return { error: "Not valid JSON (// and # comments and { version, componentId, api } entries are fine)." };
     }
     if (!isObject(data)) return { error: "The top level must be an object." };
     if (data.brand !== "coba" && data.brand !== "purple") {
@@ -1050,7 +1091,7 @@
       for (var j = 0; j < keys.length; j++) {
         var value = map[keys[j]];
         if (value !== null && typeof value !== "string") {
-          return { error: '"platforms.' + platform + '.' + keys[j] + '" must be a version string, "n/a" or null.' };
+          return { error: '"platforms.' + platform + '.' + keys[j] + '" must be a version string, "n/a", null or an object with "version".' };
         }
       }
     }

@@ -1,0 +1,1344 @@
+{
+    "brand": "coba",
+    "platforms": {
+        "android": {
+            "Action Button Icon": {
+                "version": "v1.0.0",
+                "componentId": "2:211",
+                "api": "CocoActionButtonIcon"
+            },
+            "Action Button Image": {
+                "version": "v1.0.0",
+                "componentId": "6:1767",
+                "api": "CocoActionButtonImage"
+            },
+            "Action Button Month Year": {
+                "version": "v1.0.0",
+                "componentId": "1175:3051",
+                "api": "CocoActionButtonMonthYear"
+            },
+            "Action Button Text": {
+                "version": "v1.0.0",
+                "componentId": "6:1037",
+                "api": "CocoActionButtonText"
+            },
+            "Action Cards": {
+                "version": "v1.0.0",
+                "componentId": "29028:60668",
+                "api": "CoCoActionCards"
+            },
+            "Action Chips Group": {
+                "version": "v1.0.0",
+                "componentId": "2060:13654",
+                "api": "CocoActionChipsGroup"
+            },
+            "Action Grid": {
+                "version": "v1.0.0",
+                "componentId": "25491:51171",
+                "api": "CocoActionGrid"
+            },
+            "Action Menu Choice Button": {
+                "version": "v1.0.0",
+                "componentId": "51703:10844",
+                "api": "CocoActionMenuChoiceButton"
+            },
+            "Actions Chip": {
+                "version": "v1.0.0",
+                "componentId": "530:1747",
+                "api": "CocoActionsChip"
+            },
+            "Badge": {
+                "version": "v1.0.0",
+                "componentId": "66:1117",
+                "api": "CocoBadge"
+            },
+            "Bank Card": {
+                "version": "v1.3.3",
+                "componentId": "1086:3804",
+                "api": "CocoBankCard"
+            },
+            "Bank Card Carousel": {
+                "version": "v1.1.0",
+                "componentId": "301:3684",
+                "api": "CocoBankCardCarousel"
+            },
+            "Basic Dialog": {
+                "version": "v1.0.0",
+                "componentId": "41462:55499",
+                "api": "CocoBasicDialog"
+            },
+            "Basic Popover": {
+                "version": "v1.0.0",
+                "componentId": "3242:16517",
+                "api": "CocoBasicPopover"
+            },
+            "Bottom Navigation": {
+                "version": "v1.1.1",
+                "componentId": "191:4313",
+                "api": "CocoBottomNavigation"
+            },
+            "Bullet Points": {
+                "version": "v1.0.0",
+                "componentId": "19279:46340",
+                "api": "CocoBulletPointsCore"
+            },
+            "Bulletpoints Legend": {
+                "version": "v1.0.0",
+                "componentId": "778:1924",
+                "api": "BulletpointsLegend"
+            },
+            "Card Line": {
+                "version": "v1.0.1",
+                "componentId": "684:4979",
+                "api": "CocoCardLine"
+            },
+            "Card Selection": {
+                "version": "v1.0.0",
+                "componentId": "1617:3274",
+                "api": "CocoCardSelection"
+            },
+            "Card Survey Feedback": {
+                "version": "v1.0.0",
+                "componentId": "49925:29316",
+                "api": "CocoCardSurveyFeedback"
+            },
+            "Card Three Line": {
+                "version": "v1.0.1",
+                "componentId": "684:5001",
+                "api": "CocoCardThreeLine"
+            },
+            "Card Two Line Badge": {
+                "version": "v1.0.1",
+                "componentId": "5318:33842",
+                "api": "CocoCardTwoLineBadge"
+            },
+            "Card Two Line Value": {
+                "version": "v1.0.1",
+                "componentId": "684:5234",
+                "api": "CocoCardTwoLineValue"
+            },
+            "Chart Average Analyses": {
+                "version": "v2.2.1",
+                "componentId": "3532:18132",
+                "api": "CocoChartAverageAnalyses"
+            },
+            "Chart Headline": {
+                "version": "v1.0.0",
+                "componentId": "778:1884",
+                "api": "CocoChartHeadline"
+            },
+            "Chart Legend": {
+                "version": "v1.0.1",
+                "componentId": "778:1685",
+                "api": "CocoChartLegend"
+            },
+            "Chart Timeline Item": {
+                "version": "v1.0.1",
+                "componentId": "2511:3965",
+                "api": "CocoChartTimelineItem"
+            },
+            "Chart With Headline": {
+                "version": "v1.0.0",
+                "componentId": "3532:17937",
+                "api": "CommonCocoChartWithHeadline"
+            },
+            "Charts Timeline": {
+                "version": "v1.0.1",
+                "componentId": "778:1963",
+                "api": "CocoChartsTimeline"
+            },
+            "Chat Dialog": {
+                "version": "v1.0.0",
+                "componentId": "873:2340",
+                "api": "CocoChatDialog"
+            },
+            "Chat Dialog Group": {
+                "version": "v1.0.0",
+                "componentId": "4661:23419",
+                "api": "CocoChatDialogGroup"
+            },
+            "Chat Floating Action Button": {
+                "version": "v1.0.1",
+                "componentId": "5453:40610",
+                "api": "CocoChatFloatingActionButton"
+            },
+            "Checkbox": {
+                "version": "v1.0.0",
+                "componentId": "2:177",
+                "api": "CocoCheckbox"
+            },
+            "Checkbox Card": {
+                "version": "v1.0.0",
+                "componentId": "115:2664",
+                "api": "CocoCheckboxCard"
+            },
+            "Checkbox List": {
+                "version": "v1.0.0",
+                "componentId": "121:1934",
+                "api": "BaseCocoCheckboxList"
+            },
+            "Circular Loader": {
+                "version": "v1.0.0",
+                "componentId": "7958:33725",
+                "api": "CocoCircularLoader"
+            },
+            "Close Button": {
+                "version": "v1.0.0",
+                "componentId": "12:615",
+                "api": "CocoCloseButton"
+            },
+            "Collapsed List Element": {
+                "version": "v1.1.0",
+                "componentId": "4033:19039",
+                "api": "CocoCollapsedListElementCore"
+            },
+            "Compact Card": {
+                "version": "v1.0.0",
+                "componentId": "1812:3966",
+                "api": "CocoCompactCard"
+            },
+            "Compact Card Carousel": {
+                "version": "v1.0.1",
+                "componentId": "9445:37484",
+                "api": "CocoCompactCardCarousel"
+            },
+            "Content List Item": {
+                "version": "v1.0.0",
+                "componentId": "15442:46295",
+                "api": "CocoContentListItem"
+            },
+            "Copy Text Big": {
+                "version": "v1.0.0",
+                "componentId": "509:7903",
+                "api": "CocoCopyTextBig"
+            },
+            "Copy Text Caption": {
+                "version": "v1.0.0",
+                "componentId": "168:2009",
+                "api": "CocoCopyTextCaption"
+            },
+            "Copy Text Caption Centered": {
+                "version": "v1.0.0",
+                "componentId": "156:2086",
+                "api": "CocoCopyTextCaptionCentered"
+            },
+            "Country Flag": {
+                "version": "v1.0.0",
+                "componentId": "1004:3518",
+                "api": "CocoCountryFlag"
+            },
+            "DCRM Card": {
+                "version": "v1.0.0",
+                "componentId": "50998-14581",
+                "api": "CocoDcrmCard"
+            },
+            "Date Picker": {
+                "version": "v1.0.0",
+                "componentId": "262:2820",
+                "api": "CocoDatePicker"
+            },
+            "Divider": {
+                "version": "v1.0.0",
+                "componentId": "4009:19091",
+                "api": "CocoDivider"
+            },
+            "Dropdown": {
+                "version": "v1.2.0",
+                "componentId": "6570:30784",
+                "api": "CocoDropdown"
+            },
+            "Filter Active": {
+                "version": "v1.0.1",
+                "componentId": "684:5051",
+                "api": "CocoFilterActive"
+            },
+            "Full Circle Counter": {
+                "version": "v1.0.2",
+                "componentId": "3532:19345",
+                "api": "CocoFullCircleCounter"
+            },
+            "Full Circle Counter Slider": {
+                "version": "v1.0.1",
+                "componentId": "5405:26732",
+                "api": "CocoFullCircleCounterSlider"
+            },
+            "Full Circle Time Counter": {
+                "version": "v1.0.2",
+                "componentId": "3532:19292",
+                "api": "FullCircleTimeCounter"
+            },
+            "Full Content Header Bar": {
+                "version": "v1.3.0",
+                "componentId": "200:2813",
+                "api": "FullContentHeaderBar"
+            },
+            "Half Circle With Legends Single": {
+                "version": "v1.1.1",
+                "componentId": "3532:19135",
+                "api": "CocoHalfCircleWithLegendsSingle"
+            },
+            "Histogram Comparison": {
+                "version": "v1.0.5",
+                "componentId": "5689:23749",
+                "api": "CocoHistogramComparison"
+            },
+            "Histogram Three Vertical Columns": {
+                "version": "v1.2.1",
+                "componentId": "3532:18541",
+                "api": "CocoHistogramThreeVerticalColumns"
+            },
+            "Histogram With Two Columns": {
+                "version": "v1.0.1",
+                "componentId": "3532:18682",
+                "api": "CocoHistogramWithTwoColumns"
+            },
+            "Horizontal Bar Chart": {
+                "version": "v1.0.0",
+                "componentId": "1287:3141",
+                "api": "CocoHorizontalBarChart"
+            },
+            "Icon On Surface": {
+                "version": "v1.0.0",
+                "componentId": "6:532",
+                "api": "CocoIconOnSurface"
+            },
+            "Image Button": {
+                "version": "v1.0.0",
+                "componentId": "23:877",
+                "api": "CocoImageButton"
+            },
+            "Image Button Large": {
+                "version": "v1.0.0",
+                "componentId": "10765:4290",
+                "api": "CocoImageButtonLarge"
+            },
+            "Image Button Medium": {
+                "version": "v1.0.0",
+                "componentId": "23:882",
+                "api": "CocoImageButtonMedium"
+            },
+            "Image Button Small": {
+                "version": "v1.0.0",
+                "componentId": "23:872",
+                "api": "CocoImageButtonSmall"
+            },
+            "Image On Surface": {
+                "version": "v1.0.0",
+                "componentId": "603:1475",
+                "api": "CocoImageOnSurface"
+            },
+            "Image Placeholder": {
+                "version": "v1.1.0",
+                "componentId": "7313:39230",
+                "api": "CocoImagePlaceholder"
+            },
+            "Image Teaser Card": {
+                "version": "v1.0.1",
+                "componentId": "960:13024",
+                "api": "ImageTeaserCard"
+            },
+            "Income Disparity Chart Item": {
+                "version": "v1.1.0",
+                "componentId": "28426:21098",
+                "api": "CocoIncomeDisparityChartItem"
+            },
+            "Inline Error": {
+                "version": "v1.0.0",
+                "componentId": "20638:5340",
+                "api": "CocoInlineError"
+            },
+            "Large Teaser Card": {
+                "version": "v1.0.2",
+                "componentId": "4446:24712",
+                "api": "CocoLargeTeaserCardCore"
+            },
+            "List Badge": {
+                "version": "v1.0.1",
+                "componentId": "744:5985",
+                "api": "CocoListBadge"
+            },
+            "List Element": {
+                "version": "v1.1.0",
+                "componentId": "21:957",
+                "api": "CocoListElementCore"
+            },
+            "List Icon Four Line": {
+                "version": "v1.0.0",
+                "componentId": "482:7858",
+                "api": "CocoListIconFourLine"
+            },
+            "List Item": {
+                "version": "v1.3.4",
+                "componentId": "744:5964",
+                "api": "CocoListItem"
+            },
+            "List Item Selection": {
+                "version": "v1.0.1",
+                "componentId": "31983:23089",
+                "api": "CocoListItemSelection"
+            },
+            "List With Icon": {
+                "version": "v1.0.0",
+                "componentId": "7166:39272",
+                "api": "CocoListWithIcon"
+            },
+            "Loading Error": {
+                "version": "v2.0.0",
+                "componentId": "86141:90602",
+                "api": "CocoLoadingError"
+            },
+            "Login Navigation": {
+                "version": "v1.1.0",
+                "componentId": "2627:16819",
+                "api": "LoginNavigation"
+            },
+            "Main Navigation Bar": {
+                "version": "v2.1.0",
+                "componentId": "191:5310",
+                "api": "CocoMainNavigationBar"
+            },
+            "Mega Popover": {
+                "version": "v1.0.0",
+                "componentId": "3257:18874",
+                "api": "CocoMegaPopover"
+            },
+            "Message Input": {
+                "version": "v1.0.1",
+                "componentId": "4468:23094",
+                "api": "CocoMessageInput"
+            },
+            "Modal Sheet Bar Empty": {
+                "version": "v1.0.0",
+                "componentId": "2119:14672",
+                "api": "CocoModalSheetBarEmpty"
+            },
+            "Multiline Chart Performance Analyses": {
+                "version": "v2.2.1",
+                "componentId": "50829:103516",
+                "api": "CocoMultilineChartPerformanceAnalyses"
+            },
+            "Multiple Chips Group": {
+                "version": "v1.0.1",
+                "componentId": "94013:33501",
+                "api": "CocoMultipleChipsGroup"
+            },
+            "Multiple Choice Chips Group": {
+                "version": "v1.0.2",
+                "componentId": "2059:19009",
+                "api": "CocoMultipleChoiceChipsGroup"
+            },
+            "Multiple Horizontal Bar": {
+                "version": "v2.0.1",
+                "componentId": "3532:18500",
+                "api": "CocoMultipleHorizontalBar"
+            },
+            "Multiple Selection Chip": {
+                "version": "v1.1.1",
+                "componentId": "530:1528",
+                "api": "CocoMultipleSelectionChip"
+            },
+            "Multiple Vertical Bar Value": {
+                "version": "v1.3.1",
+                "componentId": "7829:34074",
+                "api": "CocoMultipleVerticalBarValue"
+            },
+            "Multiple Vertical Line Histogram": {
+                "version": "v1.1.2",
+                "componentId": "3532:18322",
+                "api": "CocoMultipleVerticalLineHistogram"
+            },
+            "Navigation Bar": {
+                "version": "v1.0.1",
+                "componentId": "200:2757",
+                "api": "CocoNavigationBar"
+            },
+            "Page Headline": {
+                "version": "v1.0.1",
+                "componentId": "62:1602",
+                "api": "CocoPageHeadline"
+            },
+            "Page Intro": {
+                "version": "v1.0.0",
+                "componentId": "154:2001",
+                "api": "CocoPageIntro"
+            },
+            "Pager Indicator": {
+                "version": "v1.2.0",
+                "componentId": "115:2600",
+                "api": "CocoPagerIndicator"
+            },
+            "Product Headline": {
+                "version": "v1.2.2",
+                "componentId": "2500:16272",
+                "api": "CocoProductHeadline"
+            },
+            "Provider Content": {
+                "version": "v1.1.0",
+                "componentId": "1091:2999",
+                "api": "ProviderContent"
+            },
+            "Radio Button": {
+                "version": "v1.0.0",
+                "componentId": "2:134",
+                "api": "CocoRadioButton"
+            },
+            "Radio Button Card": {
+                "version": "v1.0.1",
+                "componentId": "35:1165",
+                "api": "CocoRadioButtonCard"
+            },
+            "Radio Button List Item": {
+                "version": "v1.0.0",
+                "componentId": "121:1831",
+                "api": "BaseCocoRadioButtonListItem"
+            },
+            "Rating Stars": {
+                "version": "v1.0.0",
+                "componentId": "11114-4573",
+                "api": "CocoRatingStars"
+            },
+            "Search": {
+                "version": "v1.2.2",
+                "componentId": "1568:11072",
+                "api": "CocoSearch"
+            },
+            "Section Divider": {
+                "version": "v1.0.0",
+                "componentId": "4009:19098",
+                "api": "CocoSectionDivider"
+            },
+            "Section Header": {
+                "version": "v1.0.1",
+                "componentId": "213:3090",
+                "api": "CocoSectionHeader"
+            },
+            "Segment Circle": {
+                "version": "v1.0.1",
+                "componentId": "84964:20258",
+                "api": "CocoSegmentCircle"
+            },
+            "Segment Circle Legend": {
+                "version": "v1.1.0",
+                "componentId": "84926:43643",
+                "api": "CocoSegmentCircleLegend"
+            },
+            "Selection Card": {
+                "version": "v2.0.1",
+                "componentId": "76264:62200",
+                "api": "CocoSelectionCard"
+            },
+            "Selection Card Row": {
+                "version": "v1.0.0",
+                "componentId": "8696:37075",
+                "api": "CocoSelectionCardRow"
+            },
+            "Selection Card Type": {
+                "version": "v1.0.0",
+                "componentId": "9839:42593",
+                "api": "CocoSelectionCardType"
+            },
+            "Selection Menu": {
+                "version": "v1.0.0",
+                "componentId": "1927:3862",
+                "api": "CocoSelectionMenu"
+            },
+            "Single Bank Card Holder": {
+                "version": "v1.0.1",
+                "componentId": "4658:23285",
+                "api": "CocoSingleBankCardHolder"
+            },
+            "Single Choice Chips Group": {
+                "version": "v1.0.2",
+                "componentId": "2059:18665",
+                "api": "CocoSingleChoiceChipsGroup"
+            },
+            "Single Horizontal Bar": {
+                "version": "v1.0.1",
+                "componentId": "3532:18399",
+                "api": "CocoSingleHorizontalBar"
+            },
+            "Single Selection Chip": {
+                "version": "v1.0.1",
+                "componentId": "530:1412",
+                "api": "CocoSingleSelectionChip"
+            },
+            "Single Teaser Card": {
+                "version": "v2.1.2",
+                "componentId": "2117:13013",
+                "api": "CocoSingleTeaserCardContainer"
+            },
+            "Slider": {
+                "version": "v1.1.0",
+                "componentId": "957:11306",
+                "api": "BaseCocoSlider"
+            },
+            "Slider Bar": {
+                "version": "v1.0.0",
+                "componentId": "1176:3137",
+                "api": "CocoSliderBar"
+            },
+            "Small Button": {
+                "version": "v1.0.0",
+                "componentId": "23:739",
+                "api": "CocoSmallButton"
+            },
+            "Snackbar": {
+                "version": "v1.0.0",
+                "componentId": "3819:17577",
+                "api": "BaseCocoSnackbar"
+            },
+            "Standard Button": {
+                "version": "v1.0.0",
+                "componentId": "23:760",
+                "api": "CocoStandardButton"
+            },
+            "Standard Buttons": {
+                "version": "v1.0.0",
+                "componentId": "260:3026",
+                "api": "CocoStandardButtonsBase"
+            },
+            "Status Element": {
+                "version": "v1.0.2",
+                "componentId": "2069:14046",
+                "api": "CocoStatusElement"
+            },
+            "Status Icon": {
+                "version": "v1.2.0",
+                "componentId": "530:1611",
+                "api": "CocoStatusIcon"
+            },
+            "Sticky Button": {
+                "version": "v1.0.0",
+                "componentId": "582:3353",
+                "api": "CocoStickyButton"
+            },
+            "Summary Headline": {
+                "version": "v1.0.0",
+                "componentId": "50386-29740",
+                "api": "CocoSummaryHeadline"
+            },
+            "Survey Selection": {
+                "version": "v2.0.0",
+                "componentId": "43594:82253",
+                "api": "CocoSurveySelection"
+            },
+            "Swipe Action": {
+                "version": "v1.2.1",
+                "componentId": "871:8769",
+                "api": "CocoSwipeAction"
+            },
+            "System Message Card": {
+                "version": "v1.0.1",
+                "componentId": "83863:85067",
+                "api": "CocoSystemMessageCard"
+            },
+            "Tab": {
+                "version": "v1.0.0",
+                "componentId": "2:246",
+                "api": "CocoTab"
+            },
+            "Tab Row": {
+                "version": "v1.0.2",
+                "componentId": "3810:17506",
+                "api": "CocoTabRow"
+            },
+            "Table Line": {
+                "version": "v1.0.4",
+                "componentId": "88:1639",
+                "api": "CocoTableLine"
+            },
+            "Tertiary Action": {
+                "version": "v1.0.0",
+                "componentId": "260:3591",
+                "api": "CocoTertiaryAction"
+            },
+            "Text Badge": {
+                "version": "v1.0.0",
+                "componentId": "1361:3009",
+                "api": "CocoTextBadge"
+            },
+            "Text Body": {
+                "version": "v1.0.0",
+                "componentId": "160:2116",
+                "api": "CocoTextBody"
+            },
+            "Text Button": {
+                "version": "v1.0.0",
+                "componentId": "19279:45573",
+                "api": "CocoTextButton"
+            },
+            "Text Helper": {
+                "version": "v1.0.0",
+                "componentId": "165:2004",
+                "api": "CocoTextHelper"
+            },
+            "Text Input": {
+                "version": "v2.3.2",
+                "componentId": "38:1484",
+                "api": "CocoBaseTextInput"
+            },
+            "Text Link": {
+                "version": "v2.0.0",
+                "componentId": "19:402",
+                "api": "CocoTextLink"
+            },
+            "Toggle": {
+                "version": "v1.0.0",
+                "componentId": "2:168",
+                "api": "CocoToggle"
+            },
+            "Toggle Item": {
+                "version": "v1.1.5",
+                "componentId": "19:54",
+                "api": "CocoToggleItem"
+            },
+            "Tour Popover": {
+                "version": "v1.0.0",
+                "componentId": "3257:18601",
+                "api": "CocoTourPopover"
+            },
+            "Transaction Value": {
+                "version": "v1.0.0",
+                "componentId": "684:5101",
+                "api": "CocoTransactionValue"
+            },
+            "Wheel Picker": {
+                "version": "v0.0.1",
+                "componentId": "1838:30084",
+                "api": "CocoWheelPicker"
+            },
+            "X Small Button": {
+                "version": "v1.0.0",
+                "componentId": "734:1606",
+                "api": "CocoXSmallButton"
+            }
+        },
+        "ios": {
+            "Action button icon": {
+                "version": "v1.0.1",
+                "componentId": "2:211",
+                "api": "CocoActionButton"
+            },
+            "Action button image": {
+                "version": "v1.0.0",
+                "componentId": "6:1767",
+                "api": "CocoActionButton"
+            },
+            "Action button Month / Year": {
+                "version": "v1.0.0",
+                "componentId": "1175:3051",
+                "api": "CocoActionButton"
+            },
+            "Action button text": {
+                "version": "v1.0.0",
+                "componentId": "6:1037",
+                "api": "CocoActionButton"
+            },
+            "Action Cards": {
+                "version": "v1.0.0",
+                "componentId": "29028:60668",
+                "api": "CocoActionCards"
+            },
+            "Action Chip": {
+                "version": "v1.0.0",
+                "componentId": "530:1747",
+                "api": "CocoChip"
+            },
+            "Action chips group": {
+                "version": "v1.0.0",
+                "componentId": "2060:13654",
+                "api": "CocoActionChipsGroup"
+            },
+            "Action Menu": {
+                "version": "v1.0.0",
+                "componentId": "209:2882",
+                "api": "CocoActionMenu"
+            },
+            "Badge": {
+                "version": "v1.0.0",
+                "componentId": "66:1117",
+                "api": "CocoBadge"
+            },
+            "Bank Cards": {
+                "version": "v1.0.0",
+                "componentId": "1086:3804",
+                "api": "CocoCreditCard"
+            },
+            "Basic Popover": {
+                "version": "v1.1.0",
+                "componentId": "3242:16517",
+                "api": "CocoBasicPopover"
+            },
+            "Bot / Agent Dialog": {
+                "version": "v1.0.0",
+                "componentId": "4661:23440",
+                "api": "BotAgentDialogView"
+            },
+            "Bottom navigation": {
+                "version": "v1.1.1",
+                "componentId": "191:4313",
+                "api": "CocoBottomNavigation"
+            },
+            "Bullet points": {
+                "version": "v1.0.0",
+                "componentId": "19279:46340",
+                "api": "CocoBulletPoint"
+            },
+            "Bulletpoints Labels": {
+                "version": "v1.0.0",
+                "componentId": "778:1924",
+                "api": "CocoBulletpointsLabels"
+            },
+            "Card One Line": {
+                "version": "v1.0.1",
+                "componentId": "684:4979",
+                "api": "CocoCardOneLine"
+            },
+            "Card Three Line": {
+                "version": "v1.0.1",
+                "componentId": "684:5001",
+                "api": "CocoCardThreeLine"
+            },
+            "Card Two Line": {
+                "version": "v1.0.1",
+                "componentId": "684:5234",
+                "api": "CocoCardTwoLine"
+            },
+            "Charts Legend": {
+                "version": "v1.0.0",
+                "componentId": "778:1685",
+                "api": "CocoChartsLegend"
+            },
+            "Charts Timeline": {
+                "version": "v1.0.1",
+                "componentId": "778:1963",
+                "api": "CocoChartsTimeline"
+            },
+            "Chat Floating Button": {
+                "version": "v1.0.0",
+                "componentId": "5453:40610",
+                "api": "CocoChatFloatingButton"
+            },
+            "Checbox Card": {
+                "version": "v1.0.0",
+                "componentId": "115:2664",
+                "api": "CocoCheckboxCard"
+            },
+            "Checkbox": {
+                "version": "v1.0.0",
+                "componentId": "2:177",
+                "api": "CheckboxView"
+            },
+            "Checkbox List": {
+                "version": "v1.0.0",
+                "componentId": "121:1934",
+                "api": "CocoCheckboxList"
+            },
+            "Circular Loader": {
+                "version": "v1.0.0",
+                "componentId": "7958:33725",
+                "api": "CocoCircularLoader"
+            },
+            "Closing Button": {
+                "version": "v1.0.0",
+                "componentId": "12:615",
+                "api": "CocoClosingButton"
+            },
+            "CocoDropdown": {
+                "version": "v1.0.0",
+                "componentId": "6570:30784",
+                "api": "CocoDropdown"
+            },
+            "Collapsed List": {
+                "version": "v1.0.0",
+                "componentId": "4033:19039",
+                "api": "CocoCollapsedListElement"
+            },
+            "Compact Card": {
+                "version": "v1.0.1",
+                "componentId": "1812:3966",
+                "api": "CocoCompactCard"
+            },
+            "Compact Card Carousel": {
+                "version": "v1.0.1",
+                "componentId": "5313:29119",
+                "api": "CocoCompactCardCarousel"
+            },
+            "Confirmation Screens": {
+                "version": "v1.1.0",
+                "componentId": "197:8426",
+                "api": "CocoConfirmationScreen"
+            },
+            "Consent Screens": {
+                "version": "v1.0.0",
+                "componentId": "197:8366",
+                "api": "CocoConsentScreen"
+            },
+            "Content List": {
+                "version": "v1.0.0",
+                "componentId": "15442:46295",
+                "api": "CocoContentList"
+            },
+            "Copy text big": {
+                "version": "v1.0.0",
+                "componentId": "509:7903",
+                "api": "CocoCopyTextBig"
+            },
+            "Copy text caption": {
+                "version": "v1.0.0",
+                "componentId": "168:2009",
+                "api": "CocoCopyTextCaption"
+            },
+            "Copy text caption centered": {
+                "version": "v1.0.0",
+                "componentId": "156:2086",
+                "api": "CocoCopyTextCaptionCentered"
+            },
+            "Customer Dialog Group": {
+                "version": "v1.0.0",
+                "componentId": "4661:23419",
+                "api": "CustomerDialogView"
+            },
+            "Data Proctection": {
+                "version": "v1.0.0",
+                "componentId": "197:8388",
+                "api": "CobaDataProtectionView"
+            },
+            "Datepicker": {
+                "version": "v1.0.0",
+                "componentId": "262:2820",
+                "api": "CocoDatePicker"
+            },
+            "Divider": {
+                "version": "v1.0.0",
+                "componentId": "4009:19091",
+                "api": "CocoDivider"
+            },
+            "Dropdown": {
+                "version": "v2.1.0",
+                "componentId": "6570:30782",
+                "api": "CocoDropdown2"
+            },
+            "Dropdown Date Picker": {
+                "version": "v2.1.0",
+                "componentId": "33167:19367",
+                "api": "CocoDropdownDatePicker2"
+            },
+            "Error template Full Screen": {
+                "version": "v1.0.0",
+                "componentId": "197:8547",
+                "api": "CocoErrorView"
+            },
+            "External Text link": {
+                "version": "v2.0.0",
+                "componentId": "38:1484",
+                "api": "CocoTextLink"
+            },
+            "Full Circle Counter Large": {
+                "version": "v1.1.3",
+                "componentId": "3532:19345",
+                "api": "CocoFullCircle"
+            },
+            "Full content header bar": {
+                "version": "v1.1.2",
+                "componentId": "200:2813",
+                "api": "CocoFullContentHeaderBar"
+            },
+            "Half Circle with legends": {
+                "version": "v1.0.0",
+                "componentId": "3532:19135",
+                "api": "CocoHalfCircle"
+            },
+            "Histogram Comparison": {
+                "version": "v1.0.0",
+                "componentId": "29520:27038",
+                "api": "CocoHistogramComparison"
+            },
+            "Horizontal Bar": {
+                "version": "v1.0.0",
+                "componentId": "1287:3141",
+                "api": "CocoHorizontalBar"
+            },
+            "Horizontal Bar Chart": {
+                "version": "v1.0.0",
+                "componentId": "3532:18399",
+                "api": "CocoHorizontalBarChart"
+            },
+            "Icon on surface": {
+                "version": "v1.4.2",
+                "componentId": "6:532",
+                "api": "CocoIconOnSurface"
+            },
+            "Image Button Medium (Default)": {
+                "version": "v1.0.0",
+                "componentId": "23:882",
+                "api": "CocoImageButtonMedium"
+            },
+            "Image Button Primary": {
+                "version": "v1.0.0",
+                "componentId": "23:877",
+                "api": "CocoImageButton"
+            },
+            "Image Button Secondary": {
+                "version": "v1.0.0",
+                "componentId": "23:887",
+                "api": "CocoImageButton"
+            },
+            "Image Button Secondary Large": {
+                "version": "v1.0.0",
+                "componentId": "10765:4094",
+                "api": "CocoImageButton"
+            },
+            "Image Button Small": {
+                "version": "v1.0.0",
+                "componentId": "23:872",
+                "api": "CocoImageButton"
+            },
+            "Image on surface": {
+                "version": "v1.0.0",
+                "componentId": "603:1475",
+                "api": "CocoImageOnSurface"
+            },
+            "Image Placeholder": {
+                "version": "v1.0.0",
+                "componentId": "7313:39230",
+                "api": "CocoImagePlaceholder"
+            },
+            "Image Teaser Card": {
+                "version": "v1.0.0",
+                "componentId": "960:13024",
+                "api": "CocoImageTeaserCard"
+            },
+            "Income Disparity Chart": {
+                "version": "v1.0.0",
+                "componentId": "28426:21098",
+                "api": "CocoIncomeDisparityChart"
+            },
+            "Language Information Screen": {
+                "version": "v1.0.0",
+                "componentId": "506:11614",
+                "api": "CocoLanguageInformationScreen"
+            },
+            "Large Teaser Card Carousel": {
+                "version": "v1.0.0",
+                "componentId": "4446:24712",
+                "api": "CocoLargeTeaserCardCarousel"
+            },
+            "Line Chart Analytics": {
+                "version": "v1.2.3",
+                "componentId": "3532:18132",
+                "api": "CocoLineChartAnalytics"
+            },
+            "Line Chart Basic Value": {
+                "version": "v1.0.0",
+                "componentId": "84880:115093",
+                "api": "CocoLineChartBasicValue"
+            },
+            "List Badge": {
+                "version": "v1.0.1",
+                "componentId": "744:5985",
+                "api": "CocoListBadge"
+            },
+            "List Element": {
+                "version": "v1.0.0",
+                "componentId": "21:957",
+                "api": "CocoListElement"
+            },
+            "List Icon / Customisable right icon": {
+                "version": "v1.0.0",
+                "componentId": "7166:39272",
+                "api": "CocoListIconCustomizableRightIcon"
+            },
+            "List icon four line": {
+                "version": "v1.0.0",
+                "componentId": "482:7858",
+                "api": "CocoListIconFourLine"
+            },
+            "List Item": {
+                "version": "v1.3.5",
+                "componentId": "744:5964",
+                "api": "CocoListItem"
+            },
+            "List Item Selection": {
+                "version": "v1.0.1",
+                "componentId": "31983:23089",
+                "api": "CocoListItemSelection"
+            },
+            "Loading Error": {
+                "version": "v2.0.0",
+                "componentId": "8005:38750",
+                "api": "CocoLoadingError"
+            },
+            "Login navigation": {
+                "version": "v1.1.1",
+                "componentId": "2627:16819",
+                "api": "LoginNavigation"
+            },
+            "Main navigation": {
+                "version": "v2.1.1",
+                "componentId": "191:5310",
+                "api": "CocoMainNavigation"
+            },
+            "Medium Teaser Card Carousel": {
+                "version": "v1.0.0",
+                "componentId": "6666:31689",
+                "api": "CocoMediumTeaserCardCarousel"
+            },
+            "Mega Popover Popover": {
+                "version": "v1.1.0",
+                "componentId": "3257:18874",
+                "api": "CocoMegaPopoverContnetView"
+            },
+            "Message Input": {
+                "version": "v1.0.0",
+                "componentId": "4468:23094",
+                "api": "CocoMessageInput"
+            },
+            "Modal sheer bar": {
+                "version": "v1.0.0",
+                "componentId": "2119:14672",
+                "api": "CocoModalSheetBar"
+            },
+            "Multiple chips group": {
+                "version": "v1.0.1",
+                "componentId": "94013:33501",
+                "api": "CocoMultipleChipsGroup"
+            },
+            "Multiple choice chips group": {
+                "version": "v1.0.2",
+                "componentId": "2059:19009",
+                "api": "CocoMultipleChoiceChipsGroup"
+            },
+            "Multiple selection chip": {
+                "version": "v1.1.1",
+                "componentId": "530:1528",
+                "api": "CocoChip"
+            },
+            "Multiple Vertical Bar Histogram": {
+                "version": "v1.0.0",
+                "componentId": "3741:19332",
+                "api": "CocoMultipleVerticalBarHistogram"
+            },
+            "Page Headline": {
+                "version": "v1.1.1",
+                "componentId": "62:1602",
+                "api": "CocoPageHeadline"
+            },
+            "Page Indicator": {
+                "version": "v1.2.0",
+                "componentId": "115:2600",
+                "api": "CocoPagerIndicator"
+            },
+            "Page Intro": {
+                "version": "v1.0.0",
+                "componentId": "154:2001",
+                "api": "PageIntro"
+            },
+            "PDF Screen": {
+                "version": "v1.0.0",
+                "componentId": "197:8356",
+                "api": "CocoPDFView"
+            },
+            "Product Headline": {
+                "version": "v1.2.1",
+                "componentId": "2500:16272",
+                "api": "CocoProductHeadline"
+            },
+            "Provider": {
+                "version": "v1.0.0",
+                "componentId": "1091:2999",
+                "api": "CocoProvider"
+            },
+            "Radio button": {
+                "version": "v1.0.0",
+                "componentId": "2:134",
+                "api": "CocoRadioButtonView"
+            },
+            "Radio Button Card": {
+                "version": "v1.0.0",
+                "componentId": "35:1165",
+                "api": "CocoRadioButtonCard"
+            },
+            "Radio button List": {
+                "version": "v1.0.0",
+                "componentId": "121:1831",
+                "api": "CocoRadioButtonList"
+            },
+            "Search bar": {
+                "version": "v1.2.3",
+                "componentId": "1568:11072",
+                "api": "CocoSearchBar"
+            },
+            "Section Divider": {
+                "version": "v1.0.0",
+                "componentId": "4009:19098",
+                "api": "CocoSectionDivider"
+            },
+            "Section Header": {
+                "version": "v1.0.1",
+                "componentId": "213:3090",
+                "api": "CocoSectionHeadline"
+            },
+            "Selection Card": {
+                "version": "v3.0.2",
+                "componentId": "76264:62200",
+                "api": "CocoSelectionCard"
+            },
+            "Selection Card Type": {
+                "version": "v1.0.0",
+                "componentId": "9839:42593",
+                "api": "CocoSelectionCardType"
+            },
+            "Selection Menu": {
+                "version": "v1.0.0",
+                "componentId": "1927:3862",
+                "api": "CocoImageSelection"
+            },
+            "Single choice chips group": {
+                "version": "v1.0.2",
+                "componentId": "2059:18665",
+                "api": "CocoSingleChoiceChipsGroup"
+            },
+            "Single selection chip": {
+                "version": "v1.0.1",
+                "componentId": "530:1412",
+                "api": "CocoChip"
+            },
+            "Single Teaser Card": {
+                "version": "v2.1.0",
+                "componentId": "2117:13013",
+                "api": "CocoSingleTeaserCard"
+            },
+            "Slider": {
+                "version": "v1.0.0",
+                "componentId": "957:11306",
+                "api": "CocoSlider"
+            },
+            "Slider Element": {
+                "version": "v1.0.0",
+                "componentId": "1176:3137",
+                "api": "CocoSliderElement"
+            },
+            "Small Button Types": {
+                "version": "v1.0.0",
+                "componentId": "23:739",
+                "api": "CocoSmallButton"
+            },
+            "Snackbar": {
+                "version": "v1.0.0",
+                "componentId": "3819:17577",
+                "api": "CocoSnackbar"
+            },
+            "Standard Button": {
+                "version": "v1.0.0",
+                "componentId": "260:3026",
+                "api": "CocoStandardButtons"
+            },
+            "Standard Button types": {
+                "version": "v1.0.0",
+                "componentId": "23:760",
+                "api": "CocoStandardButton"
+            },
+            "Status Element List": {
+                "version": "v1.1.2",
+                "componentId": "2069:14046",
+                "api": "CocoStatusElement"
+            },
+            "Status icons": {
+                "version": "v1.0.0",
+                "componentId": "530:1611",
+                "api": "CocoStatusIcon"
+            },
+            "Sticky Button": {
+                "version": "v1.0.0",
+                "componentId": "582:3353",
+                "api": "CocoStickyButtons"
+            },
+            "Summary headline": {
+                "version": "v1.0.0",
+                "componentId": "50386:29740",
+                "api": "CocoSummaryHeadline"
+            },
+            "Swipe Action": {
+                "version": "v1.0.0",
+                "componentId": "871:8769",
+                "api": "CocoSwipeActionView"
+            },
+            "Switch": {
+                "version": "v1.0.0",
+                "componentId": "2:168",
+                "api": "CocoToggle"
+            },
+            "System Message Card": {
+                "version": "v1.0.0",
+                "componentId": "83863:85067",
+                "api": "CocoSystemMessageCardView"
+            },
+            "Tab bar": {
+                "version": "v1.0.0",
+                "componentId": "2:246",
+                "api": "CocoTabBarItem"
+            },
+            "Table Line": {
+                "version": "v1.0.0",
+                "componentId": "88:1639",
+                "api": "CocoTableLine"
+            },
+            "Tabs": {
+                "version": "v1.0.2",
+                "componentId": "3810:17506",
+                "api": "CocoTabBar"
+            },
+            "Tertiary Action": {
+                "version": "v1.0.0",
+                "componentId": "260:3591",
+                "api": "CocoTertiaryButton"
+            },
+            "Text Badge": {
+                "version": "v1.0.0",
+                "componentId": "1361:3009",
+                "api": "CocoTextBadge"
+            },
+            "Text body": {
+                "version": "v1.0.0",
+                "componentId": "160:2116",
+                "api": "CocoTextbody"
+            },
+            "Text Buttons": {
+                "version": "v1.0.0",
+                "componentId": "19279:45573",
+                "api": "CocoTextButton"
+            },
+            "Text helper": {
+                "version": "v1.0.0",
+                "componentId": "165:2004",
+                "api": "CocoTextHelper"
+            },
+            "Text input": {
+                "version": "v2.3.2",
+                "componentId": "38:1484",
+                "api": "CocoTextInput2"
+            },
+            "Toggle List": {
+                "version": "v1.0.0",
+                "componentId": "19:54",
+                "api": "CocoToggleList"
+            },
+            "Toolbar Icons": {
+                "version": "v1.0.0",
+                "componentId": "7:743",
+                "api": "CocoToolbarIcon"
+            },
+            "Tour Popover": {
+                "version": "v1.0.0",
+                "componentId": "3257:18601",
+                "api": "CocoTourPopover"
+            },
+            "XSmall Button Types": {
+                "version": "v1.0.0",
+                "componentId": "734:1606",
+                "api": "CocoXSmallButton"
+            }
+        }
+    }
+}
