@@ -256,6 +256,16 @@
   .map-row .suggest { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--warning); margin-top: 2px; }
   .map-row .suggest .link { color: var(--warning); font-weight: 600; font-size: 10px; }
   .summary-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+  .idcheck { margin-top: 8px; font-size: 11px; color: var(--text-muted); }
+  .idcheck strong { color: var(--text); font-weight: 600; }
+  .idcheck .ok { color: var(--success); }
+  .idcheck .bad { color: var(--danger); }
+  .idcheck details { margin-top: 4px; }
+  .idcheck summary { cursor: pointer; color: var(--text-muted); }
+  .idcheck ul { margin: 4px 0 0; padding-left: 16px; max-height: 140px; overflow-y: auto; }
+  .idcheck li { color: var(--text); margin: 1px 0; }
+  .idcheck li .mono { color: var(--text-faint); margin-left: 4px; }
+  .map-row .jname .conflict { display: block; font-weight: 400; font-size: 10px; color: var(--warning); }
   .summary-actions input[type="file"] { display: none; }
   .import-result { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
   .import-result.err { color: var(--danger); }
@@ -861,6 +871,7 @@
     file.status = "done";
     file.components = msg.components || [];
     file.skippedPages = msg.skippedPages || [];
+    file.variants = msg.variants || {};
     persistFiles();
     renderRemote();
     applyComponents();
@@ -1218,6 +1229,9 @@
   var mapUi = { open: null, scroll: 0 };   // user's open/closed state and scroll of the mapping list
   var resolvedIds = {};                    // figma node id -> component id | null (asked from the main thread)
   var pendingIds = {};
+  var autoMapped = {};                     // json key -> component id chosen automatically (id or 1:1 name)
+  var idCheck = { total: 0, resolved: 0, missing: [] };
+  var idTargets = {};                      // json key -> { component, id } for every resolved Figma-ID
 
   /** Figma id(s), code file and APIs for a JSON name, from the annotated files (last file wins). */
   function metaFor(key) {
@@ -1241,15 +1255,25 @@
     return m.cleanName || fallback;
   }
 
-  /** Library component for a Figma node id: this file first, then linked files (ids end with "/<node id>"). */
+  /**
+   * Library component for a Figma node id: this file first (the component
+   * itself, or the component/set containing that node, resolved by the main
+   * thread), then linked files (ids end with "/<node id>", or a variant id
+   * known from the API).
+   */
   function componentForFigmaId(figmaId, jsonName) {
     if (!figmaId) return null;
     var id = figmaId.replace("-", ":");
     var all = state.allComponents || [];
     var local = resolvedIds[id];
+    var remoteSets = {};
+    state.remoteOrder.forEach(function (key) {
+      var f = state.remote[key];
+      if (f && f.variants && f.variants[id]) remoteSets[key + "/" + f.variants[id]] = true;
+    });
     var candidates = [];
     all.forEach(function (c) {
-      if (c.id === id || (local && c.id === local) || (c.url && c.id.slice(c.id.indexOf("/") + 1) === id)) candidates.push(c);
+      if (c.id === id || (local && c.id === local) || (c.url && c.id.slice(c.id.indexOf("/") + 1) === id) || remoteSets[c.id]) candidates.push(c);
     });
     if (candidates.length === 0) return null;
     candidates.sort(function (a, b) {
@@ -1291,36 +1315,60 @@
     });
 
     var jsonNames = collectJsonNames();
-    var unmatched = Object.keys(jsonNames).filter(function (k) { return !library[k]; }).sort();
+    var byName = {};
+    state.components.forEach(function (c) { (byName[normalizeName(c.name)] = byName[normalizeName(c.name)] || []).push(c); });
 
-    // Keep only decisions about names that are still unmatched; add 1:1 suggestions for new ones.
+    // 1. Figma-IDs first, for every entry: resolve each id to a library component.
+    var idsToResolve = [];
+    idCheck = { total: 0, resolved: 0, missing: [] };
+    idTargets = {};
+    Object.keys(jsonNames).forEach(function (k) {
+      var ids = idsFor(metaFor(k));
+      if (!ids.length) return;
+      idCheck.total++;
+      var target = null, usedId = "";
+      for (var i = 0; i < ids.length && !target; i++) {
+        target = componentForFigmaId(ids[i], matchNameFor(k, jsonNames[k].name));
+        if (target) usedId = ids[i];
+        else if (!(ids[i] in resolvedIds)) idsToResolve.push(ids[i]);
+      }
+      if (target) { idCheck.resolved++; idTargets[k] = { component: target, id: usedId }; }
+      else idCheck.missing.push({ key: k, name: jsonNames[k].name, ids: ids, pending: ids.some(function (id) { return !(id in resolvedIds); }) });
+    });
+    requestIdResolution(idsToResolve);
+
+    // 2. Rows in the mapping list: names with no library match, plus names whose Figma-ID points
+    //    at a different component than their name does (the id wins, but it is shown).
+    var unmatched = Object.keys(jsonNames).filter(function (k) {
+      if (!library[k]) return true;
+      var t = idTargets[k];
+      return !!(t && normalizeName(t.component.name) !== k);
+    }).sort();
+
+    // Keep only decisions about names in the list; apply Figma-IDs, then 1:1 names, for new ones.
     var unmatchedSet = {};
     unmatched.forEach(function (k) { unmatchedSet[k] = true; });
     Object.keys(state.mappings).forEach(function (k) { if (!unmatchedSet[k]) delete state.mappings[k]; });
-    var idsToResolve = [];
     unmatched.forEach(function (k) {
-      var meta = metaFor(k);
-      var ids = idsFor(meta);
       var matchName = matchNameFor(k, jsonNames[k].name);
-      if (ids.length) {
-        var viaId = null, usedId = "";
-        for (var i = 0; i < ids.length && !viaId; i++) {
-          viaId = componentForFigmaId(ids[i], matchName);
-          if (viaId) usedId = ids[i];
-          else if (!(ids[i] in resolvedIds)) idsToResolve.push(ids[i]);
+      var t = idTargets[k];
+      if (t) {
+        suggestions[k] = { component: t.component, score: 1, exact: true, viaId: t.id };
+        // Apply the id unless the user decided otherwise; an earlier automatic choice is replaced.
+        if (!(k in state.mappings) || autoMapped[k] === state.mappings[k]) {
+          state.mappings[k] = t.component.id;
+          autoMapped[k] = t.component.id;
         }
-        if (viaId) {
-          suggestions[k] = { component: viaId, score: 1, exact: true, viaId: usedId };
-        } else {
-          if (!suggestions[k] || suggestions[k].viaId) suggestions[k] = suggestComponent(matchName, byLoose);
-          if (suggestions[k]) suggestions[k].idMissing = ids[0];
-        }
-      } else if (!(k in suggestions)) {
-        suggestions[k] = suggestComponent(matchName, byLoose);
+        return;
       }
-      if (!(k in state.mappings) && suggestions[k] && suggestions[k].exact) state.mappings[k] = suggestions[k].component.id;
+      if (!suggestions[k] || suggestions[k].viaId) suggestions[k] = suggestComponent(matchName, byLoose);
+      var ids = idsFor(metaFor(k));
+      if (ids.length && suggestions[k]) suggestions[k].idMissing = ids[0];
+      if (!(k in state.mappings) && suggestions[k] && suggestions[k].exact) {
+        state.mappings[k] = suggestions[k].component.id;
+        autoMapped[k] = suggestions[k].component.id;
+      }
     });
-    requestIdResolution(idsToResolve);
 
     // A component counts as matched by its own name or by a manual mapping.
     var mappedIds = {};
@@ -1349,6 +1397,7 @@
     line.appendChild(el("strong", "", String(matched)));
     line.appendChild(document.createTextNode(" of " + state.components.length + " library components matched in the JSON files."));
     box.appendChild(line);
+    box.appendChild(renderIdCheck());
 
     if (unmatched.length > 0) {
       var details = el("details");
@@ -1385,6 +1434,9 @@
           jname.appendChild(line);
         } else if (sug && sug.exact) {
           jname.appendChild(el("span", "where", sug.viaId ? "via Figma-ID " + sug.viaId : "1:1 match after cleaning"));
+          if (sug.viaId && library[k]) {
+            jname.appendChild(el("span", "conflict", "Name also matches “" + byName[k][0].name + "”; the Figma-ID wins"));
+          }
         } else if (idsFor(metaFor(k)).length) {
           jname.appendChild(el("span", "where", "Figma-ID " + idsFor(metaFor(k)).join(" / ") + " not found in the loaded libraries"));
         } else if (hiddenByName[k] && state.hideNoVersion) {
@@ -1409,7 +1461,7 @@
         list.appendChild(row);
       });
       details.appendChild(list);
-      details.appendChild(el("p", "map-help", "Only 1:1 names are pre-selected. Amber rows show a similar name; click Use to apply it. Ignored names are left out of the table. Choices are saved in this file."));
+      details.appendChild(el("p", "map-help", "Figma-IDs are applied first, then 1:1 names. Amber rows show a similar name; click Use to apply it. Ignored names are left out of the table. Choices are saved in this file."));
       box.appendChild(details);
       list.scrollTop = mapUi.scroll;   // only effective once the list is in the document
     } else {
@@ -1567,13 +1619,16 @@
       var mapped = state.mappings[k] ? byId[state.mappings[k]] : null;
       var target = exact ? exact[0] : mapped;
       var sug = suggestions[k];
-      var match = exact ? "exact" : (mapped ? (sug && sug.viaId && sug.component.id === mapped.id ? "figma-id" : "manual") : "ignored");
+      var match = mapped ? (sug && sug.viaId && sug.component.id === mapped.id ? "figma-id" : "manual") : (exact ? "exact" : "ignored");
+      if (mapped) target = mapped;
       var meta = metaFor(k);
+      var idResult = idsFor(meta).length ? (idTargets[k] ? "resolved" + (exact && normalizeName(idTargets[k].component.name) === k ? " (same as name)" : "") : "not found") : "";
       return {
         jsonName: entry.name,
         libraryName: target ? target.name : "",
         match: match,
-        figmaId: meta.figmaId || "",
+        figmaId: idsFor(meta).join(" / "),
+        idResult: idResult,
         codeFile: meta.file || "",
         apis: meta.apis || "",
         type: target ? target.type : "",
@@ -1586,9 +1641,9 @@
 
   function downloadMappingCsv() {
     var rows = buildMappingRows();
-    var header = ["JSON name", "Library component", "Match", "Figma ID", "Code APIs", "Code file", "Type", "Library version", "Location", "Used in"];
+    var header = ["JSON name", "Library component", "Match", "Figma ID", "Figma ID result", "Code APIs", "Code file", "Type", "Library version", "Location", "Used in"];
     var lines = [header.join(",")].concat(rows.map(function (r) {
-      return [r.jsonName, r.libraryName, r.match, r.figmaId, r.apis, r.codeFile, r.type, r.version, r.location, r.usedIn].map(csvCell).join(",");
+      return [r.jsonName, r.libraryName, r.match, r.figmaId, r.idResult, r.apis, r.codeFile, r.type, r.version, r.location, r.usedIn].map(csvCell).join(",");
     }));
     var content = "\uFEFF" + lines.join("\r\n") + "\r\n";
     var blob = new Blob([content], { type: "text/csv;charset=utf-8" });
@@ -1601,6 +1656,50 @@
     a.click();
     document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  /** "Figma-IDs: N in the files · resolved · not found" with the list of ids that did not resolve. */
+  function renderIdCheck() {
+    var box = el("div", "idcheck");
+    if (!idCheck.total) {
+      box.appendChild(document.createTextNode("No Figma-IDs in the files; matching by name only."));
+      return box;
+    }
+    var pending = idCheck.missing.filter(function (m) { return m.pending; }).length;
+    var missing = idCheck.missing.length - pending;
+    box.appendChild(document.createTextNode("Figma-IDs: "));
+    box.appendChild(el("strong", "", String(idCheck.total)));
+    box.appendChild(document.createTextNode(" in the files · "));
+    box.appendChild(el("span", "ok", idCheck.resolved + " resolved"));
+    if (pending) box.appendChild(document.createTextNode(" · " + pending + " checking…"));
+    if (missing) {
+      box.appendChild(document.createTextNode(" · "));
+      box.appendChild(el("span", "bad", missing + " not found"));
+    }
+    var reapply = el("button", "link", "Re-apply Figma-IDs");
+    reapply.title = "Map every entry with a resolved Figma-ID to that component, replacing manual choices";
+    reapply.style.marginLeft = "8px";
+    reapply.addEventListener("click", function () {
+      Object.keys(state.mappings).forEach(function (k) { delete state.mappings[k]; });
+      autoMapped = {};
+      persistMappings();
+      renderSummary();
+    });
+    box.appendChild(reapply);
+    if (missing) {
+      var details = el("details");
+      details.appendChild(el("summary", "", "Show the " + missing + " not found"));
+      var ul = el("ul");
+      idCheck.missing.filter(function (m) { return !m.pending; }).forEach(function (m) {
+        var li = el("li", "", m.name);
+        li.appendChild(el("span", "mono", m.ids.join(" / ")));
+        ul.appendChild(li);
+      });
+      details.appendChild(ul);
+      details.appendChild(el("div", "help", "Not found in this file nor in the linked files. Node ids are per file: check which file the ids were taken from, and link that file above if it is another library."));
+      box.appendChild(details);
+    }
+    return box;
   }
 
   function mappingsForPlugin() {

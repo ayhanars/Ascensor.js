@@ -944,10 +944,12 @@ function parseRemote(
   file: RemoteFile,
   componentSets: ApiComponent[],
   components: ApiComponent[]
-): { components: LibraryComponent[]; skippedPages: string[] } {
+): { components: LibraryComponent[]; skippedPages: string[]; variants: { [variantId: string]: string } } {
   const out: LibraryComponent[] = [];
   const skipped: { [page: string]: true } = {};
   const seen: { [id: string]: true } = {};
+  /** variant node id -> component set node id, so a Figma-ID of a variant maps to the set. */
+  const variants: { [variantId: string]: string } = {};
 
   const consider = (item: ApiComponent, isVariant: boolean) => {
     if (isVariant || !item || !item.name) return;
@@ -966,11 +968,12 @@ function parseRemote(
 
   for (const set of componentSets || []) consider(set, false);
   for (const component of components || []) {
-    const inSet = !!(component.containing_frame && component.containing_frame.containingStateGroup);
-    consider(component, inSet);
+    const group = component.containing_frame && component.containing_frame.containingStateGroup;
+    if (group && group.nodeId && component.node_id) variants[component.node_id] = group.nodeId;
+    consider(component, !!group);
   }
   out.sort(compareByName);
-  return { components: out, skippedPages: Object.keys(skipped) };
+  return { components: out, skippedPages: Object.keys(skipped), variants };
 }
 
 // ---------------------------------------------------------------------------
@@ -1376,7 +1379,26 @@ function buildStatusCell(row: FrameNode, name: string, status: Status, borderLef
   return cell;
 }
 
-function buildRow(component: LibraryComponent, lookups: Lookups, aliases: Aliases, fonts: FontSet): FrameNode {
+/** JSON name (normalised) -> component id it was mapped to; a name claimed by one component is not read by another. */
+type Claims = Map<string, string>;
+
+function buildClaims(mappings: Mapping[] | undefined): Claims {
+  const claims: Claims = new Map();
+  for (const mapping of mappings || []) {
+    if (mapping && mapping.componentId && mapping.jsonName) claims.set(normalizeName(mapping.jsonName), mapping.componentId);
+  }
+  return claims;
+}
+
+function lookupKeys(component: LibraryComponent, aliases: Aliases, claims: Claims): string[] {
+  const own = normalizeName(component.name);
+  const keys: string[] = [];
+  // Figma-ID / manual mappings win: if another component claimed this name, do not read it by name.
+  if (!claims.has(own) || claims.get(own) === component.id) keys.push(own);
+  return keys.concat(aliases.get(component.id) || []);
+}
+
+function buildRow(component: LibraryComponent, lookups: Lookups, aliases: Aliases, claims: Claims, fonts: FontSet): FrameNode {
   const row = autoFrame(`Row / ${component.name}`, "HORIZONTAL");
   setBorders(row, COLOR.borderLight, { bottom: true });
   if (isPurpleName(component.name)) row.fills = solid(PURPLE_ROW_FILL);
@@ -1406,7 +1428,7 @@ function buildRow(component: LibraryComponent, lookups: Lookups, aliases: Aliase
   cells.push(versionCell);
 
   // Status cells
-  const keys = [normalizeName(component.name)].concat(aliases.get(component.id) || []);
+  const keys = lookupKeys(component, aliases, claims);
   for (const brand of BRANDS) {
     for (let p = 0; p < PLATFORMS.length; p++) {
       const platform = PLATFORMS[p];
@@ -1525,6 +1547,7 @@ async function generateTable(
   const fonts = await loadFonts();
   const lookups = buildLookups(coba, purple);
   const aliases = buildAliases(mappings);
+  const claims = buildClaims(mappings);
   const changelogIndex = buildChangelogIndex(changelogEntries);
   const sorted = components.slice().sort(compareByName);
   const page = figma.currentPage;
@@ -1550,9 +1573,9 @@ async function generateTable(
     for (let i = 0; i < sorted.length; i += ROW_BATCH) {
       const batch = sorted.slice(i, i + ROW_BATCH);
       for (const component of batch) {
-        body.appendChild(buildRow(component, lookups, aliases, fonts));
+        body.appendChild(buildRow(component, lookups, aliases, claims, fonts));
         if (history.enabled) {
-          const keys = [normalizeName(component.name)].concat(aliases.get(component.id) || []);
+          const keys = lookupKeys(component, aliases, claims);
           const entries = historyFor(component, keys, changelogIndex, history.limit);
           if (entries.length > 0) body.appendChild(buildHistoryRow(component, entries, fonts));
         }
@@ -1634,6 +1657,7 @@ figma.ui.onmessage = async (msg: UIMessage) => {
           fileName: msg.fileName,
           components: parsed.components,
           skippedPages: parsed.skippedPages,
+          variants: parsed.variants,
         });
         break;
       }

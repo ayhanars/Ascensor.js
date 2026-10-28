@@ -167,9 +167,17 @@ the same file:
   from metadata: 45:1018" in a comment) are tried as fallbacks. Ids are
   resolved against this file first, including ids that point at a variant or
   a layer inside a component, then against linked files. A resolved id maps
-  the JSON name automatically and the row says "via Figma-ID"; an id nobody
-  has is reported as not found, and the usual similar-name suggestion and
-  manual dropdown remain. A key with a `[Figma …]` suffix keeps the suffix
+  the JSON name automatically and the row says "via Figma-ID". Ids are
+  checked **first, for every entry**: when an id points at a different
+  component than the name does, the id wins and the row says so, and the
+  component that merely shares the name does not read that entry. Only
+  entries without a resolvable id fall back to name matching, the
+  similar-name suggestion and the manual dropdown. A "Figma-IDs" line under
+  the drop zones counts how many ids the files contain, how many resolved
+  and how many were not found, with the list of the missing ones (node ids
+  are per file, so a missing id usually comes from another library file:
+  link it in step 1). **Re-apply Figma-IDs** discards manual choices in
+  favour of the ids. A key with a `[Figma …]` suffix keeps the suffix
   as its identity (two entries can share a design name) but is compared to
   library names without it. `APIs:` and `File:` values appear in the mapping
   CSV.
@@ -197,8 +205,8 @@ list; it is only about the JSON files.
 **Download mapping CSV** exports every JSON name with the library component it
 resolves to, for the dev team to align names later. Columns: JSON name,
 Library component, Match (`exact`, `figma-id`, `manual` or `ignored`), Figma
-ID, Code APIs, Code file, Type, Library version, Location (file / page) and
-Used in (brand · platform).
+ID, Figma ID result (`resolved` / `not found`), Code APIs, Code file, Type,
+Library version, Location (file / page) and Used in (brand · platform).
 
 **Import mapping CSV** reads such a file back (or any CSV with a "JSON name"
 and a "Library component" column, comma or semicolon separated) and applies it
