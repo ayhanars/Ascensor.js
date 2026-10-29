@@ -68,6 +68,8 @@ interface TableDates {
   coba: string;
   purple: string;
   generated: string;
+  /** Names of the uploaded files, shown next to the dates so the source is visible. */
+  files?: { coba?: string; purple?: string };
 }
 
 /**
@@ -1274,6 +1276,8 @@ function buildCaption(table: FrameNode, dates: TableDates, fonts: FontSet): void
     pair.appendChild(
       makeText(date ? `updated ${date}` : "update date unknown", fonts.regular, 13, date ? COLOR.muted : COLOR.faint)
     );
+    const fileName = dates.files && dates.files[brand.key];
+    if (fileName) pair.appendChild(makeText(`· ${fileName}`, fonts.mono, 11, COLOR.faint));
   }
 
   const spacer = autoFrame("Spacer", "HORIZONTAL");

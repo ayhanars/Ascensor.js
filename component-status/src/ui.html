@@ -1744,7 +1744,8 @@
       dates: {
         coba: state.files.coba.updated || "",
         purple: state.files.purple.updated || "",
-        generated: formatDate(new Date())
+        generated: formatDate(new Date()),
+        files: { coba: state.files.coba.name || "", purple: state.files.purple.name || "" }
       }
     });
     refresh();

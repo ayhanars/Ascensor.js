@@ -183,8 +183,9 @@ the same file:
   CSV.
 - `updatedAt` is optional: the date the file's data was last updated, as
   `2026-10-03`, `03.10.2026` or a full ISO timestamp. It is shown in a caption
-  above the table ("COBA · updated 03.10.2026") together with the generation
-  date. Without it the plugin falls back to the file's modified date and says
+  above the table ("COBA · updated 03.10.2026 · coba.json") together with the
+  file name and the generation date, so it is always clear which file was
+  used. Without it the plugin falls back to the file's modified date and says
   so in the drop zone.
 - Names are matched against library components case-insensitively, after
   trimming. A JSON name that matches several library components applies to all
