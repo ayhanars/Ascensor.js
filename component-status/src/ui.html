@@ -1227,6 +1227,7 @@
   }
   var suggestions = {};
   var mapUi = { open: null, scroll: 0 };   // user's open/closed state and scroll of the mapping list
+  var idUi = { open: false };              // open/closed state of the "not found" id list
   var resolvedIds = {};                    // figma node id -> component id | null (asked from the main thread)
   var pendingIds = {};
   var autoMapped = {};                     // json key -> component id chosen automatically (id or 1:1 name)
@@ -1389,8 +1390,10 @@
     // Keep the list where the user left it when re-rendering after a change.
     var prevList = box.querySelector(".map-list");
     if (prevList) mapUi.scroll = prevList.scrollTop;
-    var prevDetails = box.querySelector("details");
+    var prevDetails = box.querySelector("details.map-details");
     if (prevDetails) mapUi.open = prevDetails.open;
+    var prevIdDetails = box.querySelector("details.id-details");
+    if (prevIdDetails) idUi.open = prevIdDetails.open;
 
     box.innerHTML = "";
     var line = el("div");
@@ -1400,7 +1403,7 @@
     box.appendChild(renderIdCheck());
 
     if (unmatched.length > 0) {
-      var details = el("details");
+      var details = el("details", "map-details");
       details.open = mapUi.open === null ? ignoredCount > 0 : mapUi.open;
       details.addEventListener("toggle", function () { mapUi.open = details.open; });
       details.appendChild(el("summary", "",
@@ -1687,7 +1690,9 @@
     });
     box.appendChild(reapply);
     if (missing) {
-      var details = el("details");
+      var details = el("details", "id-details");
+      details.open = idUi.open;
+      details.addEventListener("toggle", function () { idUi.open = details.open; });
       details.appendChild(el("summary", "", "Show the " + missing + " not found"));
       var ul = el("ul");
       idCheck.missing.filter(function (m) { return !m.pending; }).forEach(function (m) {
